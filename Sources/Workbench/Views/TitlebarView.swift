@@ -69,18 +69,6 @@ final class TitlebarView: FlippedView {
 
         // Right group.
         var rx = bounds.width - 13
-        let avatar = NSView(frame: NSRect(x: rx - 26, y: (h - 26) / 2, width: 26, height: 26))
-        avatar.wantsLayer = true
-        let grad = CAGradientLayer()
-        grad.frame = avatar.bounds
-        grad.colors = [NSColor.hex(0x7c8cff).cgColor, NSColor.hex(0xd2a8ff).cgColor]
-        grad.startPoint = CGPoint(x: 0, y: 0)
-        grad.endPoint = CGPoint(x: 1, y: 1)
-        grad.cornerRadius = 13
-        avatar.layer?.addSublayer(grad)
-        addSubview(avatar)
-        rx -= 26 + 8
-
         let gear = iconButton("gearshape", tint: t.txt3,
                               frame: NSRect(x: rx - 28, y: (h - 28) / 2, width: 28, height: 28), point: 15)
         gear.onClick = { [weak self] in self?.onToggleSettings?() }
