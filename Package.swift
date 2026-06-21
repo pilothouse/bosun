@@ -1,18 +1,60 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
+// Clean Architecture as a compiler-enforced target graph (see CLAUDE.md).
+// Dependency direction is all inward:  Workbench → Infrastructure → Application → Domain.
+// `Domain` has `dependencies: []`, so it physically cannot import another layer — the
+// compiler rejects it before SwiftLint ever runs. SwiftLint is left with the two jobs the
+// compiler genuinely can't do: banning always-importable system frameworks (AppKit, Metal,
+// Network, …) in the inner layers, and catching transitive skip-imports.
 let package = Package(
     name: "Workbench",
     platforms: [.macOS(.v13)],
+    products: [
+        .executable(name: "Workbench", targets: ["Workbench"]),
+    ],
+    dependencies: [
+        // Dedicated plugins repo: avoids pulling SwiftLint's full dependency tree into the
+        // build graph. Functionally identical rules to realm/SwiftLint.
+        .package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", from: "0.57.0"),
+    ],
     targets: [
-        // C shim exposing libghostty's embedding header to Swift.
+        // C shim exposing libghostty's embedding header to Swift. (App-layer detail.)
         .target(name: "CGhostty"),
 
-        // The AppKit demo app. Links the prebuilt libghostty static archive
-        // staged by scripts/build-libghostty.sh into Vendor/libghostty.a.
+        // ── Domain: center. Knows nothing about UI, transport, or storage. ──
+        .target(
+            name: "Domain",
+            dependencies: [],                       // ← the rule, as code
+            plugins: [.plugin(name: "SwiftLintBuildToolPlugin",
+                              package: "SwiftLintPlugins")]
+        ),
+
+        // ── Application: use cases. Orchestrates Domain; defines ports. ──
+        .target(
+            name: "Application",
+            dependencies: ["Domain"],               // ← inward only
+            plugins: [.plugin(name: "SwiftLintBuildToolPlugin",
+                              package: "SwiftLintPlugins")]
+        ),
+
+        // ── Infrastructure: adapters. Implements Application's ports. ──
+        .target(
+            name: "Infrastructure",
+            dependencies: ["Application", "Domain"],
+            plugins: [.plugin(name: "SwiftLintBuildToolPlugin",
+                              package: "SwiftLintPlugins")]
+        ),
+
+        // ── App (composition root) + AppKit/Metal/libghostty views. Sees everything. ──
+        // Links the prebuilt libghostty static archive staged by scripts/build-libghostty.sh
+        // into Vendor/libghostty.a. The SwiftLint plugin is intentionally NOT attached here:
+        // the App layer is the unconstrained composition layer, and running the linter over the
+        // dense AppKit views would only police style, not architecture. Inner-layer purity (the
+        // part the compiler can't see) is enforced on Domain/Application above.
         .executableTarget(
             name: "Workbench",
-            dependencies: ["CGhostty"],
+            dependencies: ["CGhostty", "Application", "Infrastructure", "Domain"],
             linkerSettings: [
                 .unsafeFlags(["-L", "Vendor", "-lghostty"]),
                 .linkedFramework("AppKit"),
@@ -32,5 +74,9 @@ let package = Package(
                 .linkedLibrary("objc"),
             ]
         ),
+
+        // ── Contract tests on public APIs (a human writes/reviews these). ──
+        .testTarget(name: "DomainTests", dependencies: ["Domain"]),
+        .testTarget(name: "ApplicationTests", dependencies: ["Application"]),
     ]
 )

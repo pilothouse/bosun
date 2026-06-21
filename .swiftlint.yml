@@ -1,0 +1,57 @@
+# .swiftlint.yml — bosun architecture guardrails
+#
+# The compiler already blocks layer -> layer imports (a target only sees the modules in its
+# `dependencies:`). These rules cover the two things it CAN'T: system frameworks (always
+# importable) leaking into inner layers, and transitive skip-imports. A violation fails the
+# build — for an agent, a red pipeline it fixes in-loop beats a paragraph it reinterprets.
+#
+# The plugin runs on the inner layers (Domain, Application, Infrastructure). The App layer
+# (Sources/Workbench) is the unconstrained composition layer; the `no_io_in_views` rule below
+# is kept for a manual `swiftlint` CLI sweep of the whole tree.
+included:
+  - Sources
+
+opt_in_rules:
+  - file_length
+  - type_body_length
+
+file_length:
+  warning: 400
+  error: 600
+
+custom_rules:
+
+  domain_no_ui:
+    name: "Domain must stay UI-free"
+    regex: 'import\s+(AppKit|UIKit|SwiftUI|Metal|MetalKit|GhosttyKit|CGhostty)'
+    included: ".*/Sources/Domain/.*"
+    message: "Domain is pure rules. UI/render frameworks belong in the App layer (Sources/Workbench). See CLAUDE.md → 'Where logic lives'."
+    severity: error
+
+  domain_no_io:
+    name: "Domain must not touch transport or storage"
+    regex: 'import\s+(Network|System|SQLite|FMDB|GRDB)'
+    included: ".*/Sources/Domain/.*"
+    message: "Domain knows no transport/storage. Define a port in Application; implement it in Infrastructure."
+    severity: error
+
+  application_no_ui:
+    name: "Application stays framework-thin"
+    regex: 'import\s+(AppKit|UIKit|SwiftUI|Metal|MetalKit|GhosttyKit|CGhostty)'
+    included: ".*/Sources/Application/.*"
+    message: "Use cases orchestrate Domain; they never reach for the UI toolkit."
+    severity: error
+
+  application_no_infrastructure:
+    name: "Dependencies point inward"
+    regex: 'import\s+Infrastructure'
+    included: ".*/Sources/Application/.*"
+    message: "Application defines ports (protocols); Infrastructure implements them. Never the reverse."
+    severity: error
+
+  no_io_in_views:
+    name: "Views call use cases, not adapters"
+    regex: 'import\s+(Network|SQLite|FMDB|GRDB)'
+    included: ".*/Sources/Workbench/.*View.*\\.swift"
+    message: "An AppKit view does I/O only through an injected use case. Wire concretes in CompositionRoot."
+    severity: error

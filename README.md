@@ -16,6 +16,15 @@ with Metal.
 
 ## Layout
 
+The code is layered with Clean Architecture, and the boundaries are enforced by the build
+itself — the compiler (SPM target graph) plus SwiftLint. Dependencies point inward:
+`Workbench → Infrastructure → Application → Domain`. See [`CLAUDE.md`](CLAUDE.md) for the rules.
+
+* `Sources/Domain/`: entities and pure rules (e.g. `DispatchPolicy`). Depends on nothing.
+* `Sources/Application/`: use cases and the ports (protocols) they talk through.
+* `Sources/Infrastructure/`: adapters that implement those ports (SSH, storage, …).
+* `Sources/Workbench/`: the App layer — composition root plus the AppKit/Metal/libghostty UI.
+  The only layer that links libghostty.
 * `Sources/CGhostty/`: a small C layer that exposes the libghostty header to Swift.
 * `Sources/Workbench/Ghostty/`: the libghostty bridge (`GhosttyApp`, `GhosttySurfaceView`).
 * `Sources/Workbench/Views/`: the AppKit interface (titlebar, rail, detail, repo panel, terminal).

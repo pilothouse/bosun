@@ -1,0 +1,11 @@
+# Sources/Application/.swiftlint.yml
+#
+# Rule #1: ≤3 external dependencies per use case — a 4th means it's doing two jobs.
+# Scope `function_parameter_count` to the use-case layer so the limit bites where it
+# matters and stays loose elsewhere. (Picked up by a `swiftlint` CLI run; the build-tool plugin
+# reads the package-root config.)
+parent_config: ../../.swiftlint.yml
+
+function_parameter_count:
+  warning: 4   # a use-case init with 4 collaborators is a smell
+  error: 5     # 5 means split it
