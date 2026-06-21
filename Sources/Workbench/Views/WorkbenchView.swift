@@ -12,15 +12,16 @@ final class CenterColumnView: FlippedView {
         self.detail = DetailView(store: store)
 
         let surface: NSView
-        if let app = ghostty.app {
+        if ghostty.availability.isReady, let app = ghostty.app {
             surface = GhosttySurfaceView(app: app)
+        } else if case .unavailable(let stage) = ghostty.availability {
+            surface = TerminalUnavailableView(stage: stage)
         } else {
-            let placeholder = FlippedView()
-            placeholder.wantsLayer = true
-            placeholder.layer?.backgroundColor = NSColor.hex(0x0a0c0f).cgColor
-            surface = placeholder
+            // Ready but no surface — shouldn't happen; show an error state rather than a dead pane.
+            surface = TerminalUnavailableView(stage: .application)
         }
-        self.terminal = TerminalContainerView(store: store, terminal: surface)
+        self.terminal = TerminalContainerView(store: store, terminal: surface,
+                                              available: ghostty.availability.isReady)
 
         super.init(frame: .zero)
         wantsLayer = true
@@ -127,7 +128,9 @@ final class WorkbenchView: NSView {
     }
 
     func focusTerminal() {
-        window?.makeFirstResponder(center.terminal.terminalView)
+        // Only the live libghostty surface takes keystrokes; the error placeholder must not grab focus.
+        guard let term = center.terminal.terminalView as? GhosttySurfaceView else { return }
+        window?.makeFirstResponder(term)
     }
 
     override func layout() {

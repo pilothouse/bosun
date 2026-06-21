@@ -14,15 +14,17 @@ final class DragHandle: FlippedView {
 /// Terminal dock: drag handle + tab strip + the live libghostty surface.
 final class TerminalContainerView: FlippedView {
     let store: Store
-    let terminalView: NSView          // GhosttySurfaceView or a placeholder
+    let terminalView: NSView          // GhosttySurfaceView, or TerminalUnavailableView when down
     var onRelayout: (() -> Void)?
 
+    private let available: Bool       // false when libghostty failed to come up (issue #16)
     private let handle = DragHandle()
     private var startHeight: CGFloat = 240
 
-    init(store: Store, terminal: NSView) {
+    init(store: Store, terminal: NSView, available: Bool) {
         self.store = store
         self.terminalView = terminal
+        self.available = available
         super.init(frame: .zero)
         wantsLayer = true
         addSubview(terminal)
@@ -60,29 +62,34 @@ final class TerminalContainerView: FlippedView {
         let topB = BoxView(bg: .whiteA(0.05)); topB.frame = NSRect(x: 0, y: 0, width: w, height: 1); bar.addSubview(topB)
         let botB = BoxView(bg: .whiteA(0.06)); botB.frame = NSRect(x: 0, y: barH - 1, width: w, height: 1); bar.addSubview(botB)
 
-        var x: CGFloat = 0
-        let tabs: [(String, Bool, NSColor)] = [("claude", true, Status.green), ("zsh", false, Status.dim)]
-        for (name, active, dotColor) in tabs {
-            let tw = name.count <= 4 ? 78.0 : 92.0
-            let tab = FlippedView(frame: NSRect(x: x, y: 0, width: CGFloat(tw), height: barH))
-            tab.wantsLayer = true
-            if active { tab.layer?.backgroundColor = NSColor.hex(0x0a0c0f).cgColor }
-            let underline = BoxView(bg: active ? Status.green : .clear)
-            underline.frame = NSRect(x: 0, y: barH - 2, width: CGFloat(tw), height: 2); tab.addSubview(underline)
-            let d = Dot(dotColor, 7); d.frame.origin = NSPoint(x: 13, y: (barH - 7) / 2); tab.addSubview(d)
-            let nm = label(name, sys(11.5, active ? .semibold : .regular), active ? .hex(0xe6e8ec) : .hex(0x8a909a))
-            nm.frame = NSRect(x: 28, y: 8, width: CGFloat(tw) - 34, height: 16); tab.addSubview(nm)
-            let sep = BoxView(bg: .whiteA(0.05)); sep.frame = NSRect(x: CGFloat(tw) - 1, y: 0, width: 1, height: barH); tab.addSubview(sep)
-            bar.addSubview(tab)
-            x += CGFloat(tw)
+        // Session tabs + new-tab affordance only make sense with a live engine; suppress the
+        // hardcoded "claude"/"zsh" tabs when the terminal is unavailable so the dock doesn't
+        // imply a running session (issue #16).
+        if available {
+            var x: CGFloat = 0
+            let tabs: [(String, Bool, NSColor)] = [("claude", true, Status.green), ("zsh", false, Status.dim)]
+            for (name, active, dotColor) in tabs {
+                let tw = name.count <= 4 ? 78.0 : 92.0
+                let tab = FlippedView(frame: NSRect(x: x, y: 0, width: CGFloat(tw), height: barH))
+                tab.wantsLayer = true
+                if active { tab.layer?.backgroundColor = NSColor.hex(0x0a0c0f).cgColor }
+                let underline = BoxView(bg: active ? Status.green : .clear)
+                underline.frame = NSRect(x: 0, y: barH - 2, width: CGFloat(tw), height: 2); tab.addSubview(underline)
+                let d = Dot(dotColor, 7); d.frame.origin = NSPoint(x: 13, y: (barH - 7) / 2); tab.addSubview(d)
+                let nm = label(name, sys(11.5, active ? .semibold : .regular), active ? .hex(0xe6e8ec) : .hex(0x8a909a))
+                nm.frame = NSRect(x: 28, y: 8, width: CGFloat(tw) - 34, height: 16); tab.addSubview(nm)
+                let sep = BoxView(bg: .whiteA(0.05)); sep.frame = NSRect(x: CGFloat(tw) - 1, y: 0, width: 1, height: barH); tab.addSubview(sep)
+                bar.addSubview(tab)
+                x += CGFloat(tw)
+            }
+            let plus = label("+", sys(15), .hex(0x5b616b), align: .center)
+            plus.frame = NSRect(x: x + 6, y: 7, width: 22, height: 18); bar.addSubview(plus)
         }
-        let plus = label("+", sys(15), .hex(0x5b616b), align: .center)
-        plus.frame = NSRect(x: x + 6, y: 7, width: 22, height: 18); bar.addSubview(plus)
 
-        // Right status.
+        // Right status — honest about the terminal's state rather than a fixed green "running".
         let host = store.selectedConn.meta
-        let statusText = "● running · \(host)"
-        let stl = label(statusText, mono(10), Status.green, align: .right)
+        let statusText = available ? "● running · \(host)" : "● terminal unavailable"
+        let stl = label(statusText, mono(10), available ? Status.green : Status.red, align: .right)
         let chevron = label(store.terminalHeight > 500 ? "⌄" : "⌃", sys(12), .hex(0x9aa0aa), align: .center)
         let chevBtn = ClickRow(bg: nil)
         chevBtn.frame = NSRect(x: w - 28, y: 6, width: 20, height: 20)

@@ -1,10 +1,9 @@
 import AppKit
-import CGhostty
 
-// libghostty global init must happen before any app/surface is created.
-if ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) != GHOSTTY_SUCCESS {
-    fatalError("ghostty_init failed")
-}
+// libghostty global init must happen before any app/surface is created. A failure here is
+// recorded (not fatal) so the app still boots a usable shell and surfaces the error in the
+// terminal dock — see GhosttyApp.availability and issue #16.
+GhosttyApp.shared.initializeRuntime()
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

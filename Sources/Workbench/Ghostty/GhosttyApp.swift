@@ -1,5 +1,6 @@
 import AppKit
 import CGhostty
+import Domain
 
 /// Owns the single `ghostty_app_t` for the process and the libghostty runtime
 /// callbacks. Mirrors a trimmed version of Ghostty's own `Ghostty.App`.
@@ -9,12 +10,30 @@ final class GhosttyApp {
     private(set) var app: ghostty_app_t?
     private var config: ghostty_config_t?
 
-    /// Create the ghostty config + app. Call once after `ghostty_init`.
+    /// Whether the terminal subsystem came up, and if not, where it failed. Read by the App layer
+    /// to render an error state instead of a dead surface (issue #16).
+    private(set) var availability: TerminalAvailability = .ready
+
+    /// Global libghostty init. Must run once, before any app/surface is created (i.e. before
+    /// `start()`). A failure here is *not* fatal: it is recorded so the app can boot a usable
+    /// shell and surface the error, rather than aborting the process.
+    func initializeRuntime() {
+        if ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) != GHOSTTY_SUCCESS {
+            NSLog("ghostty_init failed")
+            availability = .unavailable(.runtimeInit)
+        }
+    }
+
+    /// Create the ghostty config + app. Call once after `initializeRuntime()`.
     func start() {
+        // If the global runtime init failed, calling config/app creation is undefined — stay
+        // failed and let the App layer render the error state.
+        guard availability.isReady else { return }
         guard app == nil else { return }
 
         guard let cfg = ghostty_config_new() else {
             NSLog("ghostty_config_new failed")
+            availability = .unavailable(.configuration)
             return
         }
         ghostty_config_load_default_files(cfg)
@@ -76,6 +95,7 @@ final class GhosttyApp {
 
         guard let app = ghostty_app_new(&runtime, cfg) else {
             NSLog("ghostty_app_new failed")
+            availability = .unavailable(.application)
             return
         }
         self.app = app
