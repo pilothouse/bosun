@@ -54,17 +54,17 @@ final class TitlebarView: FlippedView {
         x += 22
 
         let name = label(store.selectedConn.name, sys(12.5, .semibold), t.txt)
-        name.frame = NSRect(x: x, y: 0, width: fitW(name), height: h)
+        name.frame = NSRect(x: x, y: (h - 16) / 2, width: fitW(name), height: 16)
         addSubview(name)
         x += name.frame.width + 7
 
         let slash = label("/", sys(12.5), t.txt4)
-        slash.frame = NSRect(x: x, y: 0, width: 8, height: h)
+        slash.frame = NSRect(x: x, y: (h - 16) / 2, width: 8, height: 16)
         addSubview(slash)
         x += 13
 
         let repo = label("acme/api-gateway", sys(12.5), t.txt3)
-        repo.frame = NSRect(x: x, y: 0, width: fitW(repo), height: h)
+        repo.frame = NSRect(x: x, y: (h - 16) / 2, width: fitW(repo), height: 16)
         addSubview(repo)
 
         // Right group.
