@@ -53,6 +53,20 @@ public actor GitHubAPIClient: GitHubAPI {
         return orgs
     }
 
+    public func viewerRepositories() async throws -> [GitHubRepo] {
+        var cursor: String?
+        var repos: [GitHubRepo] = []
+        repeat {
+            let payload: ViewerReposResponse = try await graphQL(
+                query: GitHubGraphQLQueries.viewerRepositories,
+                variables: ["cursor": cursor.map(GraphQLValue.string) ?? .null])
+            let page = payload.viewer.repositories
+            repos += page.nodes.map { $0.toDomain() }
+            cursor = page.pageInfo.next
+        } while cursor != nil
+        return repos
+    }
+
     public func items(owner: String, repo: String, kind: GitHubItemKind) async throws -> [GitHubItem] {
         let nameWithOwner = "\(owner)/\(repo)"
         var cursor: String?
@@ -312,6 +326,12 @@ private struct OrgsResponse: Decodable {
     let viewer: Viewer
     struct Viewer: Decodable { let organizations: Connection }
     struct Connection: Decodable { let pageInfo: PageInfo; let nodes: [OrgNode] }
+}
+
+private struct ViewerReposResponse: Decodable {
+    let viewer: Viewer
+    struct Viewer: Decodable { let repositories: Connection }
+    struct Connection: Decodable { let pageInfo: PageInfo; let nodes: [RepoNode] }
 }
 
 private struct OrgNode: Decodable {

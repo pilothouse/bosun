@@ -72,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let user = try await client.currentUser()
                 NSLog("[api-smoke] viewer: \(user.login) (\(user.name ?? "—"))")
+                let personal = try await client.viewerRepositories()
+                NSLog("[api-smoke] personal repos: \(personal.count)")
                 let orgs = try await client.organizations()
                 NSLog("[api-smoke] organizations: \(orgs.count)")
                 for org in orgs.prefix(5) {

@@ -79,6 +79,9 @@ public protocol GitHubAPI: Sendable {
     func currentUser() async throws -> GitHubUser
     /// The viewer's organizations, each with its repositories and their open-work counts.
     func organizations() async throws -> [GitHubOrg]
+    /// The viewer's own (user-owned) repositories with their open-work counts — the personal repos
+    /// that live under the user, not an organization. Lets a no-org account still see live data.
+    func viewerRepositories() async throws -> [GitHubRepo]
     /// Open issues or pull requests in a repo (lead fields only — no comments/checks).
     func items(owner: String, repo: String, kind: GitHubItemKind) async throws -> [GitHubItem]
     /// One item fully hydrated: body-derived tasks, comments, and (for PRs) check runs.

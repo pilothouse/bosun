@@ -40,6 +40,18 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(gateway.nameWithOwner, "acme-corp/api-gateway")
     }
 
+    func testViewerRepositoriesDecodesOwnedReposAndCounts() async throws {
+        respond { (self.ok($0), try fixture("viewer-repositories")) }
+        let repos = try await makeClient().viewerRepositories()
+
+        XCTAssertEqual(repos.map(\.name), ["dotfiles", "side-project"])
+        let dotfiles = try XCTUnwrap(repos.first)
+        XCTAssertEqual(dotfiles.owner, "octocat")
+        XCTAssertEqual(dotfiles.openIssues, 4)
+        XCTAssertEqual(dotfiles.openPullRequests, 1)
+        XCTAssertEqual(dotfiles.nameWithOwner, "octocat/dotfiles")
+    }
+
     func testIssuesListMapsFieldsAndParsesTasksFromBody() async throws {
         respond { (self.ok($0), try fixture("issues")) }
         let items = try await makeClient().items(owner: "acme-corp", repo: "api-gateway", kind: .issue)

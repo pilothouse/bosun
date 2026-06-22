@@ -29,6 +29,26 @@ enum GitHubGraphQLQueries {
     }
     """
 
+    /// Viewer's own (user-owned) repositories with their open-work counts. `ownerAffiliations: OWNER`
+    /// restricts to repos the viewer owns — not org or collaborator repos. Paged via `$cursor`.
+    static let viewerRepositories = """
+    query($cursor: String) {
+      viewer {
+        repositories(first: 100, after: $cursor, ownerAffiliations: OWNER,
+                     orderBy: {field: UPDATED_AT, direction: DESC}) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id
+            name
+            owner { login }
+            issues(states: OPEN) { totalCount }
+            pullRequests(states: OPEN) { totalCount }
+          }
+        }
+      }
+    }
+    """
+
     /// Open issues in a repo, newest first. Paged via `$cursor`.
     static let issues = """
     query($owner: String!, $repo: String!, $cursor: String) {

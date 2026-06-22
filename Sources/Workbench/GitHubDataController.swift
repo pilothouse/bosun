@@ -32,8 +32,14 @@ final class GitHubDataController {
         store.dataError = nil
         loadTask = Task { @MainActor in
             do {
-                let orgs = try await api.organizations()
-                store.orgs = orgs.map(Org.init(domain:))
+                // Orgs and the viewer's own repos load together; the personal repos surface as a
+                // synthetic group pinned at the top so a no-org account still sees live data.
+                async let orgsCall = api.organizations()
+                async let personalCall = api.viewerRepositories()
+                let (orgs, personalRepos) = try await (orgsCall, personalCall)
+                var groups = orgs.map(Org.init(domain:))
+                if let personal = Org(personalRepos: personalRepos) { groups.insert(personal, at: 0) }
+                store.orgs = groups
                 // Honor the user's followed/ordered choice for the initial expand + selection, so a
                 // hidden org never steals focus on launch.
                 guard let firstOrg = store.visibleOrgs.first else { clearItems(); return }
