@@ -37,3 +37,34 @@ public protocol PreferencesStore: Sendable {
     func load() async -> Preferences
     func save(_ preferences: Preferences) async
 }
+
+/// Transport seam for GitHub's OAuth device flow. Two calls, no state: ask for a device code,
+/// then redeem it. The concrete adapter (URLSession → github.com) lives in Infrastructure and
+/// is wired in `CompositionRoot`.
+public protocol GitHubDeviceAuth: Sendable {
+    func requestDeviceCode() async throws -> DeviceCodeGrant
+    func redeemDeviceCode(_ deviceCode: String) async throws -> DeviceTokenPoll
+}
+
+/// Persistence seam for the OAuth access token. The concrete adapter (a Keychain generic-password
+/// item) lives in Infrastructure. `load` returns nil when signed out; `delete` is the sign-out.
+public protocol GitHubTokenStore: Sendable {
+    func load() async throws -> String?
+    func save(_ token: String) async throws
+    func delete() async throws
+}
+
+/// Injectable delay so the polling use case waits in production but runs instantly in tests.
+/// The real adapter wraps `Task.sleep` (which throws on cancel — that's how a cancelled
+/// sign-in stops mid-poll); a test fake returns immediately.
+public protocol Sleeper: Sendable {
+    func sleep(seconds: Int) async throws
+}
+
+/// Why a sign-in didn't complete. `.denied`/`.expired` are normal user/timeout outcomes the
+/// sheet renders as a friendly message; `.transport` wraps an underlying network/HTTP failure.
+public enum AuthError: Error, Sendable, Equatable {
+    case denied
+    case expired
+    case transport(String)
+}

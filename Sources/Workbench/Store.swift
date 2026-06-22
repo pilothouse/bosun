@@ -12,6 +12,17 @@ final class Store {
         case blocked = "By blocked-by"
     }
 
+    /// GitHub sign-in state. Deliberately NOT persisted in `Preferences` — the token lives in the
+    /// Keychain, and this is recomputed at launch from `GitHubTokenStore.load()`. It drives the
+    /// device-flow overlay (the authenticating cases) and the Settings "Account" section.
+    enum AuthState: Equatable {
+        case signedOut
+        case authenticatingPending                  // sheet open, device code not yet returned
+        case authenticating(Domain.DeviceCodeGrant) // device code issued; user is entering it
+        case signedIn
+        case authError(String)                      // request/poll failed; sheet shows the reason
+    }
+
     var themeKey = "operator" { didSet { if oldValue != themeKey { changed() } } }
     var theme: Theme { Theme.named(themeKey) }
 
@@ -21,6 +32,7 @@ final class Store {
     var viewMenuOpen = false { didSet { if oldValue != viewMenuOpen { notify() } } }
     var settingsOpen = false { didSet { if oldValue != settingsOpen { notify() } } }
     var newConnectionOpen = false { didSet { if oldValue != newConnectionOpen { notify() } } }
+    var authState: AuthState = .signedOut { didSet { if oldValue != authState { notify() } } }
 
     var selectedConnId = "api-gateway" { didSet { if oldValue != selectedConnId { changed() } } }
     var selectedItemId = "482" { didSet { if oldValue != selectedItemId { changed() } } }

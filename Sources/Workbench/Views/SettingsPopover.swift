@@ -4,13 +4,15 @@ import Domain
 /// Full-bounds overlay with a theme picker + window-opacity card in the top-right.
 final class SettingsPopover: FlippedView {
     let store: Store
+    private let auth: GitHubAuthController
     var onClose: (() -> Void)?
     /// Kept across rebuilds so dragging the opacity slider can update the readout live (opacity
     /// changes deliberately don't trigger a full relayout — see `Store.windowAlpha`).
     private var opacityReadout: NSTextField?
 
-    init(store: Store) {
+    init(store: Store, auth: GitHubAuthController) {
         self.store = store
+        self.auth = auth
         super.init(frame: .zero)
         wantsLayer = true
     }
@@ -26,7 +28,7 @@ final class SettingsPopover: FlippedView {
 
         let cardW: CGFloat = 288
         let rows = Theme.all
-        let cardH: CGFloat = 44 + CGFloat(rows.count) * 50 + 54 + 86
+        let cardH: CGFloat = 44 + CGFloat(rows.count) * 50 + 54 + 86 + 80   // +80 for the Account section
         // Card swallows clicks (ClickRow doesn't forward mouseDown).
         let card = ClickRow(bg: t.panel, radius: 12)
         card.layer?.borderWidth = 1
@@ -89,7 +91,45 @@ final class SettingsPopover: FlippedView {
         slider.isContinuous = true
         slider.frame = NSRect(x: 15, y: secY + 56, width: cardW - 30, height: 20); card.addSubview(slider)
 
+        // ── Account section: GitHub sign-in. ──
+        let accY = secY + 90
+        let accDiv = BoxView(bg: t.line2); accDiv.frame = NSRect(x: 15, y: accY, width: cardW - 30, height: 1); card.addSubview(accDiv)
+        let ahdr = label("ACCOUNT", mono(9.5, .semibold), t.txt4)
+        ahdr.frame = NSRect(x: 15, y: accY + 12, width: 200, height: 14); card.addSubview(ahdr)
+
+        let rowY = accY + 34
+        if case .signedIn = store.authState {
+            let dot = Dot(Status.green, 7); dot.frame.origin = NSPoint(x: 16, y: rowY + 11); card.addSubview(dot)
+            let status = label("Signed in to GitHub", sys(12.5, .semibold), t.txt)
+            status.frame = NSRect(x: 30, y: rowY + 7, width: cardW - 122, height: 16); card.addSubview(status)
+            let signOut = accountButton("Sign out", accent: false, t: t,
+                                        frame: NSRect(x: cardW - 92, y: rowY, width: 77, height: 30)) { [weak self] in
+                self?.auth.signOut()
+                self?.store.settingsOpen = false
+            }
+            card.addSubview(signOut)
+        } else {
+            let signIn = accountButton("Sign in to GitHub", accent: true, t: t,
+                                       frame: NSRect(x: 15, y: rowY, width: cardW - 30, height: 32)) { [weak self] in
+                self?.auth.signIn()
+                self?.store.settingsOpen = false
+            }
+            card.addSubview(signIn)
+        }
+
         addSubview(card)
+    }
+
+    private func accountButton(_ title: String, accent: Bool, t: Theme, frame: NSRect, action: @escaping () -> Void) -> ClickRow {
+        let r = ClickRow(bg: accent ? t.accent : t.card, radius: 7)
+        r.hoverColor = accent ? nil : t.hover
+        if !accent { r.layer?.borderWidth = 1; r.layer?.borderColor = t.line2.cgColor }
+        r.frame = frame
+        r.onClick = action
+        let l = label(title, sys(12, .semibold), accent ? t.onacc : t.txt2, align: .center)
+        l.frame = NSRect(x: 0, y: (frame.height - 16) / 2, width: frame.width, height: 16)
+        r.addSubview(l)
+        return r
     }
 
     private var percentText: String { "\(Int((store.windowAlpha * 100).rounded()))%" }

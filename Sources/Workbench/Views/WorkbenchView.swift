@@ -74,19 +74,22 @@ final class WorkbenchView: NSView {
     let store: Store
     let ghostty: GhosttyApp
     private let connections: ConnectionServices
+    private let auth: GitHubAuthController
     private let titlebar: TitlebarView
     private let rail: ConnectionRailView
     private let center: CenterColumnView
     private let repoPanel: RepoPanelView
     private var settings: SettingsPopover?
     private var newConn: NewConnectionSheet?
+    private var deviceFlow: DeviceFlowSheet?
 
     override var isFlipped: Bool { true }
 
-    init(store: Store, ghostty: GhosttyApp, connections: ConnectionServices) {
+    init(store: Store, ghostty: GhosttyApp, connections: ConnectionServices, auth: GitHubAuthController) {
         self.store = store
         self.ghostty = ghostty
         self.connections = connections
+        self.auth = auth
         self.titlebar = TitlebarView(store: store)
         self.rail = ConnectionRailView(store: store)
         self.center = CenterColumnView(store: store, ghostty: ghostty)
@@ -164,7 +167,7 @@ final class WorkbenchView: NSView {
         applyTheme()
         // Settings overlay show/hide.
         if store.settingsOpen, settings == nil {
-            let pop = SettingsPopover(store: store)
+            let pop = SettingsPopover(store: store, auth: auth)
             pop.onClose = { [weak self] in self?.store.settingsOpen = false }
             pop.frame = bounds
             addSubview(pop)
@@ -174,6 +177,25 @@ final class WorkbenchView: NSView {
             settings = nil
         }
         settings?.needsLayout = true
+
+        // Device-flow sign-in sheet show/hide. Active for every non-terminal auth state.
+        let authActive: Bool
+        switch store.authState {
+        case .authenticatingPending, .authenticating, .authError: authActive = true
+        case .signedOut, .signedIn: authActive = false
+        }
+        if authActive, deviceFlow == nil {
+            let sheet = DeviceFlowSheet(store: store, auth: auth)
+            sheet.onClose = { [weak self] in self?.auth.cancel() }
+            sheet.frame = bounds
+            addSubview(sheet)
+            deviceFlow = sheet
+        } else if !authActive, let sheet = deviceFlow {
+            sheet.removeFromSuperview()
+            deviceFlow = nil
+            focusTerminal()
+        }
+        deviceFlow?.needsLayout = true
 
         // New-connection sheet show/hide.
         if store.newConnectionOpen, newConn == nil {
@@ -234,5 +256,6 @@ final class WorkbenchView: NSView {
         center.frame = NSRect(x: railW, y: rowY, width: max(0, w - railW - 312), height: rowH)
         settings?.frame = bounds
         newConn?.frame = bounds
+        deviceFlow?.frame = bounds
     }
 }

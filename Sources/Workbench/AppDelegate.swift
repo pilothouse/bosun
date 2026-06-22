@@ -5,6 +5,7 @@ import Domain
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var root: WorkbenchView!
+    private var authController: GitHubAuthController!
     let ghostty = GhosttyApp.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -14,7 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let preferences = CompositionRoot.makePreferencesStore()
         let store = Store(preferences: preferences)
         let services = CompositionRoot.makeConnectionServices()
-        let root = WorkbenchView(store: store, ghostty: ghostty, connections: services)
+        let auth = GitHubAuthController(services: CompositionRoot.makeGitHubAuthServices(), store: store)
+        self.authController = auth
+        let root = WorkbenchView(store: store, ghostty: ghostty, connections: services, auth: auth)
         self.root = root
 
         let win = NSWindow(
@@ -37,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Opacity is applied straight to the live window; restoring prefs (below) fires this once.
         store.onWindowAlpha = { [weak win] alpha in win?.alphaValue = alpha }
         restoreState(into: store, connections: services, preferences: preferences)
+        auth.restore()   // recompute signed-in state from the Keychain
 
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async { root.focusTerminal() }
