@@ -1,0 +1,34 @@
+{
+  "data": {
+    "viewer": {
+      "organizations": {
+        "pageInfo": { "hasNextPage": false, "endCursor": "Y3Vyc29yOjE=" },
+        "nodes": [
+          {
+            "id": "O_1",
+            "login": "acme-corp",
+            "name": "Acme Corp",
+            "repositories": {
+              "nodes": [
+                {
+                  "id": "R_1",
+                  "name": "api-gateway",
+                  "owner": { "login": "acme-corp" },
+                  "issues": { "totalCount": 8 },
+                  "pullRequests": { "totalCount": 3 }
+                },
+                {
+                  "id": "R_2",
+                  "name": "web-dashboard",
+                  "owner": { "login": "acme-corp" },
+                  "issues": { "totalCount": 2 },
+                  "pullRequests": { "totalCount": 0 }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

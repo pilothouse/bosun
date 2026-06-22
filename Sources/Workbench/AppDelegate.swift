@@ -15,7 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let preferences = CompositionRoot.makePreferencesStore()
         let store = Store(preferences: preferences)
         let services = CompositionRoot.makeConnectionServices()
-        let auth = GitHubAuthController(services: CompositionRoot.makeGitHubAuthServices(), store: store)
+        let githubServices = CompositionRoot.makeGitHubAuthServices()
+        let auth = GitHubAuthController(services: githubServices, store: store)
         self.authController = auth
         let root = WorkbenchView(store: store, ghostty: ghostty, connections: services, auth: auth)
         self.root = root
@@ -41,12 +42,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.onWindowAlpha = { [weak win] alpha in win?.alphaValue = alpha }
         restoreState(into: store, connections: services, preferences: preferences)
         auth.restore()   // recompute signed-in state from the Keychain
+        runAPISmokeIfRequested(githubServices.api)
 
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async { root.focusTerminal() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Dev-only end-to-end probe of the live `GitHubAPI` client, off unless `BOSUN_API_SMOKE=1`.
+    /// It fetches the viewer and their organizations and logs what decoded — proof the GraphQL +
+    /// REST path works against real github.com, without wiring any of it into the UI (that's
+    /// issue #4). The token comes from the Keychain (the signed-in user); set `BOSUN_GITHUB_TOKEN`
+    /// to a PAT to probe without signing in. A run with no usable token logs `.unauthorized`.
+    @MainActor
+    private func runAPISmokeIfRequested(_ api: GitHubAPI) {
+        guard ProcessInfo.processInfo.environment["BOSUN_API_SMOKE"] == "1" else { return }
+        let envToken = ProcessInfo.processInfo.environment["BOSUN_GITHUB_TOKEN"]
+        let client = (envToken?.isEmpty == false) ? CompositionRoot.makeGitHubAPI(token: envToken!) : api
+        Task {
+            do {
+                let user = try await client.currentUser()
+                NSLog("[api-smoke] viewer: \(user.login) (\(user.name ?? "—"))")
+                let orgs = try await client.organizations()
+                NSLog("[api-smoke] organizations: \(orgs.count)")
+                for org in orgs.prefix(5) {
+                    let top = org.repositories.first.map {
+                        "\($0.name) [issues \($0.openIssues), PRs \($0.openPullRequests)]"
+                    } ?? "—"
+                    NSLog("[api-smoke]   \(org.login): \(org.repositories.count) repos, e.g. \(top)")
+                }
+            } catch let error as GitHubAPIError {
+                NSLog("[api-smoke] GitHubAPIError: \(error)")
+            } catch {
+                NSLog("[api-smoke] error: \(error)")
+            }
+        }
+    }
 
     /// Restores saved UI preferences (theme, terminal height, selection, window opacity) and then
     /// loads persisted connections into the rail. Preferences are applied first so the restored

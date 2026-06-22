@@ -1,0 +1,31 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": { "hasNextPage": false, "endCursor": "c1" },
+        "nodes": [
+          {
+            "id": "I_1",
+            "number": 482,
+            "title": "Rate limiter drops bursts",
+            "body": "Steps:\n- [x] reproduce\n- [ ] write fix\n- [ ] add test",
+            "createdAt": "2026-06-01T12:00:00Z",
+            "state": "OPEN",
+            "author": { "login": "maya", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
+            "labels": { "nodes": [ { "name": "bug" }, { "name": "p1" } ] }
+          },
+          {
+            "id": "I_2",
+            "number": 440,
+            "title": "Epic: observability",
+            "body": "No checkboxes here.",
+            "createdAt": "2026-05-20T09:30:00Z",
+            "state": "OPEN",
+            "author": null,
+            "labels": { "nodes": [] }
+          }
+        ]
+      }
+    }
+  }
+}

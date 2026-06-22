@@ -68,3 +68,30 @@ public enum AuthError: Error, Sendable, Equatable {
     case expired
     case transport(String)
 }
+
+/// Read seam for live GitHub data. One cohesive port over both transports the adapter uses
+/// (GraphQL for the nested org/repo/item fetches, REST where it's simpler), so a use case
+/// takes it as a single collaborator. The concrete adapter (`GitHubAPIClient`, URLSession →
+/// api.github.com, injected the Keychain token) lives in Infrastructure and is wired in
+/// `CompositionRoot`. Every method returns pure `Domain` entities — the App layer adds the UI.
+public protocol GitHubAPI: Sendable {
+    /// The authenticated user behind the stored token.
+    func currentUser() async throws -> GitHubUser
+    /// The viewer's organizations, each with its repositories and their open-work counts.
+    func organizations() async throws -> [GitHubOrg]
+    /// Open issues or pull requests in a repo (lead fields only — no comments/checks).
+    func items(owner: String, repo: String, kind: GitHubItemKind) async throws -> [GitHubItem]
+    /// One item fully hydrated: body-derived tasks, comments, and (for PRs) check runs.
+    func itemDetail(owner: String, repo: String, number: Int) async throws -> GitHubItem
+}
+
+/// Why a GitHub API call failed, in terms the App layer can act on rather than raw HTTP. The
+/// adapter maps status codes and decode failures onto these; the token is never echoed back.
+public enum GitHubAPIError: Error, Sendable, Equatable {
+    case unauthorized                  // 401, or no token stored — the user must (re)authenticate
+    case rateLimited(resetAt: Date?)   // 403 with the request budget exhausted; resets at `resetAt`
+    case notFound                      // 404 — repo/item missing or not visible to this token
+    case http(status: Int)             // any other non-2xx response
+    case decoding(String)              // a 2xx body that didn't match the expected shape
+    case transport(String)             // URLSession/connection failure
+}

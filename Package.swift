@@ -78,5 +78,13 @@ let package = Package(
         // ── Contract tests on public APIs (a human writes/reviews these). ──
         .testTarget(name: "DomainTests", dependencies: ["Domain"]),
         .testTarget(name: "ApplicationTests", dependencies: ["Application"]),
+        // Infrastructure adapters are exercised through their ports against a stubbed
+        // URLSession + JSON fixtures — no live network. Drives `GitHubAPIClient`'s REST/GraphQL
+        // decoding, pagination, and status→error mapping.
+        .testTarget(
+            name: "InfrastructureTests",
+            dependencies: ["Infrastructure", "Application", "Domain"],
+            resources: [.copy("Fixtures")]
+        ),
     ]
 )

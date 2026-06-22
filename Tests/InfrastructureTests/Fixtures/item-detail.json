@@ -1,0 +1,56 @@
+{
+  "data": {
+    "repository": {
+      "issueOrPullRequest": {
+        "__typename": "PullRequest",
+        "id": "PR_1",
+        "number": 482,
+        "title": "Fix rate limiter burst handling",
+        "body": "Implements the fix.\n- [x] code\n- [ ] docs",
+        "createdAt": "2026-06-02T08:15:00Z",
+        "state": "OPEN",
+        "isDraft": false,
+        "additions": 124,
+        "deletions": 18,
+        "headRefName": "fix/rate-limiter",
+        "author": { "login": "maya", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
+        "labels": { "nodes": [ { "name": "bug" } ] },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "statusCheckRollup": {
+                  "contexts": {
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "CI / build",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "startedAt": "2026-06-02T08:16:00Z",
+                        "completedAt": "2026-06-02T08:17:42Z"
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "CI / e2e",
+                        "status": "IN_PROGRESS",
+                        "conclusion": null,
+                        "startedAt": "2026-06-02T08:16:00Z",
+                        "completedAt": null
+                      },
+                      {
+                        "__typename": "StatusContext",
+                        "context": "license/cla",
+                        "state": "SUCCESS"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
