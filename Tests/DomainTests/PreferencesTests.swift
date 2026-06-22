@@ -66,4 +66,28 @@ final class PreferencesTests: XCTestCase {
 
         XCTAssertEqual(decoded.windowAlpha, 0.3, "clamping holds however a Preferences is built")
     }
+
+    func testFollowedOrgsDefaultsToNil() {
+        XCTAssertNil(Preferences.default.followedOrgs,
+                     "an uncustomized list means 'show every org GitHub returns'")
+    }
+
+    func testFollowedOrgsRoundTripsThroughCodable() throws {
+        let original = Preferences(followedOrgs: ["acme", "widgets"])
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.followedOrgs, ["acme", "widgets"])
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutFollowedOrgsFallsBackToNil() throws {
+        // A payload written by a build before org-following existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertNil(decoded.followedOrgs)
+    }
 }

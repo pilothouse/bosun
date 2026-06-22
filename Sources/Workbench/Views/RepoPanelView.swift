@@ -6,6 +6,8 @@ final class RepoPanelView: FlippedView {
     var onSelectRepo: ((String, String) -> Void)?
     /// Open an item's detail by its number. Wired to the data controller.
     var onSelectItem: ((Int) -> Void)?
+    /// Open the "manage organizations" sheet (follow/unfollow + reorder).
+    var onManageOrgs: (() -> Void)?
 
     init(store: Store) {
         self.store = store
@@ -28,7 +30,11 @@ final class RepoPanelView: FlippedView {
     /// the fetch error when one occurred, otherwise the genuinely-empty result.
     private func orgsEmptyHint() -> String {
         if let error = store.dataError { return error }
-        if case .signedIn = store.authState { return "No organizations for this account." }
+        if case .signedIn = store.authState {
+            // Signed in with orgs available, but the user has hidden them all via "manage".
+            if !store.orgs.isEmpty { return "All organizations are hidden. Tap “manage” to show some." }
+            return "No organizations for this account."
+        }
         return "Sign in to GitHub to load your organizations and repositories."
     }
 
@@ -40,18 +46,25 @@ final class RepoPanelView: FlippedView {
         let head = FlippedView(frame: NSRect(x: 0, y: y, width: w, height: 30))
         let hl = label("ORGANIZATIONS", mono(9.5, .semibold), t.txt4)
         hl.frame = NSRect(x: 14, y: 9, width: 160, height: 14); head.addSubview(hl)
-        let manage = label("manage", sys(11, .semibold), t.accent, align: .right)
-        manage.frame = NSRect(x: w - 70, y: 9, width: 56, height: 14); head.addSubview(manage)
+        // The "manage" link opens the follow/unfollow + reorder sheet.
+        let manage = ClickRow(bg: nil, radius: 5)
+        manage.hoverColor = t.hover
+        manage.frame = NSRect(x: w - 78, y: 4, width: 66, height: 24)
+        manage.onClick = { [weak self] in self?.onManageOrgs?() }
+        let manageLabel = label("manage", sys(11, .semibold), t.accent, align: .right)
+        manageLabel.frame = NSRect(x: 0, y: 5, width: 58, height: 14); manage.addSubview(manageLabel)
+        head.addSubview(manage)
         doc.addSubview(head); y += 30
 
-        if store.orgs.isEmpty {
+        let orgs = store.visibleOrgs
+        if orgs.isEmpty {
             let hint = label(orgsEmptyHint(), sys(11.5), t.txt4, lines: 0)
             hint.frame = NSRect(x: 14, y: y + 4, width: w - 28, height: 34); doc.addSubview(hint)
             doc.frame.size.height = y + 44
             return (doc, y + 44)
         }
 
-        for org in store.orgs {
+        for org in orgs {
             let expanded = store.expandedOrgs.contains(org.id)
             let row = ClickRow(bg: nil)
             row.hoverColor = t.hover

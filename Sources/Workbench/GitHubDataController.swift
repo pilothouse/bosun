@@ -34,9 +34,11 @@ final class GitHubDataController {
             do {
                 let orgs = try await api.organizations()
                 store.orgs = orgs.map(Org.init(domain:))
-                guard let firstOrg = orgs.first else { clearItems(); return }
+                // Honor the user's followed/ordered choice for the initial expand + selection, so a
+                // hidden org never steals focus on launch.
+                guard let firstOrg = store.visibleOrgs.first else { clearItems(); return }
                 store.expandedOrgs = [firstOrg.id]
-                if let firstRepo = firstOrg.repositories.first {
+                if let firstRepo = firstOrg.repos.first {
                     selectRepo(owner: firstRepo.owner, name: firstRepo.name)
                 } else {
                     clearItems()

@@ -32,11 +32,15 @@ final class Store {
     var viewMenuOpen = false { didSet { if oldValue != viewMenuOpen { notify() } } }
     var settingsOpen = false { didSet { if oldValue != settingsOpen { notify() } } }
     var newConnectionOpen = false { didSet { if oldValue != newConnectionOpen { notify() } } }
+    var manageOrgsOpen = false { didSet { if oldValue != manageOrgsOpen { notify() } } }
     var authState: AuthState = .signedOut { didSet { if oldValue != authState { notify() } } }
 
     var selectedConnId = "" { didSet { if oldValue != selectedConnId { changed() } } }
     var selectedItemId = "" { didSet { if oldValue != selectedItemId { changed() } } }
     var expandedOrgs: Set<String> = [] { didSet { notify() } }
+    /// The orgs the user follows in the panel, as an ordered list of `Org.id`s. `nil` means the
+    /// list was never customized — show every org GitHub returns (see `visibleOrgs`). Persisted.
+    var followedOrgs: [String]? { didSet { if oldValue != followedOrgs { changed() } } }
 
     /// Live GitHub data, fetched by `GitHubDataController` after sign-in and projected onto the
     /// presentation structs the views render. Empty until the first fetch lands (or after sign-out).
@@ -104,6 +108,15 @@ final class Store {
 
     var listItems: [Item] { tab == .prs ? prs : issues }
 
+    /// The orgs shown in the panel, in the user's chosen order. Derived from the fetched `orgs`
+    /// and the persisted `followedOrgs` choice via the pure `OrgFollowing` rule, so the panel and
+    /// the manage sheet agree on what's visible.
+    var visibleOrgs: [Org] {
+        let order = OrgFollowing.visible(available: orgs.map(\.id), followed: followedOrgs)
+        let byId = Dictionary(orgs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return order.compactMap { byId[$0] }
+    }
+
     /// `owner/name` of the selected repo for the titlebar breadcrumb and panel header.
     var selectedRepoTitle: String { selectedRepoKey ?? "" }
 
@@ -127,7 +140,8 @@ final class Store {
             terminalHeight: Double(terminalHeight),
             selectedConnId: selectedConnId,
             selectedItemId: selectedItemId,
-            windowAlpha: Double(windowAlpha))
+            windowAlpha: Double(windowAlpha),
+            followedOrgs: followedOrgs)
         Task { await preferences.save(snapshot) }
     }
 
@@ -140,6 +154,7 @@ final class Store {
         selectedConnId = p.selectedConnId
         selectedItemId = p.selectedItemId
         windowAlpha = CGFloat(p.windowAlpha)
+        followedOrgs = p.followedOrgs
         isLoading = false
         onWindowAlpha?(windowAlpha)
         refresh()

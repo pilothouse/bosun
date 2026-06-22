@@ -13,6 +13,10 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// Window opacity, clamped to `[minAlpha, 1.0]` so a stored value can never make the
     /// window invisible and unrecoverable.
     public var windowAlpha: Double
+    /// The orgs the user follows in the panel, as an ordered list of org ids. `nil` means the
+    /// list was never customized — show every org GitHub returns. An empty array means the user
+    /// explicitly hid them all. See `OrgFollowing` for how this drives the visible set.
+    public var followedOrgs: [String]?
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -22,13 +26,15 @@ public struct Preferences: Sendable, Equatable, Codable {
         terminalHeight: Double = 240,
         selectedConnId: String = "api-gateway",
         selectedItemId: String = "482",
-        windowAlpha: Double = 1.0
+        windowAlpha: Double = 1.0,
+        followedOrgs: [String]? = nil
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
         self.selectedConnId = selectedConnId
         self.selectedItemId = selectedItemId
         self.windowAlpha = Preferences.clampAlpha(windowAlpha)
+        self.followedOrgs = followedOrgs
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -44,7 +50,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             terminalHeight: try container.decodeIfPresent(Double.self, forKey: .terminalHeight) ?? fallback.terminalHeight,
             selectedConnId: try container.decodeIfPresent(String.self, forKey: .selectedConnId) ?? fallback.selectedConnId,
             selectedItemId: try container.decodeIfPresent(String.self, forKey: .selectedItemId) ?? fallback.selectedItemId,
-            windowAlpha: try container.decodeIfPresent(Double.self, forKey: .windowAlpha) ?? fallback.windowAlpha
+            windowAlpha: try container.decodeIfPresent(Double.self, forKey: .windowAlpha) ?? fallback.windowAlpha,
+            followedOrgs: try container.decodeIfPresent([String].self, forKey: .followedOrgs) ?? fallback.followedOrgs
         )
     }
 

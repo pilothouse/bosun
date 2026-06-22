@@ -82,6 +82,7 @@ final class WorkbenchView: NSView {
     private let repoPanel: RepoPanelView
     private var settings: SettingsPopover?
     private var newConn: NewConnectionSheet?
+    private var manageOrgs: ManageOrgsSheet?
     private var deviceFlow: DeviceFlowSheet?
 
     override var isFlipped: Bool { true }
@@ -116,6 +117,7 @@ final class WorkbenchView: NSView {
 
         repoPanel.onSelectRepo = { [weak self] owner, name in self?.data.selectRepo(owner: owner, name: name) }
         repoPanel.onSelectItem = { [weak self] number in self?.data.selectItem(number: number) }
+        repoPanel.onManageOrgs = { [weak self] in self?.store.manageOrgsOpen = true }
 
         store.observe { [weak self] in self?.onChange() }
         applyTheme()
@@ -223,6 +225,20 @@ final class WorkbenchView: NSView {
             focusTerminal()
         }
         newConn?.needsLayout = true
+
+        // Manage-organizations sheet show/hide.
+        if store.manageOrgsOpen, manageOrgs == nil {
+            let sheet = ManageOrgsSheet(store: store)
+            sheet.onClose = { [weak self] in self?.store.manageOrgsOpen = false }
+            sheet.frame = bounds
+            addSubview(sheet)
+            manageOrgs = sheet
+        } else if !store.manageOrgsOpen, let sheet = manageOrgs {
+            sheet.removeFromSuperview()
+            manageOrgs = nil
+            focusTerminal()
+        }
+        manageOrgs?.needsLayout = true
     }
 
     func focusTerminal() {
@@ -262,6 +278,7 @@ final class WorkbenchView: NSView {
         center.frame = NSRect(x: railW, y: rowY, width: max(0, w - railW - 312), height: rowH)
         settings?.frame = bounds
         newConn?.frame = bounds
+        manageOrgs?.frame = bounds
         deviceFlow?.frame = bounds
     }
 }
