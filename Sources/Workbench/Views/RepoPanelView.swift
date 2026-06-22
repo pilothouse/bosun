@@ -58,8 +58,14 @@ final class RepoPanelView: FlippedView {
 
         let orgs = store.visibleOrgs
         if orgs.isEmpty {
-            let hint = label(orgsEmptyHint(), sys(11.5), t.txt4, lines: 0)
-            hint.frame = NSRect(x: 14, y: y + 4, width: w - 28, height: 34); doc.addSubview(hint)
+            // First load: show a spinner; only fall back to the text hint once the fetch settles.
+            if store.isLoadingOrgs {
+                let spinner = makeSpinner(size: 18)
+                spinner.frame.origin = NSPoint(x: 14, y: y + 6); doc.addSubview(spinner)
+            } else {
+                let hint = label(orgsEmptyHint(), sys(11.5), t.txt4, lines: 0)
+                hint.frame = NSRect(x: 14, y: y + 4, width: w - 28, height: 34); doc.addSubview(hint)
+            }
             doc.frame.size.height = y + 44
             return (doc, y + 44)
         }
@@ -229,7 +235,12 @@ final class RepoPanelView: FlippedView {
         let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: 10))
         var ly: CGFloat = 6
         let items = store.listItems
-        if store.groupBy == .none {
+        if store.isLoadingItems && items.isEmpty {
+            // First load of this repo's items: a spinner where the cards will appear.
+            let spinner = makeSpinner()
+            spinner.frame.origin = NSPoint(x: (w - 20) / 2, y: 16); doc.addSubview(spinner)
+            ly += 52
+        } else if store.groupBy == .none {
             for it in items {
                 let c = itemCard(it, width: w, t: t)
                 c.frame.origin.y = ly; doc.addSubview(c); ly += 58

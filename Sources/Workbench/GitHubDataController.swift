@@ -30,6 +30,7 @@ final class GitHubDataController {
     func load() {
         loadTask?.cancel()
         store.dataError = nil
+        store.isLoadingOrgs = true
         loadTask = Task { @MainActor in
             do {
                 // Orgs and the viewer's own repos load together; the personal repos surface as a
@@ -40,6 +41,7 @@ final class GitHubDataController {
                 var groups = orgs.map(Org.init(domain:))
                 if let personal = Org(personalRepos: personalRepos) { groups.insert(personal, at: 0) }
                 store.orgs = groups
+                store.isLoadingOrgs = false
                 // Honor the user's followed/ordered choice for the initial expand + selection, so a
                 // hidden org never steals focus on launch.
                 guard let firstOrg = store.visibleOrgs.first else { clearItems(); return }
@@ -51,6 +53,8 @@ final class GitHubDataController {
                 }
             } catch {
                 handle(error)
+                // A cancelled load means a newer load() already owns the spinner — leave it on.
+                if !Task.isCancelled { store.isLoadingOrgs = false }
             }
             loadTask = nil
         }
@@ -81,6 +85,10 @@ final class GitHubDataController {
         store.selectedRepoKey = nil
         clearItems()
         store.dataError = nil
+        // Cancelled tasks won't reach their ownership-guarded clears, so reset here.
+        store.isLoadingOrgs = false
+        store.isLoadingItems = false
+        store.isLoadingDetail = false
     }
 
     // MARK: - Private
@@ -89,18 +97,24 @@ final class GitHubDataController {
         itemsTask?.cancel()
         detailTask?.cancel()
         store.dataError = nil
+        store.isLoadingItems = true
         itemsTask = Task { @MainActor in
+            // Only the task whose repo is still the current one owns the spinner: a stale/cancelled
+            // response for a superseded repo must not clear the flag the newer fetch just set.
+            @MainActor func isCurrent() -> Bool { currentRepo?.owner == owner && currentRepo?.name == name }
             do {
                 async let prs = api.items(owner: owner, repo: name, kind: .pullRequest)
                 async let issues = api.items(owner: owner, repo: name, kind: .issue)
                 let (prItems, issueItems) = try await (prs, issues)
                 // Ignore a response that landed after the user switched repos.
-                guard currentRepo?.owner == owner, currentRepo?.name == name else { return }
+                guard isCurrent() else { return }
                 store.prs = prItems.map(Item.init(domain:))
                 store.issues = issueItems.map(Item.init(domain:))
+                store.isLoadingItems = false
                 reconcileSelection(owner: owner, name: name)
             } catch {
                 handle(error)
+                if isCurrent() { store.isLoadingItems = false }
             }
             itemsTask = nil
         }
@@ -127,17 +141,27 @@ final class GitHubDataController {
 
     private func loadDetail(owner: String, name: String, number: Int) {
         detailTask?.cancel()
+        store.isLoadingDetail = true
         detailTask = Task { @MainActor in
+            // The still-current selection owns the spinner; a stale detail leaves it on for the
+            // newer fetch.
+            @MainActor func isCurrent() -> Bool {
+                store.selectedItemId == String(number)
+                    && currentRepo?.owner == owner && currentRepo?.name == name
+            }
             do {
                 let detail = try await api.itemDetail(owner: owner, repo: name, number: number)
                 // Drop a stale detail if the selection moved on while this was in flight.
-                guard store.selectedItemId == String(number),
-                      currentRepo?.owner == owner, currentRepo?.name == name else { return }
+                guard isCurrent() else { return }
                 store.selectedItemDetail = Item(domain: detail)
+                store.isLoadingDetail = false
             } catch {
                 // A detail failure is non-fatal: the lead list item keeps showing, so don't blow
                 // away the whole pane with a global error — just log it.
-                if !(error is CancellationError) { NSLog("[github-data] detail #\(number) failed: \(error)") }
+                if !(error is CancellationError) {
+                    NSLog("[github-data] detail #\(number) failed: \(error)")
+                    if isCurrent() { store.isLoadingDetail = false }
+                }
             }
             detailTask = nil
         }

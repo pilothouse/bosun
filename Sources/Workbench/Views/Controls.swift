@@ -111,6 +111,18 @@ final class Dot: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+/// An indeterminate spinning indicator, already animating and sized to `size`. The caller
+/// positions it and adds it to the view being (re)built; like `DeviceFlowSheet.addSpinner`
+/// it needs no explicit stop — the next `layout()` removes it from the window, halting the timer.
+func makeSpinner(size: CGFloat = 20) -> NSProgressIndicator {
+    let s = NSProgressIndicator(frame: NSRect(x: 0, y: 0, width: size, height: size))
+    s.style = .spinning
+    s.controlSize = size <= 14 ? .small : .regular
+    s.isIndeterminate = true
+    s.startAnimation(nil)
+    return s
+}
+
 /// A small badge: text inside a rounded, tinted, bordered pill.
 func badge(_ text: String, fg: NSColor, bg: NSColor? = nil, border: NSColor? = nil, mono monospaced: Bool = true) -> BoxView {
     let b = BoxView(bg: bg, radius: 5, border: border)

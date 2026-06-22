@@ -55,6 +55,11 @@ final class Store {
     var selectedItemDetail: Item? { didSet { notify() } }
     /// A user-facing message when a fetch fails (e.g. signed out, rate-limited); nil when healthy.
     var dataError: String? { didSet { notify() } }
+    /// Transient first-load flags: a region shows a spinner while its fetch is in flight *and* its
+    /// collection is still empty, so a refresh over existing data never flashes one. Not persisted.
+    var isLoadingOrgs = false { didSet { if oldValue != isLoadingOrgs { notify() } } }
+    var isLoadingItems = false { didSet { if oldValue != isLoadingItems { notify() } } }
+    var isLoadingDetail = false { didSet { if oldValue != isLoadingDetail { notify() } } }
 
     /// Window opacity. It drives the window directly (via `onWindowAlpha`) rather than a content
     /// rebuild, so it is deliberately not part of `notify` — otherwise dragging the opacity

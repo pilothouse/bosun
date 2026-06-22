@@ -139,12 +139,9 @@ final class DeviceFlowSheet: FlippedView {
     }
 
     private func addSpinner(to card: ClickRow, center x: CGFloat, y: CGFloat, size: CGFloat = 20) {
-        let spinner = NSProgressIndicator(frame: NSRect(x: x - size / 2, y: y, width: size, height: size))
-        spinner.style = .spinning
-        spinner.controlSize = size <= 14 ? .small : .regular
-        spinner.isIndeterminate = true
+        let spinner = makeSpinner(size: size)
+        spinner.frame.origin = NSPoint(x: x - size / 2, y: y)
         card.addSubview(spinner)
-        spinner.startAnimation(nil)
     }
 
     private func textButton(_ title: String, t: Theme, accent: Bool, frame: NSRect, action: @escaping () -> Void) -> ClickRow {

@@ -85,6 +85,16 @@ final class DetailView: FlippedView {
         }
         y += 30
 
+        // Hydration spinner: the lead item renders immediately; signal that the full body, tasks,
+        // comments and checks are still being fetched (only on first load, before any detail lands).
+        if store.isLoadingDetail && store.selectedItemDetail == nil {
+            let spinner = makeSpinner(size: 14)
+            spinner.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(spinner)
+            let loading = label("Loading details…", sys(11.5), t.txt4)
+            loading.frame = NSRect(x: padX + 22, y: y, width: 200, height: 16); doc.addSubview(loading)
+            y += 26
+        }
+
         // Body card.
         let bodyText = wrapped(it.body, sys(13.5), t.txt2, width: cw - 34)
         var cardH = bodyText.frame.height + 30
