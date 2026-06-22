@@ -15,6 +15,24 @@ final class TitlebarView: FlippedView {
     func apply() { needsLayout = true }
     override func layout() { super.layout(); rebuild() }
 
+    /// Standard titlebar behaviour on the empty background: drag to move the window, and
+    /// double-click to zoom / minimise per the user's "Double-click a window's title bar to…"
+    /// System Setting (default: zoom — fill the screen, then restore to the previous frame on the
+    /// next double-click, exactly like a native titlebar). The icon buttons are `ClickRow`s that
+    /// consume their own clicks, so this only fires on the background between them.
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        if event.clickCount == 2 {
+            switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+            case "Minimize": window.performMiniaturize(nil)
+            case "None": break
+            default: window.zoom(nil)   // "Maximize" / unset → zoom
+            }
+            return
+        }
+        window.performDrag(with: event)
+    }
+
     private func iconButton(_ symbol: String, tint: NSColor, frame: NSRect, point: CGFloat = 14) -> ClickRow {
         let row = ClickRow(radius: 6)
         row.hoverColor = store.theme.hover
