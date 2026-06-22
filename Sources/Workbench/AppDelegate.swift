@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.authController = auth
         // Live GitHub data: load on sign-in, clear on sign-out. The hooks fire from `auth.restore()`
         // below when a Keychain token already exists, so a returning user sees data immediately.
-        let data = GitHubDataController(api: githubServices.api, store: store)
+        let data = GitHubDataController(api: githubServices.api, cache: githubServices.cache, store: store)
         self.dataController = data
         auth.onSignedIn = { [weak data] in data?.load() }
         auth.onSignedOut = { [weak data] in data?.clear() }

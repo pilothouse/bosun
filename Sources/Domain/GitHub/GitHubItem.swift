@@ -1,13 +1,14 @@
 import Foundation
 
 /// Whether a work item is an issue or a pull request — the two GitHub lists the app shows.
-public enum GitHubItemKind: Sendable, Equatable {
+/// The `String` raw value gives the local cache a stable, readable on-disk form.
+public enum GitHubItemKind: String, Sendable, Equatable, Codable {
     case issue
     case pullRequest
 }
 
 /// The lifecycle state shared by issues and PRs. `merged` is PR-only.
-public enum GitHubItemState: Sendable, Equatable {
+public enum GitHubItemState: String, Sendable, Equatable, Codable {
     case open
     case closed
     case merged
@@ -17,7 +18,7 @@ public enum GitHubItemState: Sendable, Equatable {
 /// collections (`comments`/`checks`) empty; a detail fetch fills them in. `tasks` is derived
 /// from `body` via `GitHubTask.parse`, and PR-only fields (`branch`/`additions`/`deletions`)
 /// stay nil for issues. Pure value type — the presentation layer adds colors and glyphs.
-public struct GitHubItem: Sendable, Equatable, Identifiable {
+public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
     public let id: String
     public let number: Int
     public let kind: GitHubItemKind

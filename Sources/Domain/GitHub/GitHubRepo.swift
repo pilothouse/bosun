@@ -3,7 +3,7 @@ import Foundation
 /// A repository with its open-work counts. `openIssues`/`openPullRequests` are kept separate
 /// (the API reports them separately); the presentation layer decides how to combine them into
 /// the single "open" badge the sidebar shows.
-public struct GitHubRepo: Sendable, Equatable, Identifiable {
+public struct GitHubRepo: Sendable, Equatable, Identifiable, Codable {
     public let id: String
     public let name: String
     public let owner: String

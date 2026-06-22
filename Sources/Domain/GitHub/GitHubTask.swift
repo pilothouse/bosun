@@ -3,7 +3,7 @@ import Foundation
 /// A single GitHub-flavored markdown checkbox lifted out of an issue/PR body, plus the pure
 /// rule that finds them. The presentation layer renders these as the task list; the rule lives
 /// here because "is this line a task, and is it done?" is exactly the kind of `if` Domain owns.
-public struct GitHubTask: Sendable, Equatable {
+public struct GitHubTask: Sendable, Equatable, Codable {
     public let title: String
     public let isDone: Bool
 

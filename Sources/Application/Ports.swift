@@ -88,6 +88,28 @@ public protocol GitHubAPI: Sendable {
     func itemDetail(owner: String, repo: String, number: Int) async throws -> GitHubItem
 }
 
+/// Persistence seam for a local copy of the viewer's GitHub data, so the UI hydrates instantly on
+/// launch and a refresh applies a `GitHubDelta` instead of a full replace. Deliberately non-throwing
+/// and best-effort like `PreferencesStore`: a cache miss or corrupt file reads as empty and a failed
+/// write is dropped — caching must never crash the app or block the live fetch. The cache is scoped
+/// to a single viewer `login`; `saveOrgs` with a different login drops the previous account's data,
+/// and `clear()` is the sign-out wipe. The concrete adapter (a JSON file under Application Support)
+/// lives in Infrastructure and is wired in `CompositionRoot`.
+public protocol GitHubCacheStore: Sendable {
+    /// The login the cached data belongs to, or nil when the cache is empty — lets the caller spot
+    /// an account switch and decide whether to merge against or replace the cached rows.
+    func cachedLogin() async -> String?
+    func loadOrgs() async -> [GitHubOrg]
+    func loadViewerRepos() async -> [GitHubRepo]
+    func loadItems(repoKey: String, kind: GitHubItemKind) async -> [GitHubItem]
+    /// Replace the cached org panel (orgs + the viewer's own repos) for `login`. Saving a login that
+    /// differs from the stored one first drops the previous account's orgs *and* per-repo items.
+    func saveOrgs(_ orgs: [GitHubOrg], viewerRepos: [GitHubRepo], login: String) async
+    func saveItems(_ items: [GitHubItem], repoKey: String, kind: GitHubItemKind) async
+    /// Drop everything (sign-out).
+    func clear() async
+}
+
 /// Why a GitHub API call failed, in terms the App layer can act on rather than raw HTTP. The
 /// adapter maps status codes and decode failures onto these; the token is never echoed back.
 public enum GitHubAPIError: Error, Sendable, Equatable {

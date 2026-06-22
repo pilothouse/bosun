@@ -3,7 +3,7 @@ import Foundation
 /// The outcome of a CI check run, collapsed from GitHub's two-field protocol (`status` while
 /// running, then `conclusion` once `completed`) into one value the UI can render directly.
 /// Pure mapping rule — an unrecognized conclusion degrades to `.neutral` rather than throwing.
-public enum CheckState: Sendable, Equatable {
+public enum CheckState: String, Sendable, Equatable, Codable {
     case queued
     case inProgress
     case success

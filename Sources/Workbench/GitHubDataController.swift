@@ -7,9 +7,15 @@ import Foundation
 /// read, mapping failures onto `Store.dataError`. `@MainActor` because it only ever mutates
 /// `Store` (main-thread UI state); it owns its `Task`s so a repo/item switch cancels stale fetches
 /// and out-of-order responses are dropped. Mirrors `GitHubAuthController`.
+///
+/// Every fetch is **hydrate-then-delta**: the `GitHubCacheStore` copy is projected into the UI first
+/// (instantly, with no spinner), then the live response is diffed against it via `GitHubDelta` and
+/// saved back. The spinner shows only on a cold cache, and a refresh that returns identical data
+/// leaves the store — and therefore the views — untouched.
 @MainActor
 final class GitHubDataController {
     private let api: GitHubAPI
+    private let cache: GitHubCacheStore
     private let store: Store
 
     private var loadTask: Task<Void, Never>?
@@ -20,43 +26,77 @@ final class GitHubDataController {
     /// late responses for a previous repo can be ignored.
     private var currentRepo: (owner: String, name: String)?
 
-    init(api: GitHubAPI, store: Store) {
+    init(api: GitHubAPI, cache: GitHubCacheStore, store: Store) {
         self.api = api
+        self.cache = cache
         self.store = store
     }
 
-    /// Fetch the viewer's orgs/repos after sign-in, expand the first org, and load the first
-    /// repo's items. Safe to call again — it cancels any in-flight load first.
+    /// Hydrate the orgs panel from the local cache (instant, no spinner), then fetch live, diff it
+    /// against the cache, and update the UI only where rows actually changed. The spinner shows only
+    /// when the cache is cold. Safe to call again — it cancels any in-flight load first.
     func load() {
         loadTask?.cancel()
         store.dataError = nil
-        store.isLoadingOrgs = true
         loadTask = Task { @MainActor in
+            // 1) Hydrate from cache. Select the first repo only when nothing is selected yet (a fresh
+            // launch), so a mid-session reload never yanks the user's current selection.
+            let cachedOrgs = await cache.loadOrgs()
+            let cachedRepos = await cache.loadViewerRepos()
+            let hadCache = !cachedOrgs.isEmpty || !cachedRepos.isEmpty
+            if hadCache {
+                applyOrgGroups(orgs: cachedOrgs, personalRepos: cachedRepos,
+                               selectFirst: store.selectedRepoKey == nil)
+            } else {
+                store.isLoadingOrgs = true   // cold start: this is the one spinner the user sees
+            }
+
+            // 2) Fetch live and apply the delta. Orgs and the viewer's own repos load together; the
+            // personal repos surface as a synthetic group pinned at the top so a no-org account still
+            // sees live data. `currentUser` scopes the cache to the signed-in login.
             do {
-                // Orgs and the viewer's own repos load together; the personal repos surface as a
-                // synthetic group pinned at the top so a no-org account still sees live data.
                 async let orgsCall = api.organizations()
                 async let personalCall = api.viewerRepositories()
+                async let userCall = api.currentUser()
                 let (orgs, personalRepos) = try await (orgsCall, personalCall)
-                var groups = orgs.map(Org.init(domain:))
-                if let personal = Org(personalRepos: personalRepos) { groups.insert(personal, at: 0) }
-                store.orgs = groups
+                let login = (try? await userCall)?.login ?? personalRepos.first?.owner
+
+                let orgsDelta = GitHubDelta.apply(incoming: orgs, to: cachedOrgs)
+                let reposDelta = GitHubDelta.apply(incoming: personalRepos, to: cachedRepos)
+                if let login {
+                    await cache.saveOrgs(orgsDelta.merged, viewerRepos: reposDelta.merged, login: login)
+                }
                 store.isLoadingOrgs = false
-                // Honor the user's followed/ordered choice for the initial expand + selection, so a
-                // hidden org never steals focus on launch.
-                guard let firstOrg = store.visibleOrgs.first else { clearItems(); return }
-                store.expandedOrgs = [firstOrg.id]
-                if let firstRepo = firstOrg.repos.first {
-                    selectRepo(owner: firstRepo.owner, name: firstRepo.name)
-                } else {
-                    clearItems()
+                // Rebuild the panel only when something changed (or it was never populated) — an
+                // unchanged refresh leaves the store, the selection, and the views alone.
+                if !hadCache || !orgsDelta.isUnchanged || !reposDelta.isUnchanged {
+                    applyOrgGroups(orgs: orgsDelta.merged, personalRepos: reposDelta.merged,
+                                   selectFirst: store.selectedRepoKey == nil)
                 }
             } catch {
                 handle(error)
-                // A cancelled load means a newer load() already owns the spinner — leave it on.
+                // A cancelled load means a newer load() already owns the spinner — leave it on. On a
+                // real failure the cached data (if any) stays on screen alongside the error.
                 if !Task.isCancelled { store.isLoadingOrgs = false }
             }
             loadTask = nil
+        }
+    }
+
+    /// Project the org groups into the store, and — when `selectFirst` — expand the first visible org
+    /// and select its first repo (which loads that repo's items). Honors the user's followed/ordered
+    /// choice so a hidden org never steals focus.
+    private func applyOrgGroups(orgs: [GitHubOrg], personalRepos: [GitHubRepo], selectFirst: Bool) {
+        var groups = orgs.map(Org.init(domain:))
+        if let personal = Org(personalRepos: personalRepos) { groups.insert(personal, at: 0) }
+        store.orgs = groups
+        guard selectFirst else { return }
+        guard let firstOrg = store.visibleOrgs.first else { clearItems(); return }
+        store.expandedOrgs = [firstOrg.id]
+        if let firstRepo = firstOrg.repos.first {
+            selectRepo(owner: firstRepo.owner, name: firstRepo.name)
+        } else {
+            clearItems()
         }
     }
 
@@ -89,29 +129,54 @@ final class GitHubDataController {
         store.isLoadingOrgs = false
         store.isLoadingItems = false
         store.isLoadingDetail = false
+        // Drop the on-disk cache too, so the next user to sign in never sees this account's data.
+        Task { await cache.clear() }
     }
 
     // MARK: - Private
 
+    /// Hydrate this repo's PRs/issues from the cache (instant, no spinner), then fetch live, diff
+    /// against the cache, and update only the lists that changed. The spinner shows only when the
+    /// repo has nothing cached.
     private func loadItems(owner: String, name: String) {
         itemsTask?.cancel()
         detailTask?.cancel()
         store.dataError = nil
-        store.isLoadingItems = true
+        let repoKey = "\(owner)/\(name)"
         itemsTask = Task { @MainActor in
-            // Only the task whose repo is still the current one owns the spinner: a stale/cancelled
-            // response for a superseded repo must not clear the flag the newer fetch just set.
+            // Only the task whose repo is still the current one owns the spinner and the store: a
+            // stale/cancelled response for a superseded repo must not stomp the newer fetch.
             @MainActor func isCurrent() -> Bool { currentRepo?.owner == owner && currentRepo?.name == name }
+
+            let cachedPRs = await cache.loadItems(repoKey: repoKey, kind: .pullRequest)
+            let cachedIssues = await cache.loadItems(repoKey: repoKey, kind: .issue)
+            guard isCurrent() else { return }
+            let hadCache = !cachedPRs.isEmpty || !cachedIssues.isEmpty
+            if hadCache {
+                store.prs = cachedPRs.map(Item.init(domain:))
+                store.issues = cachedIssues.map(Item.init(domain:))
+                reconcileSelection(owner: owner, name: name)
+            } else {
+                store.isLoadingItems = true
+            }
+
             do {
                 async let prs = api.items(owner: owner, repo: name, kind: .pullRequest)
                 async let issues = api.items(owner: owner, repo: name, kind: .issue)
                 let (prItems, issueItems) = try await (prs, issues)
                 // Ignore a response that landed after the user switched repos.
                 guard isCurrent() else { return }
-                store.prs = prItems.map(Item.init(domain:))
-                store.issues = issueItems.map(Item.init(domain:))
+                let prDelta = GitHubDelta.apply(incoming: prItems, to: cachedPRs)
+                let issueDelta = GitHubDelta.apply(incoming: issueItems, to: cachedIssues)
+                await cache.saveItems(prDelta.merged, repoKey: repoKey, kind: .pullRequest)
+                await cache.saveItems(issueDelta.merged, repoKey: repoKey, kind: .issue)
+                guard isCurrent() else { return }
                 store.isLoadingItems = false
-                reconcileSelection(owner: owner, name: name)
+                if !hadCache || !prDelta.isUnchanged { store.prs = prDelta.merged.map(Item.init(domain:)) }
+                if !hadCache || !issueDelta.isUnchanged { store.issues = issueDelta.merged.map(Item.init(domain:)) }
+                if !hadCache || !prDelta.isUnchanged || !issueDelta.isUnchanged {
+                    reconcileSelection(owner: owner, name: name)
+                }
             } catch {
                 handle(error)
                 if isCurrent() { store.isLoadingItems = false }

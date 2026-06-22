@@ -19,6 +19,9 @@ struct GitHubAuthServices {
     let tokenStore: GitHubTokenStore
     let authenticate: AuthenticateWithGitHubUseCase
     let api: GitHubAPI
+    /// Local cache of the fetched data so the data controller can hydrate the UI instantly on launch
+    /// and apply a delta on refresh. Cleared on sign-out alongside the token.
+    let cache: GitHubCacheStore
 }
 
 /// The one place allowed to choose concrete adapters and wire them into use cases.
@@ -53,7 +56,8 @@ enum CompositionRoot {
             tokenStore: tokenStore,
             authenticate: AuthenticateWithGitHubUseCase(
                 auth: auth, tokens: tokenStore, sleeper: TaskSleeper()),
-            api: GitHubAPIClient(tokenStore: tokenStore)       // shares the one token store
+            api: GitHubAPIClient(tokenStore: tokenStore),      // shares the one token store
+            cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL())
         )
     }
 

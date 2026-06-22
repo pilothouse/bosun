@@ -2,7 +2,7 @@ import Foundation
 
 /// A GitHub account that authored something — an item or a comment. Just identity and avatar;
 /// the presentation layer derives initials and colors from the login.
-public struct GitHubActor: Sendable, Equatable {
+public struct GitHubActor: Sendable, Equatable, Codable {
     public let login: String
     public let avatarURL: URL?
 
