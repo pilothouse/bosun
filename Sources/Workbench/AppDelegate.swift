@@ -11,11 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ghostty.start()
         installMenu()
 
-        let store = Store()
+        let preferences = CompositionRoot.makePreferencesStore()
+        let store = Store(preferences: preferences)
         let services = CompositionRoot.makeConnectionServices()
         let root = WorkbenchView(store: store, ghostty: ghostty, connections: services)
         self.root = root
-        loadConnections(into: store, using: services)
 
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1340, height: 880),
@@ -34,17 +34,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         win.standardWindowButton(.closeButton)?.superview?.needsLayout = true
 
         self.window = win
+        // Opacity is applied straight to the live window; restoring prefs (below) fires this once.
+        store.onWindowAlpha = { [weak win] alpha in win?.alphaValue = alpha }
+        restoreState(into: store, connections: services, preferences: preferences)
+
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async { root.focusTerminal() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    /// Loads persisted connections into the rail. Starts empty until the user adds one.
-    private func loadConnections(into store: Store, using services: ConnectionServices) {
-        let adapter = services.store
+    /// Restores saved UI preferences (theme, terminal height, selection, window opacity) and then
+    /// loads persisted connections into the rail. Preferences are applied first so the restored
+    /// connection selection is honored when it still exists in the loaded list; otherwise the
+    /// selection falls back to the first connection. The rail starts empty until a connection is added.
+    private func restoreState(into store: Store,
+                              connections services: ConnectionServices,
+                              preferences: PreferencesStore) {
         Task { @MainActor in
-            guard let list = try? await adapter.all() else { return }
+            store.applyPersisted(await preferences.load())
+            guard let list = try? await services.store.all() else { return }
             store.domainConnections = list
             if !list.contains(where: { $0.id.uuidString == store.selectedConnId }) {
                 store.selectedConnId = list.first?.id.uuidString ?? ""

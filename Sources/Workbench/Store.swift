@@ -1,4 +1,5 @@
 import AppKit
+import Application
 import Domain
 
 /// Shared UI state for the Workbench. Views register an `observe` closure that
@@ -11,7 +12,7 @@ final class Store {
         case blocked = "By blocked-by"
     }
 
-    var themeKey = "operator" { didSet { if oldValue != themeKey { notify() } } }
+    var themeKey = "operator" { didSet { if oldValue != themeKey { changed() } } }
     var theme: Theme { Theme.named(themeKey) }
 
     var railCollapsed = false { didSet { if oldValue != railCollapsed { notify() } } }
@@ -21,9 +22,22 @@ final class Store {
     var settingsOpen = false { didSet { if oldValue != settingsOpen { notify() } } }
     var newConnectionOpen = false { didSet { if oldValue != newConnectionOpen { notify() } } }
 
-    var selectedConnId = "api-gateway" { didSet { if oldValue != selectedConnId { notify() } } }
-    var selectedItemId = "482" { didSet { if oldValue != selectedItemId { notify() } } }
+    var selectedConnId = "api-gateway" { didSet { if oldValue != selectedConnId { changed() } } }
+    var selectedItemId = "482" { didSet { if oldValue != selectedItemId { changed() } } }
     var expandedOrgs: Set<String> = ["acme-corp"] { didSet { notify() } }
+
+    /// Window opacity. It drives the window directly (via `onWindowAlpha`) rather than a content
+    /// rebuild, so it is deliberately not part of `notify` — otherwise dragging the opacity
+    /// slider would tear down and rebuild the Settings popover under the cursor.
+    var windowAlpha: CGFloat = 1.0 {
+        didSet {
+            guard !isLoading, oldValue != windowAlpha else { return }
+            onWindowAlpha?(windowAlpha)
+            persist()
+        }
+    }
+    /// Set by the App layer to apply opacity to the live `NSWindow`.
+    var onWindowAlpha: ((CGFloat) -> Void)?
 
     /// Persisted connections (source of truth), loaded from the store at launch and mutated by
     /// the New-connection flow. The id of the connection the sheet is editing (nil = adding).
@@ -31,7 +45,19 @@ final class Store {
     var editingConnId: String?
 
     /// Terminal height drives layout only (no content rebuild), so it is not part of `notify`.
+    /// It changes on every drag frame, so it is persisted on gesture end (see
+    /// `TerminalContainerView`), not here.
     var terminalHeight: CGFloat = 240
+
+    /// Persistence seam for UI preferences (loaded at launch, saved on change).
+    private let preferences: PreferencesStore
+    /// True while `applyPersisted` is restoring state, so the property observers don't re-save
+    /// the values we just loaded or rebuild the UI field-by-field.
+    private var isLoading = false
+
+    init(preferences: PreferencesStore) {
+        self.preferences = preferences
+    }
 
     /// Presentation projections the rail/header read from.
     var connections: [Connection] { domainConnections.map(Connection.init(domain:)) }
@@ -49,6 +75,40 @@ final class Store {
     private var observers: [() -> Void] = []
     func observe(_ f: @escaping () -> Void) { observers.append(f) }
     private func notify() { observers.forEach { $0() } }
+
+    /// A persisted field changed by the user: repaint and save. Suppressed during a restore.
+    private func changed() {
+        guard !isLoading else { return }
+        notify()
+        persist()
+    }
+
+    /// Snapshot the persisted fields and save them. Called from `changed()` and directly by the
+    /// terminal dock at the end of a resize. A no-op while restoring.
+    func persist() {
+        guard !isLoading else { return }
+        let snapshot = Preferences(
+            themeKey: themeKey,
+            terminalHeight: Double(terminalHeight),
+            selectedConnId: selectedConnId,
+            selectedItemId: selectedItemId,
+            windowAlpha: Double(windowAlpha))
+        Task { await preferences.save(snapshot) }
+    }
+
+    /// Restore saved preferences at launch, then repaint once. Connection-selection validity is
+    /// reconciled by the caller against the loaded connection list.
+    func applyPersisted(_ p: Preferences) {
+        isLoading = true
+        themeKey = p.themeKey
+        terminalHeight = CGFloat(p.terminalHeight)
+        selectedConnId = p.selectedConnId
+        selectedItemId = p.selectedItemId
+        windowAlpha = CGFloat(p.windowAlpha)
+        isLoading = false
+        onWindowAlpha?(windowAlpha)
+        refresh()
+    }
 
     /// Force a content refresh (e.g., after the terminal view is attached).
     func refresh() { notify() }

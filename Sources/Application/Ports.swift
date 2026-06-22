@@ -27,3 +27,13 @@ public protocol ConnectionStore: Sendable {
     func save(_ connection: Connection) async throws
     func delete(id: UUID) async throws
 }
+
+/// Persistence seam for UI preferences. The App layer loads once at launch and saves a
+/// snapshot whenever a tracked field changes; a concrete adapter (UserDefaults) lives in
+/// Infrastructure and is wired in `CompositionRoot`. Deliberately non-throwing: a failed
+/// preference write must never surface an error to the user — `load` falls back to defaults
+/// and `save` is best-effort.
+public protocol PreferencesStore: Sendable {
+    func load() async -> Preferences
+    func save(_ preferences: Preferences) async
+}

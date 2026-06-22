@@ -1,9 +1,13 @@
 import AppKit
+import Domain
 
-/// Full-bounds overlay with a theme picker card in the top-right.
+/// Full-bounds overlay with a theme picker + window-opacity card in the top-right.
 final class SettingsPopover: FlippedView {
     let store: Store
     var onClose: (() -> Void)?
+    /// Kept across rebuilds so dragging the opacity slider can update the readout live (opacity
+    /// changes deliberately don't trigger a full relayout — see `Store.windowAlpha`).
+    private var opacityReadout: NSTextField?
 
     init(store: Store) {
         self.store = store
@@ -22,7 +26,7 @@ final class SettingsPopover: FlippedView {
 
         let cardW: CGFloat = 288
         let rows = Theme.all
-        let cardH: CGFloat = 44 + CGFloat(rows.count) * 50 + 54
+        let cardH: CGFloat = 44 + CGFloat(rows.count) * 50 + 54 + 86
         // Card swallows clicks (ClickRow doesn't forward mouseDown).
         let card = ClickRow(bg: t.panel, radius: 12)
         card.layer?.borderWidth = 1
@@ -67,6 +71,31 @@ final class SettingsPopover: FlippedView {
         let foot = label("More themes are coming — these will be fully user-configurable.", sys(11), t.txt4, lines: 2)
         foot.frame = NSRect(x: 15, y: y + 8, width: cardW - 30, height: 34); card.addSubview(foot)
 
+        // ── Window section: opacity slider. ──
+        let secY = y + 8 + 34 + 6
+        let div = BoxView(bg: t.line2); div.frame = NSRect(x: 15, y: secY, width: cardW - 30, height: 1); card.addSubview(div)
+        let whdr = label("WINDOW", mono(9.5, .semibold), t.txt4)
+        whdr.frame = NSRect(x: 15, y: secY + 12, width: 200, height: 14); card.addSubview(whdr)
+
+        let opName = label("Opacity", sys(12.5, .semibold), t.txt)
+        opName.frame = NSRect(x: 15, y: secY + 34, width: 120, height: 16); card.addSubview(opName)
+        let readout = label(percentText, mono(10.5), t.txt4, align: .right)
+        readout.frame = NSRect(x: cardW - 70, y: secY + 35, width: 55, height: 14); card.addSubview(readout)
+        opacityReadout = readout
+
+        let slider = NSSlider(value: Double(store.windowAlpha),
+                              minValue: Double(Preferences.minAlpha), maxValue: 1.0,
+                              target: self, action: #selector(opacityChanged(_:)))
+        slider.isContinuous = true
+        slider.frame = NSRect(x: 15, y: secY + 56, width: cardW - 30, height: 20); card.addSubview(slider)
+
         addSubview(card)
+    }
+
+    private var percentText: String { "\(Int((store.windowAlpha * 100).rounded()))%" }
+
+    @objc private func opacityChanged(_ sender: NSSlider) {
+        store.windowAlpha = CGFloat(sender.doubleValue)
+        opacityReadout?.stringValue = percentText
     }
 }

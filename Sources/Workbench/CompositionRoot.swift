@@ -31,6 +31,10 @@ enum CompositionRoot {
             remove: RemoveConnectionUseCase(store: store)
         )
     }
+
+    static func makePreferencesStore() -> PreferencesStore {
+        UserDefaultsPreferencesStore()
+    }
 }
 
 // An AppKit controller stays thin — it parses input and calls the use case:

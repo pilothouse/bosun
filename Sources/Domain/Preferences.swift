@@ -1,0 +1,54 @@
+import Foundation
+
+/// UI preferences that survive a relaunch: the chosen theme, the docked-terminal height, the
+/// last selection (connection + item), and the window opacity. Pure value type — the I/O of
+/// reading and writing it lives behind the `PreferencesStore` port and its UserDefaults
+/// adapter. Heights and alpha are `Double` (not `CGFloat`) so Domain stays free of
+/// CoreGraphics; the App layer converts at the boundary.
+public struct Preferences: Sendable, Equatable, Codable {
+    public var themeKey: String
+    public var terminalHeight: Double
+    public var selectedConnId: String
+    public var selectedItemId: String
+    /// Window opacity, clamped to `[minAlpha, 1.0]` so a stored value can never make the
+    /// window invisible and unrecoverable.
+    public var windowAlpha: Double
+
+    /// The lowest opacity we let the window reach — below this the chrome is unusable.
+    public static let minAlpha: Double = 0.3
+
+    public init(
+        themeKey: String = "operator",
+        terminalHeight: Double = 240,
+        selectedConnId: String = "api-gateway",
+        selectedItemId: String = "482",
+        windowAlpha: Double = 1.0
+    ) {
+        self.themeKey = themeKey
+        self.terminalHeight = terminalHeight
+        self.selectedConnId = selectedConnId
+        self.selectedItemId = selectedItemId
+        self.windowAlpha = Preferences.clampAlpha(windowAlpha)
+    }
+
+    /// The starting state used on first launch and as the fallback for any missing/corrupt field.
+    public static let `default` = Preferences()
+
+    /// Tolerant decoding: a key absent from the stored payload (an older or newer build) decodes
+    /// to its default instead of throwing, and the alpha invariant is re-applied.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = Preferences.default
+        self.init(
+            themeKey: try container.decodeIfPresent(String.self, forKey: .themeKey) ?? fallback.themeKey,
+            terminalHeight: try container.decodeIfPresent(Double.self, forKey: .terminalHeight) ?? fallback.terminalHeight,
+            selectedConnId: try container.decodeIfPresent(String.self, forKey: .selectedConnId) ?? fallback.selectedConnId,
+            selectedItemId: try container.decodeIfPresent(String.self, forKey: .selectedItemId) ?? fallback.selectedItemId,
+            windowAlpha: try container.decodeIfPresent(Double.self, forKey: .windowAlpha) ?? fallback.windowAlpha
+        )
+    }
+
+    private static func clampAlpha(_ value: Double) -> Double {
+        min(1.0, max(minAlpha, value))
+    }
+}

@@ -5,11 +5,13 @@ import Domain
 final class DragHandle: FlippedView {
     var onBegin: (() -> Void)?
     var onDrag: ((CGFloat) -> Void)?
+    var onEnd: (() -> Void)?
     private var startY: CGFloat = 0
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeUpDown) }
     override func mouseDown(with e: NSEvent) { startY = e.locationInWindow.y; onBegin?() }
     override func mouseDragged(with e: NSEvent) { onDrag?(e.locationInWindow.y - startY) }
+    override func mouseUp(with e: NSEvent) { onEnd?() }
 }
 
 /// One terminal tab: a live libghostty surface (or the unavailable placeholder) plus its label.
@@ -60,6 +62,8 @@ final class TerminalContainerView: FlippedView {
             self.store.terminalHeight = max(120, min(760, self.startHeight + dy))
             self.onRelayout?()
         }
+        // Persist the final height once the drag ends, not on every frame.
+        handle.onEnd = { [weak self] in self?.store.persist() }
 
         // Seed the dock with one session. When libghostty is down, that's the error placeholder.
         if available {
@@ -282,6 +286,7 @@ final class TerminalContainerView: FlippedView {
             guard let self else { return }
             self.store.terminalHeight = self.store.terminalHeight > 500 ? 240 : 700
             self.onRelayout?()
+            self.store.persist()
         }
         bar.addSubview(chevBtn)
         addSubview(bar)
