@@ -28,16 +28,19 @@ final class TerminalSession {
     var surfaceView: GhosttySurfaceView? { view as? GhosttySurfaceView }
 }
 
-/// Terminal dock: drag handle + live tab strip + the active libghostty surface. Manages a set of
-/// sessions (local shells and SSH connections); closing the last tab opens a fresh local one so the
-/// dock is never empty and `exit` never quits the app.
+/// Terminal dock: drag handle + live tab strip + the active libghostty surface. Order and active
+/// selection are delegated to the pure `TerminalTabs` model (unit-tested in Domain); this view
+/// only owns the id→surface mapping and the AppKit chrome. Closing the last tab opens a fresh
+/// local one so the dock is never empty and `exit` never quits the app.
 final class TerminalContainerView: FlippedView {
     let store: Store
     private let ghostty: GhosttyApp
     private let available: Bool
 
-    private var sessions: [TerminalSession] = []
-    private var activeId: UUID?
+    /// Ordering + which tab is active — the tested rule lives in Domain.
+    private var tabs = TerminalTabs<UUID>()
+    /// id → session (the surface view + label). Kept in sync with `tabs.ids`.
+    private var views: [UUID: TerminalSession] = [:]
 
     var onRelayout: (() -> Void)?
 
@@ -60,13 +63,10 @@ final class TerminalContainerView: FlippedView {
 
         // Seed the dock with one session. When libghostty is down, that's the error placeholder.
         if available {
-            let s = makeLocalSession()
-            sessions = [s]
-            activeId = s.id
+            register(makeLocalSession())
         } else if case .unavailable(let stage) = ghostty.availability {
-            sessions = [TerminalSession(view: TerminalUnavailableView(stage: stage),
-                                        title: "terminal", dot: Status.red)]
-            activeId = sessions.first?.id
+            register(TerminalSession(view: TerminalUnavailableView(stage: stage),
+                                     title: "terminal", dot: Status.red))
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -74,12 +74,14 @@ final class TerminalContainerView: FlippedView {
     func apply() { needsLayout = true }
 
     var activeSurfaceView: GhosttySurfaceView? {
-        sessions.first { $0.id == activeId }?.surfaceView
+        tabs.activeID.flatMap { views[$0]?.surfaceView }
     }
 
-    // MARK: Session lifecycle
+    private var orderedSessions: [TerminalSession] { tabs.ids.compactMap { views[$0] } }
 
-    /// Open a new local-shell tab and focus it.
+    // MARK: Tab lifecycle (public triggers: + button, tab clicks, native ghostty keybindings)
+
+    /// Open a new local-shell tab and focus it (⌘T / the + button).
     func openLocalTab() {
         guard available else { return }
         add(makeLocalSession())
@@ -88,52 +90,82 @@ final class TerminalContainerView: FlippedView {
     /// Open a new tab that runs `command` (e.g. an SSH session), labelled `title`, and focus it.
     func openConnection(command: String, title: String) {
         guard available, let app = ghostty.app else { return }
-        let g = GhosttySurfaceView(app: app, command: command)
-        add(wire(TerminalSession(view: g, title: title, dot: Status.green), surface: g))
+        let surface = GhosttySurfaceView(app: app, command: command)
+        add(wire(TerminalSession(view: surface, title: title, dot: Status.green), surface: surface))
     }
+
+    /// Jump to another tab (native ⌘1…9 / next / previous / last).
+    func gotoTab(_ jump: TabJump) {
+        let before = tabs.activeID
+        tabs.goto(jump)
+        guard tabs.activeID != before else { return }
+        refresh()
+        focusActive()
+    }
+
+    /// Close a specific tab (its × button or a native close-tab keybinding), confirming first when
+    /// a foreground process is still running.
+    func requestCloseTab(id: UUID) {
+        let alive = views[id]?.surfaceView?.needsConfirmQuit ?? false
+        requestClose(id: id, processAlive: alive)
+    }
+
+    // MARK: Session plumbing
 
     private func makeLocalSession() -> TerminalSession {
         guard let app = ghostty.app else {
             return TerminalSession(view: TerminalUnavailableView(stage: .application),
                                    title: "terminal", dot: Status.red)
         }
-        let g = GhosttySurfaceView(app: app)
-        return wire(TerminalSession(view: g, title: "zsh", dot: Status.green), surface: g)
+        let surface = GhosttySurfaceView(app: app)
+        return wire(TerminalSession(view: surface, title: "zsh", dot: Status.green), surface: surface)
     }
 
-    /// Hook a surface's lifecycle callbacks back to this dock, keyed by the session id.
+    /// Hook a surface's lifecycle/native-action callbacks back to this dock, keyed by session id.
+    /// Tab mutations fire from inside ghostty_app_tick, so they're deferred off the tick before
+    /// creating/freeing surfaces or spinning a modal.
     private func wire(_ session: TerminalSession, surface: GhosttySurfaceView) -> TerminalSession {
         let id = session.id
-        // close_surface_cb fires inside ghostty_app_tick; defer the alert + teardown off the tick
-        // so we don't free the surface (or spin a modal) while libghostty is still on the stack.
         surface.onChildExit = { [weak self] processAlive in
             DispatchQueue.main.async { self?.requestClose(id: id, processAlive: processAlive) }
         }
         surface.onTitleChange = { [weak self] title in
             self?.updateTitle(id: id, title)
         }
+        surface.onNewTab = { [weak self] in
+            DispatchQueue.main.async { self?.openLocalTab() }
+        }
+        surface.onCloseTab = { [weak self] in
+            DispatchQueue.main.async { self?.requestCloseTab(id: id) }
+        }
+        surface.onGotoTab = { [weak self] jump in
+            DispatchQueue.main.async { self?.gotoTab(jump) }
+        }
         return session
     }
 
+    /// Insert a prepared session into the model + map (no relayout); used to seed the first tab.
+    private func register(_ session: TerminalSession) {
+        views[session.id] = session
+        tabs.open(session.id)
+    }
+
     private func add(_ session: TerminalSession) {
-        sessions.append(session)
-        activeId = session.id
+        register(session)
         refresh()
         focusActive()
     }
 
     private func updateTitle(id: UUID, _ title: String) {
-        guard let s = sessions.first(where: { $0.id == id }) else { return }
+        guard let session = views[id] else { return }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, s.title != trimmed else { return }
-        s.title = trimmed
+        guard !trimmed.isEmpty, session.title != trimmed else { return }
+        session.title = trimmed
         needsLayout = true   // relabel the tab strip; no surface churn
     }
 
-    /// Close requested by libghostty (`exit`) or the tab's × button. Confirms first when a
-    /// foreground process is still running, then tears the tab down.
     private func requestClose(id: UUID, processAlive: Bool) {
-        guard sessions.contains(where: { $0.id == id }) else { return }   // already gone
+        guard views[id] != nil else { return }   // already gone
         if TerminalClosePolicy.shouldConfirmClose(processAlive: processAlive) {
             let alert = NSAlert()
             alert.messageText = "Close this terminal?"
@@ -146,34 +178,30 @@ final class TerminalContainerView: FlippedView {
     }
 
     private func closeSession(id: UUID) {
-        guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
-        let closing = sessions.remove(at: idx)
+        guard let closing = views[id] else { return }
         closing.view.removeFromSuperview()   // drops the last strong ref → deinit frees the surface
+        views[id] = nil
+        tabs.close(id)                        // picks the next active per the tested rule
 
-        if activeId == id {
-            // Prefer the tab that shifted into this slot, else the new last tab.
-            activeId = (sessions.indices.contains(idx) ? sessions[idx] : sessions.last)?.id
-        }
         // Never leave the dock empty (and so never let the last `exit` quit the app).
-        if sessions.isEmpty, available {
-            let s = makeLocalSession()
-            sessions = [s]
-            activeId = s.id
+        if tabs.isEmpty, available {
+            add(makeLocalSession())
+            return
         }
         refresh()
         focusActive()
     }
 
     private func selectSession(id: UUID) {
-        guard activeId != id else { return }
-        activeId = id
+        guard tabs.activeID != id else { return }
+        tabs.select(id)
         refresh()
         focusActive()
     }
 
     private func focusActive() {
-        guard let v = activeSurfaceView else { return }
-        window?.makeFirstResponder(v)
+        guard let view = activeSurfaceView else { return }
+        window?.makeFirstResponder(view)
     }
 
     private func refresh() {
@@ -189,9 +217,11 @@ final class TerminalContainerView: FlippedView {
         layer?.backgroundColor = NSColor.hex(0x0a0c0f).cgColor
 
         // Keep the handle + every session view; rebuild only the chrome (strip, status, grip).
-        let keep = Set(sessions.map { ObjectIdentifier($0.view) } + [ObjectIdentifier(handle)])
+        let keep = Set(views.values.map { ObjectIdentifier($0.view) }).union([ObjectIdentifier(handle)])
         subviews.filter { !keep.contains(ObjectIdentifier($0)) }.forEach { $0.removeFromSuperview() }
-        for s in sessions where s.view.superview !== self { addSubview(s.view, positioned: .below, relativeTo: handle) }
+        for session in views.values where session.view.superview !== self {
+            addSubview(session.view, positioned: .below, relativeTo: handle)
+        }
 
         handle.frame = NSRect(x: 0, y: 0, width: w, height: 7)
         let grip = BoxView(bg: .whiteA(0.18), radius: 1.5)
@@ -205,10 +235,11 @@ final class TerminalContainerView: FlippedView {
         // Active surface fills the rest; inactive sessions stay attached but hidden (so their
         // libghostty surfaces keep their Metal layers instead of being torn down on every switch).
         let top = 7 + barH
-        for s in sessions {
-            let active = s.id == activeId
-            s.view.isHidden = !active
-            if active { s.view.frame = NSRect(x: 0, y: top, width: w, height: max(0, h - top)) }
+        let activeID = tabs.activeID
+        for session in views.values {
+            let active = session.id == activeID
+            session.view.isHidden = !active
+            if active { session.view.frame = NSRect(x: 0, y: top, width: w, height: max(0, h - top)) }
         }
     }
 
@@ -221,9 +252,9 @@ final class TerminalContainerView: FlippedView {
 
         if available {
             var x: CGFloat = 0
-            for s in sessions {
-                let tw = tabWidth(for: s.title)
-                bar.addSubview(tabView(s, width: tw, barH: barH, x: x))
+            for session in orderedSessions {
+                let tw = tabWidth(for: session.title)
+                bar.addSubview(tabView(session, width: tw, barH: barH, x: x))
                 x += tw
             }
             // New local tab.
@@ -240,7 +271,7 @@ final class TerminalContainerView: FlippedView {
         }
 
         // Right status — reflects the active session.
-        let activeTitle = sessions.first { $0.id == activeId }?.title ?? "terminal"
+        let activeTitle = tabs.activeID.flatMap { views[$0]?.title } ?? "terminal"
         let statusText = available ? "● \(activeTitle)" : "● terminal unavailable"
         let stl = label(statusText, mono(10), available ? Status.green : Status.red, align: .right)
         let chevron = label(store.terminalHeight > 500 ? "⌄" : "⌃", sys(12), .hex(0x9aa0aa), align: .center)
@@ -262,27 +293,24 @@ final class TerminalContainerView: FlippedView {
         min(200, max(86, fitW(title, sys(11.5, .semibold)) + 56))
     }
 
-    private func tabView(_ s: TerminalSession, width tw: CGFloat, barH: CGFloat, x: CGFloat) -> ClickRow {
-        let active = s.id == activeId
+    private func tabView(_ session: TerminalSession, width tw: CGFloat, barH: CGFloat, x: CGFloat) -> ClickRow {
+        let active = session.id == tabs.activeID
         let tab = ClickRow(bg: active ? .hex(0x0a0c0f) : nil)
         tab.hoverColor = active ? nil : .whiteA(0.04)
         tab.frame = NSRect(x: x, y: 0, width: tw, height: barH)
-        tab.onClick = { [weak self] in self?.selectSession(id: s.id) }
+        tab.onClick = { [weak self] in self?.selectSession(id: session.id) }
 
         let underline = BoxView(bg: active ? Status.green : .clear)
         underline.frame = NSRect(x: 0, y: barH - 2, width: tw, height: 2); tab.addSubview(underline)
-        let d = Dot(s.dot, 7); d.frame.origin = NSPoint(x: 13, y: (barH - 7) / 2); tab.addSubview(d)
-        let nm = label(s.title, sys(11.5, active ? .semibold : .regular), active ? .hex(0xe6e8ec) : .hex(0x8a909a))
+        let d = Dot(session.dot, 7); d.frame.origin = NSPoint(x: 13, y: (barH - 7) / 2); tab.addSubview(d)
+        let nm = label(session.title, sys(11.5, active ? .semibold : .regular), active ? .hex(0xe6e8ec) : .hex(0x8a909a))
         nm.frame = NSRect(x: 28, y: 8, width: tw - 28 - 24, height: 16); tab.addSubview(nm)
 
         // Per-tab close (×). Sits above the tab, so its click closes without also selecting.
         let close = ClickRow(radius: 4)
         close.hoverColor = .whiteA(0.12)
         close.frame = NSRect(x: tw - 22, y: (barH - 18) / 2, width: 18, height: 18)
-        close.onClick = { [weak self] in
-            let alive = s.surfaceView?.needsConfirmQuit ?? false
-            self?.requestClose(id: s.id, processAlive: alive)
-        }
+        close.onClick = { [weak self] in self?.requestCloseTab(id: session.id) }
         let xl = label("×", sys(13), .hex(0x8a909a), align: .center)
         xl.frame = close.bounds; close.addSubview(xl)
         tab.addSubview(close)

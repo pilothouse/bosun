@@ -1,5 +1,6 @@
 import AppKit
 import CGhostty
+import Domain
 
 /// A layer-backed NSView that hosts a single libghostty terminal surface.
 /// libghostty creates and drives its own `CAMetalLayer` on this view given the
@@ -13,6 +14,12 @@ final class GhosttySurfaceView: NSView {
 
     /// Invoked when the shell/OSC reports a new title; the dock uses it to label the tab.
     var onTitleChange: ((String) -> Void)?
+
+    /// Native ghostty tab keybindings, surfaced for the dock to act on: open a new tab (⌘T),
+    /// close this surface's tab, and jump to another tab (⌘1…9 / next / previous / last).
+    var onNewTab: (() -> Void)?
+    var onCloseTab: (() -> Void)?
+    var onGotoTab: ((TabJump) -> Void)?
 
     /// Latest shell/OSC-reported title for this surface; the dock reads it to label the tab.
     private(set) var title: String?
@@ -44,6 +51,12 @@ final class GhosttySurfaceView: NSView {
         cfg.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(
             nsview: Unmanaged.passUnretained(self).toOpaque()))
         cfg.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
+
+        // Close the surface as soon as its process exits, rather than showing ghostty's "Process
+        // exited. Press any key to close the terminal." wait screen. ghostty defaults this on for
+        // custom-command surfaces (the SSH tabs), which left those tabs stuck open after `exit`;
+        // forcing it off makes the child-exit close callback fire so the dock removes the tab.
+        cfg.wait_after_command = false
 
         // `cfg.command` only needs to stay valid for the duration of ghostty_surface_new, which
         // copies what it needs — so build the surface inside the C-string's lifetime.

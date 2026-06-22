@@ -91,6 +91,32 @@ final class GhosttyApp {
                     view.postNotification(title: n.title.map { String(cString: $0) } ?? "",
                                           body: n.body.map { String(cString: $0) } ?? "")
                     return true
+                case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
+                    // The child (shell or ssh) exited. Close this surface's tab instead of letting
+                    // ghostty render its "Process exited. Press any key to close the terminal."
+                    // fallback (which it does precisely when this action goes unhandled). The
+                    // process is already gone, so no close confirmation is needed.
+                    view.onChildExit?(false)
+                    return true
+                case GHOSTTY_ACTION_NEW_TAB:
+                    view.onNewTab?()
+                    return true
+                case GHOSTTY_ACTION_CLOSE_TAB:
+                    view.onCloseTab?()
+                    return true
+                case GHOSTTY_ACTION_GOTO_TAB:
+                    // goto_tab encodes -1/-2/-3 as previous/next/last; any other value is a
+                    // 1-based tab index (⌘1…9).
+                    let raw = Int(action.action.goto_tab.rawValue)
+                    let jump: TabJump
+                    switch raw {
+                    case Int(GHOSTTY_GOTO_TAB_PREVIOUS.rawValue): jump = .previous
+                    case Int(GHOSTTY_GOTO_TAB_NEXT.rawValue): jump = .next
+                    case Int(GHOSTTY_GOTO_TAB_LAST.rawValue): jump = .last
+                    default: jump = .index(raw)
+                    }
+                    view.onGotoTab?(jump)
+                    return true
                 default:
                     // Unhandled: return false so libghostty keeps its own default behavior.
                     return false
