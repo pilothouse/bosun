@@ -17,6 +17,10 @@ let package = Package(
         // Dedicated plugins repo: avoids pulling SwiftLint's full dependency tree into the
         // build graph. Functionally identical rules to realm/SwiftLint.
         .package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", from: "0.57.0"),
+        // GitHub-flavored Markdown parser (Swift `Markdown` over C `cmark-gfm`). Source-only —
+        // no linker settings of its own — so it's added to the Workbench target alone and leaves
+        // the vendored libghostty link flags untouched. Renders issue/PR/comment bodies (issue #27).
+        .package(url: "https://github.com/apple/swift-markdown.git", from: "0.6.0"),
     ],
     targets: [
         // C shim exposing libghostty's embedding header to Swift. (App-layer detail.)
@@ -54,7 +58,8 @@ let package = Package(
         // part the compiler can't see) is enforced on Domain/Application above.
         .executableTarget(
             name: "Workbench",
-            dependencies: ["CGhostty", "Application", "Infrastructure", "Domain"],
+            dependencies: ["CGhostty", "Application", "Infrastructure", "Domain",
+                           .product(name: "Markdown", package: "swift-markdown")],
             linkerSettings: [
                 .unsafeFlags(["-L", "Vendor", "-lghostty"]),
                 .linkedFramework("AppKit"),

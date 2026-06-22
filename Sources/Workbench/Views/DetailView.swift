@@ -4,6 +4,11 @@ import AppKit
 final class DetailView: FlippedView {
     let store: Store
     private let scroll = NSScrollView()
+    private let linkDelegate = MarkdownLinkDelegate()
+    // Memoized Markdown renders so `rebuild()` (run on every `layout()` pass) doesn't re-parse.
+    // The attributed string is width-independent; only the cheap height measurement uses width.
+    private var mdCache: [String: NSAttributedString] = [:]
+    private var mdThemeKey = ""
 
     init(store: Store) {
         self.store = store
@@ -29,6 +34,46 @@ final class DetailView: FlippedView {
         let h = l.sizeThatFits(NSSize(width: width, height: 100000)).height
         l.frame = NSRect(x: 0, y: 0, width: width, height: ceil(h))
         return l
+    }
+
+    /// A read-only, non-scrolling text view rendering `text` as themed Markdown, sized to fit
+    /// `width`. Drop-in for `wrapped(...)`: returns an `NSView` the caller positions by frame.
+    private func markdownView(_ text: String, baseFont: NSFont, width: CGFloat) -> NSTextView {
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
+        tv.textStorage?.setAttributedString(cachedMarkdown(text, baseFont: baseFont))
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.drawsBackground = false
+        tv.isVerticallyResizable = false
+        tv.isHorizontallyResizable = false
+        tv.textContainerInset = .zero
+        tv.textContainer?.lineFragmentPadding = 0   // flush-left like the NSTextField it replaces
+        tv.textContainer?.widthTracksTextView = false
+        tv.delegate = linkDelegate
+        tv.linkTextAttributes = [
+            .foregroundColor: store.theme.accent,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .cursor: NSCursor.pointingHand,
+        ]
+        let h = measuredHeight(of: tv, width: width)
+        tv.frame = NSRect(x: 0, y: 0, width: width, height: ceil(h))
+        return tv
+    }
+
+    private func measuredHeight(of tv: NSTextView, width: CGFloat) -> CGFloat {
+        guard let lm = tv.layoutManager, let tc = tv.textContainer else { return 0 }
+        tc.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+        lm.ensureLayout(for: tc)
+        return ceil(lm.usedRect(for: tc).height)
+    }
+
+    private func cachedMarkdown(_ text: String, baseFont: NSFont) -> NSAttributedString {
+        if store.theme.key != mdThemeKey { mdCache.removeAll(); mdThemeKey = store.theme.key }
+        let key = "\(baseFont.pointSize)\u{1}\(text)"
+        if let hit = mdCache[key] { return hit }
+        let rendered = renderMarkdown(text, theme: store.theme, baseFont: baseFont)
+        mdCache[key] = rendered
+        return rendered
     }
 
     private func rebuild() {
@@ -96,7 +141,7 @@ final class DetailView: FlippedView {
         }
 
         // Body card.
-        let bodyText = wrapped(it.body, sys(13.5), t.txt2, width: cw - 34)
+        let bodyText = markdownView(it.body, baseFont: sys(13.5), width: cw - 34)
         var cardH = bodyText.frame.height + 30
         var taskViews: [NSView] = []
         if !it.tasks.isEmpty {
@@ -155,7 +200,7 @@ final class DetailView: FlippedView {
             let av = Dot(cm.color, 26); av.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(av)
             let ai = label(cm.initials, sys(10, .bold), .hex(0x0d0f13), align: .center); ai.frame = NSRect(x: 0, y: 7, width: 26, height: 12); av.addSubview(ai)
             let bubbleW = cw - 37
-            let body = wrapped(cm.body, sys(12.5), t.txt2, width: bubbleW - 26)
+            let body = markdownView(cm.body, baseFont: sys(12.5), width: bubbleW - 26)
             let bubbleH = body.frame.height + 38
             let bubble = BoxView(bg: t.card, radius: 11, border: t.cardbr)
             bubble.frame = NSRect(x: padX + 37, y: y, width: bubbleW, height: bubbleH)
