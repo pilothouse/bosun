@@ -49,6 +49,11 @@ final class TerminalContainerView: FlippedView {
     private let handle = DragHandle()
     private var startHeight: CGFloat = 240
 
+    /// The theme key whose palette was last pushed to libghostty. `syncTerminalTheme` runs on every
+    /// store notify (selection, data, …), so this lets it skip the config rebuild unless the theme
+    /// actually changed. Seeded to the default the first surface is created with in `GhosttyApp.start()`.
+    private var lastThemeKey = "operator"
+
     init(store: Store, ghostty: GhosttyApp) {
         self.store = store
         self.ghostty = ghostty
@@ -76,6 +81,18 @@ final class TerminalContainerView: FlippedView {
     required init?(coder: NSCoder) { fatalError() }
 
     func apply() { needsLayout = true }
+
+    /// Re-skin the live terminal to the current theme: rebuild the libghostty palette and push it to
+    /// the app + every open surface. A no-op unless the theme changed since the last push, so it's
+    /// cheap to call from the general theme/relayout path (issue #9). The dock chrome re-reads the
+    /// theme in `layout()`, so it updates separately via `apply()`.
+    func syncTerminalTheme() {
+        guard available, store.themeKey != lastThemeKey else { return }
+        lastThemeKey = store.themeKey
+        guard let cfg = ghostty.applyPalette(store.theme.terminalPalette) else { return }
+        for session in views.values { session.surfaceView?.updateConfig(cfg) }
+        ghostty.tick()   // nudge a repaint with the new colors
+    }
 
     var activeSurfaceView: GhosttySurfaceView? {
         tabs.activeID.flatMap { views[$0]?.surfaceView }
@@ -218,8 +235,9 @@ final class TerminalContainerView: FlippedView {
 
     override func layout() {
         super.layout()
+        let t = store.theme
         let w = bounds.width, h = bounds.height
-        layer?.backgroundColor = NSColor.hex(0x0a0c0f).cgColor
+        layer?.backgroundColor = t.termBg.cgColor
 
         // Keep the handle + every session view; rebuild only the chrome (strip, status, grip).
         let keep = Set(views.values.map { ObjectIdentifier($0.view) }).union([ObjectIdentifier(handle)])
@@ -229,7 +247,7 @@ final class TerminalContainerView: FlippedView {
         }
 
         handle.frame = NSRect(x: 0, y: 0, width: w, height: 7)
-        let grip = BoxView(bg: .whiteA(0.18), radius: 1.5)
+        let grip = BoxView(bg: t.txt5, radius: 1.5)
         grip.frame = NSRect(x: (w - 34) / 2, y: 2, width: 34, height: 3)
         handle.subviews.forEach { $0.removeFromSuperview() }
         handle.addSubview(grip)
@@ -249,11 +267,12 @@ final class TerminalContainerView: FlippedView {
     }
 
     private func layoutTabBar(w: CGFloat, y: CGFloat, barH: CGFloat) {
+        let t = store.theme
         let bar = FlippedView(frame: NSRect(x: 0, y: y, width: w, height: barH))
         bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor.hex(0x101318).cgColor
-        let topB = BoxView(bg: .whiteA(0.05)); topB.frame = NSRect(x: 0, y: 0, width: w, height: 1); bar.addSubview(topB)
-        let botB = BoxView(bg: .whiteA(0.06)); botB.frame = NSRect(x: 0, y: barH - 1, width: w, height: 1); bar.addSubview(botB)
+        bar.layer?.backgroundColor = t.panel.cgColor
+        let topB = BoxView(bg: t.line); topB.frame = NSRect(x: 0, y: 0, width: w, height: 1); bar.addSubview(topB)
+        let botB = BoxView(bg: t.line2); botB.frame = NSRect(x: 0, y: barH - 1, width: w, height: 1); bar.addSubview(botB)
 
         if available {
             var x: CGFloat = 0
@@ -264,21 +283,21 @@ final class TerminalContainerView: FlippedView {
             }
             // New local tab.
             let plus = ClickRow(bg: nil)
-            plus.hoverColor = .whiteA(0.06)
+            plus.hoverColor = t.hover
             plus.frame = NSRect(x: x + 4, y: 5, width: 22, height: barH - 10)
             plus.onClick = { [weak self] in self?.openLocalTab() }
-            let pl = label("+", sys(15), .hex(0x5b616b), align: .center)
+            let pl = label("+", sys(15), t.txt4, align: .center)
             pl.frame = plus.bounds; plus.addSubview(pl)
             bar.addSubview(plus)
         } else {
-            let nm = label("terminal unavailable", sys(11.5), .hex(0x8a909a))
+            let nm = label("terminal unavailable", sys(11.5), t.txt3)
             nm.frame = NSRect(x: 14, y: 8, width: w - 28, height: 16); bar.addSubview(nm)
         }
 
         // Resize chevron at the far right. There's no duplicate status text here anymore — each
         // tab already carries its own title, and the old right-aligned status label sat on top of
         // the rightmost tab's × button, making that tab impossible to close.
-        let chevron = label(store.terminalHeight > 500 ? "⌄" : "⌃", sys(12), .hex(0x9aa0aa), align: .center)
+        let chevron = label(store.terminalHeight > 500 ? "⌄" : "⌃", sys(12), t.txt3, align: .center)
         let chevBtn = ClickRow(bg: nil)
         chevBtn.frame = NSRect(x: w - 28, y: 6, width: 20, height: 20)
         chevron.frame = chevBtn.bounds; chevBtn.addSubview(chevron)
@@ -298,28 +317,30 @@ final class TerminalContainerView: FlippedView {
     }
 
     private func tabView(_ session: TerminalSession, width tw: CGFloat, barH: CGFloat, x: CGFloat) -> ClickRow {
+        let t = store.theme
         let active = session.id == tabs.activeID
-        let tab = ClickRow(bg: active ? .hex(0x0a0c0f) : nil)
-        tab.hoverColor = active ? nil : .whiteA(0.04)
+        // The active tab reads as a continuation of the surface below it, so it shares the terminal bg.
+        let tab = ClickRow(bg: active ? t.termBg : nil)
+        tab.hoverColor = active ? nil : t.hover
         tab.frame = NSRect(x: x, y: 0, width: tw, height: barH)
         tab.onClick = { [weak self] in self?.selectSession(id: session.id) }
 
         let underline = BoxView(bg: active ? Status.green : .clear)
         underline.frame = NSRect(x: 0, y: barH - 2, width: tw, height: 2); tab.addSubview(underline)
         let d = Dot(session.dot, 7); d.frame.origin = NSPoint(x: 13, y: (barH - 7) / 2); tab.addSubview(d)
-        let nm = label(session.title, sys(11.5, active ? .semibold : .regular), active ? .hex(0xe6e8ec) : .hex(0x8a909a))
+        let nm = label(session.title, sys(11.5, active ? .semibold : .regular), active ? t.txt : t.txt3)
         nm.frame = NSRect(x: 28, y: 8, width: tw - 28 - 24, height: 16); tab.addSubview(nm)
 
         // Per-tab close (×). Sits above the tab, so its click closes without also selecting.
         let close = ClickRow(radius: 4)
-        close.hoverColor = .whiteA(0.12)
+        close.hoverColor = t.hover
         close.frame = NSRect(x: tw - 22, y: (barH - 18) / 2, width: 18, height: 18)
         close.onClick = { [weak self] in self?.requestCloseTab(id: session.id) }
-        let xl = label("×", sys(13), .hex(0x8a909a), align: .center)
+        let xl = label("×", sys(13), t.txt3, align: .center)
         xl.frame = close.bounds; close.addSubview(xl)
         tab.addSubview(close)
 
-        let sep = BoxView(bg: .whiteA(0.05)); sep.frame = NSRect(x: tw - 1, y: 0, width: 1, height: barH); tab.addSubview(sep)
+        let sep = BoxView(bg: t.line); sep.frame = NSRect(x: tw - 1, y: 0, width: 1, height: barH); tab.addSubview(sep)
         return tab
     }
 }

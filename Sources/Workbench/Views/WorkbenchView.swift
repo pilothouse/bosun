@@ -154,6 +154,9 @@ final class WorkbenchView: NSView {
     private func applyTheme() {
         layer?.backgroundColor = store.theme.win.cgColor
         titlebar.apply(); rail.apply(); center.apply(); repoPanel.apply()
+        // Re-skin the live libghostty surfaces too; the dock chrome repaints via center.apply().
+        // Guarded internally so non-theme notifies (selection, data) are a cheap no-op.
+        center.terminal.syncTerminalTheme()
         needsLayout = true
     }
 

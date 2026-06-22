@@ -81,6 +81,13 @@ final class GhosttySurfaceView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) unsupported") }
 
+    /// Push a rebuilt config (e.g. a new theme palette) to this live surface so its colors update
+    /// in place, without recreating the surface (issue #9). Repaints on the next app tick.
+    func updateConfig(_ cfg: ghostty_config_t) {
+        guard let surface else { return }
+        ghostty_surface_update_config(surface, cfg)
+    }
+
     deinit {
         if cursorHidden { NSCursor.unhide() }
         if let surface { ghostty_surface_free(surface) }

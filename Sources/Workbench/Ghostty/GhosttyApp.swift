@@ -31,31 +31,13 @@ final class GhosttyApp {
         guard availability.isReady else { return }
         guard app == nil else { return }
 
-        guard let cfg = ghostty_config_new() else {
+        // Build the initial config from the default theme's terminal palette. The persisted theme
+        // (which may differ) is applied live once it loads, via `applyPalette` (issue #9).
+        guard let cfg = makeConfig(Theme.named("operator").terminalPalette) else {
             NSLog("ghostty_config_new failed")
             availability = .unavailable(.configuration)
             return
         }
-        ghostty_config_load_default_files(cfg)
-
-        // Override the terminal palette to match the mock's docked terminal: a near-black
-        // (#0a0c0f) body with periwinkle prompt/cursor and JetBrains Mono (the font the
-        // design uses; ghostty falls back gracefully if it isn't installed). Loaded after
-        // the user's default files so these win, before finalize.
-        let overrides = """
-        background = 0a0c0f
-        foreground = c2c6cd
-        cursor-color = 7c8cff
-        cursor-style = block
-        font-family = JetBrains Mono
-        """
-        let confURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("bosun-workbench.ghostty.conf")
-        if (try? overrides.write(to: confURL, atomically: true, encoding: .utf8)) != nil {
-            confURL.path.withCString { ghostty_config_load_file(cfg, $0) }
-        }
-
-        ghostty_config_finalize(cfg)
         self.config = cfg
 
         var runtime = ghostty_runtime_config_s(
@@ -164,6 +146,38 @@ final class GhosttyApp {
         }
         self.app = app
         ghostty_app_set_focus(app, true)
+    }
+
+    /// Build a finalized ghostty config: load the user's default files, then override the terminal
+    /// palette (from the active theme) and font so ours win. libghostty parses config from text, so
+    /// the override is written to a temp file and loaded. Returns nil only if libghostty can't
+    /// allocate a config.
+    private func makeConfig(_ palette: TerminalPalette) -> ghostty_config_t? {
+        guard let cfg = ghostty_config_new() else { return nil }
+        ghostty_config_load_default_files(cfg)
+        // JetBrains Mono is the font the design uses; ghostty falls back gracefully if it isn't
+        // installed. Loaded after the defaults so the theme palette wins, before finalize.
+        let overrides = palette.ghosttyConfig(fontFamily: "JetBrains Mono", cursorStyle: "block")
+        let confURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bosun-workbench.ghostty.conf")
+        if (try? overrides.write(to: confURL, atomically: true, encoding: .utf8)) != nil {
+            confURL.path.withCString { ghostty_config_load_file(cfg, $0) }
+        }
+        ghostty_config_finalize(cfg)
+        return cfg
+    }
+
+    /// Rebuild the config for a new terminal palette and push it to the running app, returning the
+    /// finalized config so the dock can update its live surfaces too. The previous config is freed
+    /// once the app has adopted the new one — libghostty copies what it needs (the same assumption
+    /// `start()` relies on when the override text goes out of scope). No-op (nil) when the terminal
+    /// never came up.
+    func applyPalette(_ palette: TerminalPalette) -> ghostty_config_t? {
+        guard let app, let cfg = makeConfig(palette) else { return nil }
+        ghostty_app_update_config(app, cfg)
+        if let old = config { ghostty_config_free(old) }
+        config = cfg
+        return cfg
     }
 
     func tick() {
