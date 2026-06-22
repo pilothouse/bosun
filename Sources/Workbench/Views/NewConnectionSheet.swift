@@ -175,8 +175,9 @@ final class NewConnectionSheet: FlippedView {
         tf.focusRingType = .none
         tf.lineBreakMode = .byTruncatingTail
         tf.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
-        tf.target = self
-        tf.action = #selector(submitAction)
+        // Intentionally no target/action: pressing Return inside a field must NOT submit and
+        // dismiss the sheet (that made it feel impossible to finish editing, e.g. the user field).
+        // Submission is an explicit "Add"/"Save" click.
         return tf
     }
 
@@ -213,8 +214,6 @@ final class NewConnectionSheet: FlippedView {
     }
 
     // MARK: Actions
-
-    @objc private func submitAction() { submit() }
 
     private func submit() {
         syncFromFields()

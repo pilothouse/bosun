@@ -12,18 +12,9 @@ final class CenterColumnView: FlippedView {
     init(store: Store, ghostty: GhosttyApp) {
         self.store = store
         self.detail = DetailView(store: store)
-
-        let surface: NSView
-        if ghostty.availability.isReady, let app = ghostty.app {
-            surface = GhosttySurfaceView(app: app)
-        } else if case .unavailable(let stage) = ghostty.availability {
-            surface = TerminalUnavailableView(stage: stage)
-        } else {
-            // Ready but no surface — shouldn't happen; show an error state rather than a dead pane.
-            surface = TerminalUnavailableView(stage: .application)
-        }
-        self.terminal = TerminalContainerView(store: store, terminal: surface,
-                                              available: ghostty.availability.isReady)
+        // The dock owns its terminal sessions (local shells + SSH connection tabs) and their
+        // close/title lifecycle; closing the last tab reopens a local one rather than quitting.
+        self.terminal = TerminalContainerView(store: store, ghostty: ghostty)
 
         super.init(frame: .zero)
         wantsLayer = true
@@ -109,6 +100,7 @@ final class WorkbenchView: NSView {
         rail.onEdit = { [weak self] id in self?.openSheet(editingId: id) }
         rail.onDelete = { [weak self] id in self?.deleteConnection(id) }
         rail.onToggleFavorite = { [weak self] id in self?.toggleFavorite(id) }
+        rail.onConnect = { [weak self] id in self?.connect(id) }
 
         store.observe { [weak self] in self?.onChange() }
         applyTheme()
@@ -198,8 +190,19 @@ final class WorkbenchView: NSView {
 
     func focusTerminal() {
         // Only the live libghostty surface takes keystrokes; the error placeholder must not grab focus.
-        guard let term = center.terminal.terminalView as? GhosttySurfaceView else { return }
+        guard let term = center.terminal.activeSurfaceView else { return }
         window?.makeFirstResponder(term)
+    }
+
+    /// Open a console tab for a connection. SSH connections launch `ssh [user@]host` in a new
+    /// terminal tab; local folders aren't a remote session, so they're a no-op here for now.
+    private func connect(_ id: String) {
+        guard let uuid = UUID(uuidString: id),
+              let conn = store.domainConnections.first(where: { $0.id == uuid }) else { return }
+        guard case let .ssh(host, port, user) = conn.kind else { return }
+        let command = SSHCommand.command(host: host, port: port, user: user)
+        center.terminal.openConnection(command: command, title: conn.name)
+        store.selectedConnId = id
     }
 
     override func layout() {

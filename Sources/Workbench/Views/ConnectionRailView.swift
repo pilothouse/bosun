@@ -6,6 +6,7 @@ final class ConnectionRailView: FlippedView {
     var onEdit: ((String) -> Void)?
     var onDelete: ((String) -> Void)?
     var onToggleFavorite: ((String) -> Void)?
+    var onConnect: ((String) -> Void)?
 
     init(store: Store) {
         self.store = store
@@ -41,6 +42,10 @@ final class ConnectionRailView: FlippedView {
         row.hoverColor = t.hover
         row.frame = NSRect(x: 0, y: 0, width: width, height: 42)
         row.onClick = { [weak self] in self?.store.selectedConnId = c.id }
+        // SSH connections connect on double-click (an explicit action — single click just selects).
+        if c.kind == .ssh {
+            row.onDoubleClick = { [weak self] in self?.onConnect?(c.id) }
+        }
 
         if selected {
             let bar = BoxView(bg: t.accent)
@@ -73,8 +78,14 @@ final class ConnectionRailView: FlippedView {
         starHit.addSubview(star)
         row.addSubview(starHit)
 
-        // Right-click → Edit / Delete.
+        // Right-click → Connect (SSH only) / Edit / Delete.
         let menu = NSMenu()
+        if c.kind == .ssh {
+            let connect = NSMenuItem(title: "Connect", action: #selector(connectMenuAction(_:)), keyEquivalent: "")
+            connect.target = self; connect.representedObject = c.id
+            menu.addItem(connect)
+            menu.addItem(.separator())
+        }
         let edit = NSMenuItem(title: "Edit…", action: #selector(editMenuAction(_:)), keyEquivalent: "")
         edit.target = self; edit.representedObject = c.id
         let remove = NSMenuItem(title: "Delete", action: #selector(deleteMenuAction(_:)), keyEquivalent: "")
@@ -84,6 +95,9 @@ final class ConnectionRailView: FlippedView {
         return row
     }
 
+    @objc private func connectMenuAction(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String { onConnect?(id) }
+    }
     @objc private func editMenuAction(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String { onEdit?(id) }
     }

@@ -67,9 +67,34 @@ final class GhosttyApp {
                 // wakeup may be called from any thread; coalesce a tick onto main.
                 DispatchQueue.main.async { me.tick() }
             },
-            action_cb: { _, _, _ in
-                // The demo does not act on app actions (set-title, bell, etc.).
-                return false
+            action_cb: { _, target, action in
+                // Only surface-targeted actions are actionable here; resolve the owning view via
+                // the surface's userdata (the same handle `read_clipboard_cb` below relies on).
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                      let ud = ghostty_surface_userdata(target.target.surface) else { return false }
+                let view = Unmanaged<GhosttySurfaceView>.fromOpaque(ud).takeUnretainedValue()
+                switch action.tag {
+                case GHOSTTY_ACTION_SET_TITLE:
+                    if let c = action.action.set_title.title { view.setTitle(String(cString: c)) }
+                    return true
+                case GHOSTTY_ACTION_RING_BELL:
+                    view.ringBell()
+                    return true
+                case GHOSTTY_ACTION_MOUSE_SHAPE:
+                    view.setMouseShape(action.action.mouse_shape)
+                    return true
+                case GHOSTTY_ACTION_MOUSE_VISIBILITY:
+                    view.setMouseVisible(action.action.mouse_visibility == GHOSTTY_MOUSE_VISIBLE)
+                    return true
+                case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+                    let n = action.action.desktop_notification
+                    view.postNotification(title: n.title.map { String(cString: $0) } ?? "",
+                                          body: n.body.map { String(cString: $0) } ?? "")
+                    return true
+                default:
+                    // Unhandled: return false so libghostty keeps its own default behavior.
+                    return false
+                }
             },
             read_clipboard_cb: { userdata, _, state in
                 guard let userdata else { return false }
@@ -79,7 +104,13 @@ final class GhosttyApp {
                 str.withCString { ghostty_surface_complete_clipboard_request(surface, $0, state, false) }
                 return true
             },
-            confirm_read_clipboard_cb: { _, _, _, _ in },
+            confirm_read_clipboard_cb: { userdata, str, state, request in
+                // No surface (userdata) or payload → nothing to complete against; libghostty owns
+                // that edge. Otherwise hand off to the view, which defers the modal off this tick.
+                guard let userdata, let str else { return }
+                let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+                view.confirmRead(str: String(cString: str), state: state, request: request)
+            },
             write_clipboard_cb: { _, _, content, len, _ in
                 // Copy the first text payload out to the general pasteboard.
                 guard let content, len > 0 else { return }
@@ -90,7 +121,14 @@ final class GhosttyApp {
                     NSPasteboard.general.setString(s, forType: .string)
                 }
             },
-            close_surface_cb: { _, _ in }
+            close_surface_cb: { userdata, processAlive in
+                // Route to the owning view; it (via its owner) decides what closing means. Do not
+                // free the surface here — `GhosttySurfaceView.deinit` already does, so the view tree
+                // teardown handles it; freeing twice would be a double-free.
+                guard let userdata else { return }
+                let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+                view.onChildExit?(processAlive)
+            }
         )
 
         guard let app = ghostty_app_new(&runtime, cfg) else {

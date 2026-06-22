@@ -7,9 +7,32 @@ import CGhostty
 final class GhosttySurfaceView: NSView {
     private(set) var surface: ghostty_surface_t?
 
+    /// Invoked when libghostty asks to close this surface (e.g. the shell exited). The owner
+    /// (the terminal dock) decides what closing means — it removes this surface's tab.
+    var onChildExit: ((_ processAlive: Bool) -> Void)?
+
+    /// Invoked when the shell/OSC reports a new title; the dock uses it to label the tab.
+    var onTitleChange: ((String) -> Void)?
+
+    /// Latest shell/OSC-reported title for this surface; the dock reads it to label the tab.
+    private(set) var title: String?
+
+    /// Whether libghostty wants confirmation before this surface is torn down (a foreground
+    /// child is still running). Used when the user closes a tab manually via its × button.
+    var needsConfirmQuit: Bool {
+        guard let surface else { return false }
+        return ghostty_surface_needs_confirm_quit(surface)
+    }
+
+    /// Tracks our balance against the process-global `NSCursor` hide stack so MOUSE_VISIBILITY
+    /// can't leak a hidden cursor by hiding twice or unhiding when already visible.
+    private var cursorHidden = false
+
     override var acceptsFirstResponder: Bool { true }
 
-    init(app: ghostty_app_t) {
+    /// `command`, when set, is the shell command line the surface runs instead of the default
+    /// login shell (e.g. `ssh ubuntu@host` for a connection tab).
+    init(app: ghostty_app_t, command: String? = nil) {
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
@@ -22,16 +45,23 @@ final class GhosttySurfaceView: NSView {
             nsview: Unmanaged.passUnretained(self).toOpaque()))
         cfg.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
 
-        guard let s = ghostty_surface_new(app, &cfg) else {
-            NSLog("ghostty_surface_new failed")
-            return
+        // `cfg.command` only needs to stay valid for the duration of ghostty_surface_new, which
+        // copies what it needs — so build the surface inside the C-string's lifetime.
+        if let command {
+            command.withCString { cstr in
+                cfg.command = cstr
+                self.surface = ghostty_surface_new(app, &cfg)
+            }
+        } else {
+            self.surface = ghostty_surface_new(app, &cfg)
         }
-        self.surface = s
+        if surface == nil { NSLog("ghostty_surface_new failed") }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) unsupported") }
 
     deinit {
+        if cursorHidden { NSCursor.unhide() }
         if let surface { ghostty_surface_free(surface) }
     }
 
@@ -170,6 +200,82 @@ final class GhosttySurfaceView: NSView {
                 key.text = ptr
                 _ = ghostty_surface_key(s, key)
             }
+        }
+    }
+
+    // MARK: App actions & lifecycle
+
+    /// SET_TITLE: store and notify the dock so it can relabel this surface's tab.
+    func setTitle(_ s: String) {
+        title = s
+        onTitleChange?(s)
+    }
+
+    /// RING_BELL: audible beep, plus a Dock bounce when we're in the background.
+    func ringBell() {
+        NSSound.beep()
+        if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+    }
+
+    /// MOUSE_SHAPE: map the shapes we have native cursors for; everything else falls back to arrow.
+    func setMouseShape(_ shape: ghostty_action_mouse_shape_e) {
+        let cursor: NSCursor
+        switch shape {
+        case GHOSTTY_MOUSE_SHAPE_TEXT, GHOSTTY_MOUSE_SHAPE_VERTICAL_TEXT: cursor = .iBeam
+        case GHOSTTY_MOUSE_SHAPE_POINTER: cursor = .pointingHand
+        case GHOSTTY_MOUSE_SHAPE_CROSSHAIR: cursor = .crosshair
+        case GHOSTTY_MOUSE_SHAPE_NOT_ALLOWED, GHOSTTY_MOUSE_SHAPE_NO_DROP: cursor = .operationNotAllowed
+        case GHOSTTY_MOUSE_SHAPE_GRAB: cursor = .openHand
+        case GHOSTTY_MOUSE_SHAPE_GRABBING: cursor = .closedHand
+        case GHOSTTY_MOUSE_SHAPE_COL_RESIZE, GHOSTTY_MOUSE_SHAPE_EW_RESIZE: cursor = .resizeLeftRight
+        case GHOSTTY_MOUSE_SHAPE_ROW_RESIZE, GHOSTTY_MOUSE_SHAPE_NS_RESIZE: cursor = .resizeUpDown
+        default: cursor = .arrow
+        }
+        cursor.set()
+    }
+
+    /// MOUSE_VISIBILITY: balanced against the global hide stack so we never leak a hidden cursor.
+    func setMouseVisible(_ visible: Bool) {
+        if visible {
+            if cursorHidden { NSCursor.unhide(); cursorHidden = false }
+        } else if !cursorHidden {
+            NSCursor.hide(); cursorHidden = true
+        }
+    }
+
+    /// DESKTOP_NOTIFICATION: best-effort user notification. Uses the bundle-free (deprecated)
+    /// `NSUserNotification` because this app runs as a bare `swift build` binary, not a `.app`
+    /// bundle — `UNUserNotificationCenter` requires a bundle id and would trap here. Delivery is
+    /// itself best-effort for an unbundled binary; the handler still reports the action as handled.
+    func postNotification(title: String, body: String) {
+        let note = NSUserNotification()
+        note.title = title.isEmpty ? "Terminal" : title
+        note.informativeText = body
+        NSUserNotificationCenter.default.deliver(note)
+    }
+
+    /// Confirm an application's request to read/write the clipboard (OSC-52 or a guarded paste).
+    /// Deferred off the current libghostty tick so the modal can't re-enter `ghostty_app_tick`;
+    /// completes the request exactly once on every path so the clipboard state machine never stalls.
+    func confirmRead(str: String, state: UnsafeMutableRawPointer?, request: ghostty_clipboard_request_e) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let surface = self.surface else { return }
+            let prompt: String
+            switch request {
+            case GHOSTTY_CLIPBOARD_REQUEST_PASTE:
+                prompt = "Paste this text into the terminal?"
+            case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_WRITE:
+                prompt = "An application is trying to write to the clipboard."
+            default:
+                prompt = "An application is trying to read from the clipboard."
+            }
+            let alert = NSAlert()
+            alert.messageText = prompt
+            alert.informativeText = str
+            alert.addButton(withTitle: "Allow")
+            alert.addButton(withTitle: "Deny")
+            let confirmed = alert.runModal() == .alertFirstButtonReturn
+            str.withCString { ghostty_surface_complete_clipboard_request(surface, $0, state, confirmed) }
         }
     }
 
