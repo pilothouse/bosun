@@ -35,9 +35,16 @@ itself — the compiler (SPM target graph) plus SwiftLint. Dependencies point in
 The app is a SwiftPM package. Build the libghostty archive once, then run it:
 
 ```sh
-bash scripts/build-libghostty.sh   # creates Vendor/libghostty.a (needs full Xcode and the Metal Toolchain)
+bash scripts/build-libghostty.sh --check   # verify prerequisites only (fast); builds nothing
+bash scripts/build-libghostty.sh           # creates Vendor/libghostty.a (several minutes)
 swift run Workbench
 ```
 
-The tools you need and the macOS SDK details are written at the top of
-`scripts/build-libghostty.sh`. Everything it creates under `Vendor/` is kept out of git.
+The build needs **full Xcode** plus the **Metal Toolchain**, a component you download once with
+`xcodebuild -downloadComponent MetalToolchain` (ghostty compiles its Metal shaders at build time).
+Run `--check` first: it confirms the Metal toolchain can actually compile and reports what's
+present, exiting non-zero with the exact fix if anything is missing.
+
+Pinned versions: zig 0.15.2, ghostty v1.3.1, macOS 15.5 SDK (the macOS-26/zig workarounds and why
+each is pinned are documented at the top of `scripts/build-libghostty.sh`). The script is
+idempotent; everything it creates under `Vendor/` is kept out of git.
