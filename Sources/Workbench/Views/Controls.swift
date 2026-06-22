@@ -68,7 +68,6 @@ final class BoxView: FlippedView {
 /// A clickable row that highlights on hover and runs a closure on click.
 final class ClickRow: FlippedView {
     var onClick: (() -> Void)?
-    var onDoubleClick: (() -> Void)?
     var hoverColor: NSColor?
     private var baseColor: CGColor?
     private var tracking: NSTrackingArea?
@@ -98,10 +97,7 @@ final class ClickRow: FlippedView {
     }
     override func mouseEntered(with event: NSEvent) { if let h = hoverColor { layer?.backgroundColor = h.cgColor } }
     override func mouseExited(with event: NSEvent) { layer?.backgroundColor = baseColor }
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2, let onDoubleClick { onDoubleClick(); return }
-        onClick?()
-    }
+    override func mouseDown(with event: NSEvent) { onClick?() }
 }
 
 /// A solid colored dot / rounded square.

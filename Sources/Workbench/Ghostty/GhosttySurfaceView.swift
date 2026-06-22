@@ -2,6 +2,13 @@ import AppKit
 import CGhostty
 import Domain
 
+/// Runs `body` with a C-string pointer for `string` (or nil when it's nil), keeping the backing
+/// buffer alive for the duration of the call.
+private func withOptionalCString<R>(_ string: String?, _ body: (UnsafePointer<CChar>?) -> R) -> R {
+    guard let string else { return body(nil) }
+    return string.withCString { body($0) }
+}
+
 /// A layer-backed NSView that hosts a single libghostty terminal surface.
 /// libghostty creates and drives its own `CAMetalLayer` on this view given the
 /// nsview pointer; we forward size, scale, focus, mouse and keyboard events.
@@ -38,8 +45,9 @@ final class GhosttySurfaceView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     /// `command`, when set, is the shell command line the surface runs instead of the default
-    /// login shell (e.g. `ssh ubuntu@host` for a connection tab).
-    init(app: ghostty_app_t, command: String? = nil) {
+    /// login shell (e.g. `ssh ubuntu@host` for a connection tab). `workingDirectory`, when set, is
+    /// the directory the shell starts in (e.g. a local-folder connection's path).
+    init(app: ghostty_app_t, command: String? = nil, workingDirectory: String? = nil) {
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
@@ -58,15 +66,15 @@ final class GhosttySurfaceView: NSView {
         // forcing it off makes the child-exit close callback fire so the dock removes the tab.
         cfg.wait_after_command = false
 
-        // `cfg.command` only needs to stay valid for the duration of ghostty_surface_new, which
-        // copies what it needs — so build the surface inside the C-string's lifetime.
-        if let command {
-            command.withCString { cstr in
-                cfg.command = cstr
+        // `cfg.command` / `cfg.working_directory` only need to stay valid for the duration of
+        // ghostty_surface_new (it copies what it needs), so build the surface inside the C-strings'
+        // lifetimes, nesting the optional ones.
+        withOptionalCString(command) { cmd in
+            if let cmd { cfg.command = cmd }
+            withOptionalCString(workingDirectory) { dir in
+                if let dir { cfg.working_directory = dir }
                 self.surface = ghostty_surface_new(app, &cfg)
             }
-        } else {
-            self.surface = ghostty_surface_new(app, &cfg)
         }
         if surface == nil { NSLog("ghostty_surface_new failed") }
     }

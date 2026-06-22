@@ -8,6 +8,12 @@ final class ConnectionRailView: FlippedView {
     var onToggleFavorite: ((String) -> Void)?
     var onConnect: ((String) -> Void)?
 
+    // Double-click is tracked here, not via the row's clickCount: selecting a connection rebuilds
+    // the rail and replaces the row between the two clicks, so AppKit's native double-click
+    // detection fired only intermittently ("sometimes doesn't open").
+    private var lastClickId: String?
+    private var lastClickAt: TimeInterval = 0
+
     init(store: Store) {
         self.store = store
         super.init(frame: .zero)
@@ -41,11 +47,9 @@ final class ConnectionRailView: FlippedView {
         let row = ClickRow(bg: selected ? t.accentbg : nil)
         row.hoverColor = t.hover
         row.frame = NSRect(x: 0, y: 0, width: width, height: 42)
-        row.onClick = { [weak self] in self?.store.selectedConnId = c.id }
-        // SSH connections connect on double-click (an explicit action — single click just selects).
-        if c.kind == .ssh {
-            row.onDoubleClick = { [weak self] in self?.onConnect?(c.id) }
-        }
+        // Single click selects; a quick second click on the same row opens a console (SSH connects,
+        // a folder opens a shell there).
+        row.onClick = { [weak self] in self?.handleRowClick(c.id) }
 
         if selected {
             let bar = BoxView(bg: t.accent)
@@ -78,14 +82,13 @@ final class ConnectionRailView: FlippedView {
         starHit.addSubview(star)
         row.addSubview(starHit)
 
-        // Right-click → Connect (SSH only) / Edit / Delete.
+        // Right-click → Connect / Open / Edit / Delete.
         let menu = NSMenu()
-        if c.kind == .ssh {
-            let connect = NSMenuItem(title: "Connect", action: #selector(connectMenuAction(_:)), keyEquivalent: "")
-            connect.target = self; connect.representedObject = c.id
-            menu.addItem(connect)
-            menu.addItem(.separator())
-        }
+        let openTitle = c.kind == .ssh ? "Connect" : "Open in Terminal"
+        let connect = NSMenuItem(title: openTitle, action: #selector(connectMenuAction(_:)), keyEquivalent: "")
+        connect.target = self; connect.representedObject = c.id
+        menu.addItem(connect)
+        menu.addItem(.separator())
         let edit = NSMenuItem(title: "Edit…", action: #selector(editMenuAction(_:)), keyEquivalent: "")
         edit.target = self; edit.representedObject = c.id
         let remove = NSMenuItem(title: "Delete", action: #selector(deleteMenuAction(_:)), keyEquivalent: "")
@@ -93,6 +96,21 @@ final class ConnectionRailView: FlippedView {
         menu.addItem(edit); menu.addItem(remove)
         row.menu = menu
         return row
+    }
+
+    /// Single click selects; a second click on the same row within the system double-click
+    /// interval opens its console. Timed here on the rail (which survives the selection rebuild)
+    /// rather than relying on the row instance's clickCount.
+    private func handleRowClick(_ id: String) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if lastClickId == id, now - lastClickAt <= NSEvent.doubleClickInterval {
+            lastClickId = nil
+            onConnect?(id)
+        } else {
+            lastClickId = id
+            lastClickAt = now
+            store.selectedConnId = id
+        }
     }
 
     @objc private func connectMenuAction(_ sender: NSMenuItem) {

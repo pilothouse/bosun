@@ -87,10 +87,11 @@ final class TerminalContainerView: FlippedView {
         add(makeLocalSession())
     }
 
-    /// Open a new tab that runs `command` (e.g. an SSH session), labelled `title`, and focus it.
-    func openConnection(command: String, title: String) {
+    /// Open a new connection tab and focus it: `command` runs in place of the shell (an SSH
+    /// session), `workingDirectory` starts the shell in a folder (a local-folder connection).
+    func openConnection(command: String? = nil, workingDirectory: String? = nil, title: String) {
         guard available, let app = ghostty.app else { return }
-        let surface = GhosttySurfaceView(app: app, command: command)
+        let surface = GhosttySurfaceView(app: app, command: command, workingDirectory: workingDirectory)
         add(wire(TerminalSession(view: surface, title: title, dot: Status.green), surface: surface))
     }
 
@@ -270,10 +271,9 @@ final class TerminalContainerView: FlippedView {
             nm.frame = NSRect(x: 14, y: 8, width: w - 28, height: 16); bar.addSubview(nm)
         }
 
-        // Right status — reflects the active session.
-        let activeTitle = tabs.activeID.flatMap { views[$0]?.title } ?? "terminal"
-        let statusText = available ? "● \(activeTitle)" : "● terminal unavailable"
-        let stl = label(statusText, mono(10), available ? Status.green : Status.red, align: .right)
+        // Resize chevron at the far right. There's no duplicate status text here anymore — each
+        // tab already carries its own title, and the old right-aligned status label sat on top of
+        // the rightmost tab's × button, making that tab impossible to close.
         let chevron = label(store.terminalHeight > 500 ? "⌄" : "⌃", sys(12), .hex(0x9aa0aa), align: .center)
         let chevBtn = ClickRow(bg: nil)
         chevBtn.frame = NSRect(x: w - 28, y: 6, width: 20, height: 20)
@@ -283,7 +283,6 @@ final class TerminalContainerView: FlippedView {
             self.store.terminalHeight = self.store.terminalHeight > 500 ? 240 : 700
             self.onRelayout?()
         }
-        stl.frame = NSRect(x: w - 28 - 320, y: 9, width: 312, height: 14); bar.addSubview(stl)
         bar.addSubview(chevBtn)
         addSubview(bar)
     }

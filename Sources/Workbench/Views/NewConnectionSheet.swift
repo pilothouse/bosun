@@ -158,6 +158,19 @@ final class NewConnectionSheet: FlippedView {
         let add = textButton(editing == nil ? "Add" : "Save", t: t, accent: true,
                              frame: NSRect(x: pad + innerW - btnW, y: btnY, width: btnW, height: btnH)) { [weak self] in self?.submit() }
         card.addSubview(cancel); card.addSubview(add)
+
+        // Tab / Shift-Tab cycle through the visible fields. The fields are rebuilt on every layout,
+        // so the key-view loop has to be re-linked here each time; AppKit derives the reverse
+        // (Shift-Tab) traversal from this forward chain.
+        if kind == .ssh {
+            nameField?.nextKeyView = hostField
+            hostField?.nextKeyView = portField
+            portField?.nextKeyView = userField
+            userField?.nextKeyView = nameField
+        } else {
+            nameField?.nextKeyView = pathField
+            pathField?.nextKeyView = nameField
+        }
     }
 
     private func caption(_ s: String, t: Theme, frame: NSRect) -> NSTextField {

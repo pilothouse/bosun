@@ -39,6 +39,7 @@ final class CenterColumnView: FlippedView {
         header.frame = NSRect(x: 0, y: 0, width: w, height: headH)
         header.layer?.backgroundColor = t.win.cgColor
         header.subviews.forEach { $0.removeFromSuperview() }
+        let hbTop = BoxView(bg: t.line); hbTop.frame = NSRect(x: 0, y: 0, width: w, height: 1); header.addSubview(hbTop)
         let hb = BoxView(bg: t.line); hb.frame = NSRect(x: 0, y: headH - 1, width: w, height: 1); header.addSubview(hb)
         let conn = store.selectedConn
         var hx: CGFloat = 18
@@ -52,11 +53,16 @@ final class CenterColumnView: FlippedView {
         let meta = label(conn.meta, mono(10.5), t.txt4, align: .right)
         meta.frame = NSRect(x: w - 470, y: 14, width: 210, height: 14); header.addSubview(meta)
 
-        // Terminal (bottom) + detail (middle).
+        // Resizable bottom region: the connection header sits directly on top of the terminal —
+        // so connection name / type / IP / status read as the terminal's own header — with the
+        // issue/PR detail filling the space above. Dragging the terminal grip moves the header with
+        // it, keeping them together as one resizable unit.
         let maxTerm = max(120, (h - headH) * 0.9)
         let termH = min(max(120, store.terminalHeight), maxTerm)
+        let headerY = max(0, h - termH - headH)
+        detail.frame = NSRect(x: 0, y: 0, width: w, height: headerY)
+        header.frame = NSRect(x: 0, y: headerY, width: w, height: headH)
         terminal.frame = NSRect(x: 0, y: h - termH, width: w, height: termH)
-        detail.frame = NSRect(x: 0, y: headH, width: w, height: h - headH - termH)
 
         detail.apply()
         terminal.apply()
@@ -194,14 +200,19 @@ final class WorkbenchView: NSView {
         window?.makeFirstResponder(term)
     }
 
-    /// Open a console tab for a connection. SSH connections launch `ssh [user@]host` in a new
-    /// terminal tab; local folders aren't a remote session, so they're a no-op here for now.
+    /// Open a console tab for a connection. SSH connections launch `ssh [user@]host`; local-folder
+    /// connections open a shell in that directory.
     private func connect(_ id: String) {
         guard let uuid = UUID(uuidString: id),
               let conn = store.domainConnections.first(where: { $0.id == uuid }) else { return }
-        guard case let .ssh(host, port, user) = conn.kind else { return }
-        let command = SSHCommand.command(host: host, port: port, user: user)
-        center.terminal.openConnection(command: command, title: conn.name)
+        switch conn.kind {
+        case let .ssh(host, port, user):
+            let command = SSHCommand.command(host: host, port: port, user: user)
+            center.terminal.openConnection(command: command, title: conn.name)
+        case let .localFolder(path):
+            let dir = (path as NSString).expandingTildeInPath
+            center.terminal.openConnection(workingDirectory: dir, title: conn.name)
+        }
         store.selectedConnId = id
     }
 
