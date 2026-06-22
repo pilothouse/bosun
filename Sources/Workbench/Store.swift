@@ -34,9 +34,23 @@ final class Store {
     var newConnectionOpen = false { didSet { if oldValue != newConnectionOpen { notify() } } }
     var authState: AuthState = .signedOut { didSet { if oldValue != authState { notify() } } }
 
-    var selectedConnId = "api-gateway" { didSet { if oldValue != selectedConnId { changed() } } }
-    var selectedItemId = "482" { didSet { if oldValue != selectedItemId { changed() } } }
-    var expandedOrgs: Set<String> = ["acme-corp"] { didSet { notify() } }
+    var selectedConnId = "" { didSet { if oldValue != selectedConnId { changed() } } }
+    var selectedItemId = "" { didSet { if oldValue != selectedItemId { changed() } } }
+    var expandedOrgs: Set<String> = [] { didSet { notify() } }
+
+    /// Live GitHub data, fetched by `GitHubDataController` after sign-in and projected onto the
+    /// presentation structs the views render. Empty until the first fetch lands (or after sign-out).
+    var orgs: [Org] = [] { didSet { notify() } }
+    var prs: [Item] = [] { didSet { notify() } }
+    var issues: [Item] = [] { didSet { notify() } }
+    /// The currently-selected repo as `owner/name`, shown in the titlebar/header; nil before a
+    /// repo is picked. Drives which `prs`/`issues` the panel lists.
+    var selectedRepoKey: String? { didSet { if oldValue != selectedRepoKey { notify() } } }
+    /// The fully-hydrated item (body tasks, comments, PR checks) for the open detail pane. Lead
+    /// list items render immediately; this upgrades them once the detail fetch completes.
+    var selectedItemDetail: Item? { didSet { notify() } }
+    /// A user-facing message when a fetch fails (e.g. signed out, rate-limited); nil when healthy.
+    var dataError: String? { didSet { notify() } }
 
     /// Window opacity. It drives the window directly (via `onWindowAlpha`) rather than a content
     /// rebuild, so it is deliberately not part of `notify` — otherwise dragging the opacity
@@ -80,9 +94,18 @@ final class Store {
     var selectedConn: Connection {
         connections.first { $0.id == selectedConnId } ?? connections.first ?? .placeholder
     }
-    var selectedItem: Item? { Mock.item(id: selectedItemId) }
 
-    var listItems: [Item] { tab == .prs ? Mock.prs : Mock.issues }
+    /// The hydrated detail when it matches the selection, else the lead list item — so the pane
+    /// shows the row's content instantly and fills in comments/checks when the detail fetch lands.
+    var selectedItem: Item? {
+        if let detail = selectedItemDetail, detail.id == selectedItemId { return detail }
+        return (prs + issues).first { $0.id == selectedItemId }
+    }
+
+    var listItems: [Item] { tab == .prs ? prs : issues }
+
+    /// `owner/name` of the selected repo for the titlebar breadcrumb and panel header.
+    var selectedRepoTitle: String { selectedRepoKey ?? "" }
 
     private var observers: [() -> Void] = []
     func observe(_ f: @escaping () -> Void) { observers.append(f) }

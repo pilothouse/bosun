@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var root: WorkbenchView!
     private var authController: GitHubAuthController!
+    private var dataController: GitHubDataController!
     let ghostty = GhosttyApp.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -18,7 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let githubServices = CompositionRoot.makeGitHubAuthServices()
         let auth = GitHubAuthController(services: githubServices, store: store)
         self.authController = auth
-        let root = WorkbenchView(store: store, ghostty: ghostty, connections: services, auth: auth)
+        // Live GitHub data: load on sign-in, clear on sign-out. The hooks fire from `auth.restore()`
+        // below when a Keychain token already exists, so a returning user sees data immediately.
+        let data = GitHubDataController(api: githubServices.api, store: store)
+        self.dataController = data
+        auth.onSignedIn = { [weak data] in data?.load() }
+        auth.onSignedOut = { [weak data] in data?.clear() }
+        let root = WorkbenchView(store: store, ghostty: ghostty, connections: services,
+                                 auth: auth, data: data)
         self.root = root
 
         let win = NSWindow(

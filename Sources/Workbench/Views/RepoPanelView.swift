@@ -2,6 +2,11 @@ import AppKit
 
 final class RepoPanelView: FlippedView {
     let store: Store
+    /// Pick a repo to drive the PR/issue lists (owner, name). Wired to the data controller.
+    var onSelectRepo: ((String, String) -> Void)?
+    /// Open an item's detail by its number. Wired to the data controller.
+    var onSelectItem: ((Int) -> Void)?
+
     init(store: Store) {
         self.store = store
         super.init(frame: .zero)
@@ -12,6 +17,20 @@ final class RepoPanelView: FlippedView {
 
     func apply() { needsLayout = true }
     override func layout() { super.layout(); rebuild() }
+
+    /// Highlight the row immediately, then ask the data controller to hydrate its detail.
+    private func selectItem(_ it: Item) {
+        store.selectedItemId = it.id
+        if let number = Int(it.id) { onSelectItem?(number) }
+    }
+
+    /// What the orgs region shows before any live data loads: a sign-in prompt when signed out,
+    /// the fetch error when one occurred, otherwise the genuinely-empty result.
+    private func orgsEmptyHint() -> String {
+        if let error = store.dataError { return error }
+        if case .signedIn = store.authState { return "No organizations for this account." }
+        return "Sign in to GitHub to load your organizations and repositories."
+    }
 
     // MARK: builders
 
@@ -25,7 +44,14 @@ final class RepoPanelView: FlippedView {
         manage.frame = NSRect(x: w - 70, y: 9, width: 56, height: 14); head.addSubview(manage)
         doc.addSubview(head); y += 30
 
-        for org in Mock.orgs {
+        if store.orgs.isEmpty {
+            let hint = label(orgsEmptyHint(), sys(11.5), t.txt4, lines: 0)
+            hint.frame = NSRect(x: 14, y: y + 4, width: w - 28, height: 34); doc.addSubview(hint)
+            doc.frame.size.height = y + 44
+            return (doc, y + 44)
+        }
+
+        for org in store.orgs {
             let expanded = store.expandedOrgs.contains(org.id)
             let row = ClickRow(bg: nil)
             row.hoverColor = t.hover
@@ -51,12 +77,14 @@ final class RepoPanelView: FlippedView {
 
             if expanded {
                 for rp in org.repos {
-                    let rr = ClickRow(bg: nil)
+                    let selectedRepo = store.selectedRepoKey == "\(rp.owner)/\(rp.name)"
+                    let rr = ClickRow(bg: selectedRepo ? t.accentbg : nil, radius: 6)
                     rr.hoverColor = t.hover
                     rr.frame = NSRect(x: 0, y: y, width: w, height: 28)
-                    let g = label("◇", sys(10), t.txt4)
+                    rr.onClick = { [weak self] in self?.onSelectRepo?(rp.owner, rp.name) }
+                    let g = label("◇", sys(10), selectedRepo ? t.accent : t.txt4)
                     g.frame = NSRect(x: 30, y: 6, width: 12, height: 16); rr.addSubview(g)
-                    let rn = label(rp.name, sys(12), t.txt2)
+                    let rn = label(rp.name, sys(12), selectedRepo ? t.txt : t.txt2)
                     rn.frame = NSRect(x: 46, y: 5, width: w - 46 - 50, height: 16); rr.addSubview(rn)
                     let open = BoxView(bg: t.accentbg2, radius: 9)
                     let ow = label("\(rp.open)", sys(9.5, .semibold), t.accent, align: .center)
@@ -79,7 +107,7 @@ final class RepoPanelView: FlippedView {
         card.frame = NSRect(x: 10, y: 0, width: w - 20, height: 52)
         card.layer?.borderWidth = 1
         card.layer?.borderColor = (selected ? t.accent : t.cardbr).cgColor
-        card.onClick = { [weak self] in self?.store.selectedItemId = it.id }
+        card.onClick = { [weak self] in self?.selectItem(it) }
         let cw = w - 20
 
         let dot = Dot(it.dotColor, 8, radius: 4)
@@ -103,7 +131,7 @@ final class RepoPanelView: FlippedView {
         let row = ClickRow(bg: selected ? t.accentbg : nil, radius: 6)
         row.hoverColor = t.hover
         row.frame = NSRect(x: 8, y: 0, width: w - 16, height: 27)
-        row.onClick = { [weak self] in self?.store.selectedItemId = it.id }
+        row.onClick = { [weak self] in self?.selectItem(it) }
         let cw = w - 16
         let g = label(it.glyph, sys(11), it.gcolor, align: .center)
         g.frame = NSRect(x: indent + 14, y: 6, width: 14, height: 14); row.addSubview(g)
@@ -145,17 +173,16 @@ final class RepoPanelView: FlippedView {
 
         // 2. Repo header + tabs.
         var y = orgsH + 12
-        let repoTitle = label("acme/api-gateway", sys(13, .bold), t.txt)
-        repoTitle.frame = NSRect(x: 14, y: y, width: w - 80, height: 18); addSubview(repoTitle)
-        let stars = label("★ 1.2k", sys(11), t.txt3, align: .right)
-        stars.frame = NSRect(x: w - 70, y: y, width: 56, height: 18); addSubview(stars)
+        let repoTitle = label(store.selectedRepoTitle.isEmpty ? "No repository" : store.selectedRepoTitle,
+                              sys(13, .bold), store.selectedRepoTitle.isEmpty ? t.txt4 : t.txt)
+        repoTitle.frame = NSRect(x: 14, y: y, width: w - 28, height: 18); addSubview(repoTitle)
         y += 30
 
         let tabW = (w - 28 - 5) / 2
         let prSel = store.tab == .prs
         let prTab = ClickRow(bg: prSel ? t.accentbg2 : t.card, radius: 7)
         prTab.frame = NSRect(x: 14, y: y, width: tabW, height: 28)
-        let prL = label("PRs · \(Mock.prs.count)", sys(11.5, .semibold), prSel ? t.accent : t.txt3, align: .center)
+        let prL = label("PRs · \(store.prs.count)", sys(11.5, .semibold), prSel ? t.accent : t.txt3, align: .center)
         prL.frame = NSRect(x: 0, y: 6, width: tabW, height: 16); prTab.addSubview(prL)
         prTab.onClick = { [weak self] in self?.store.tab = .prs }
         addSubview(prTab)
@@ -163,7 +190,7 @@ final class RepoPanelView: FlippedView {
         let isSel = store.tab == .issues
         let isTab = ClickRow(bg: isSel ? t.accentbg2 : t.card, radius: 7)
         isTab.frame = NSRect(x: 14 + tabW + 5, y: y, width: tabW, height: 28)
-        let isL = label("Issues · \(Mock.issues.count)", sys(11.5, .semibold), isSel ? t.accent : t.txt3, align: .center)
+        let isL = label("Issues · \(store.issues.count)", sys(11.5, .semibold), isSel ? t.accent : t.txt3, align: .center)
         isL.frame = NSRect(x: 0, y: 6, width: tabW, height: 16); isTab.addSubview(isL)
         isTab.onClick = { [weak self] in self?.store.tab = .issues }
         addSubview(isTab)

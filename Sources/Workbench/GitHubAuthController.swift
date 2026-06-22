@@ -12,6 +12,13 @@ final class GitHubAuthController {
     private let store: Store
     private var pollTask: Task<Void, Never>?
 
+    /// Fired when the user becomes signed-in (fresh sign-in or a restored Keychain token) and when
+    /// they sign out. The App layer wires these to load/clear live GitHub data. Explicit hooks (vs.
+    /// observing `Store.authState`) keep the data controller's store mutations from re-entering
+    /// the auth state machine.
+    var onSignedIn: (() -> Void)?
+    var onSignedOut: (() -> Void)?
+
     init(services: GitHubAuthServices, store: Store) {
         self.services = services
         self.store = store
@@ -22,7 +29,12 @@ final class GitHubAuthController {
         let tokenStore = services.tokenStore
         Task { @MainActor in
             let token = try? await tokenStore.load()
-            store.authState = (token?.isEmpty == false) ? .signedIn : .signedOut
+            if token?.isEmpty == false {
+                store.authState = .signedIn
+                onSignedIn?()
+            } else {
+                store.authState = .signedOut
+            }
         }
     }
 
@@ -39,6 +51,7 @@ final class GitHubAuthController {
                     Task { @MainActor in self.store.authState = .authenticating(grant) }
                 }
                 self.store.authState = .signedIn
+                self.onSignedIn?()
             } catch {
                 if Task.isCancelled || error is CancellationError {
                     // User closed the sheet; `cancel()` already set the state.
@@ -66,6 +79,7 @@ final class GitHubAuthController {
         Task { @MainActor in
             try? await tokenStore.delete()
             store.authState = .signedOut
+            onSignedOut?()
         }
     }
 

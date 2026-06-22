@@ -75,6 +75,7 @@ final class WorkbenchView: NSView {
     let ghostty: GhosttyApp
     private let connections: ConnectionServices
     private let auth: GitHubAuthController
+    private let data: GitHubDataController
     private let titlebar: TitlebarView
     private let rail: ConnectionRailView
     private let center: CenterColumnView
@@ -85,11 +86,13 @@ final class WorkbenchView: NSView {
 
     override var isFlipped: Bool { true }
 
-    init(store: Store, ghostty: GhosttyApp, connections: ConnectionServices, auth: GitHubAuthController) {
+    init(store: Store, ghostty: GhosttyApp, connections: ConnectionServices,
+         auth: GitHubAuthController, data: GitHubDataController) {
         self.store = store
         self.ghostty = ghostty
         self.connections = connections
         self.auth = auth
+        self.data = data
         self.titlebar = TitlebarView(store: store)
         self.rail = ConnectionRailView(store: store)
         self.center = CenterColumnView(store: store, ghostty: ghostty)
@@ -110,6 +113,9 @@ final class WorkbenchView: NSView {
         rail.onDelete = { [weak self] id in self?.deleteConnection(id) }
         rail.onToggleFavorite = { [weak self] id in self?.toggleFavorite(id) }
         rail.onConnect = { [weak self] id in self?.connect(id) }
+
+        repoPanel.onSelectRepo = { [weak self] owner, name in self?.data.selectRepo(owner: owner, name: name) }
+        repoPanel.onSelectItem = { [weak self] number in self?.data.selectItem(number: number) }
 
         store.observe { [weak self] in self?.onChange() }
         applyTheme()

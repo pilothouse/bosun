@@ -1,0 +1,166 @@
+import AppKit
+import Domain
+
+/// Projections from the live Domain GitHub types onto the presentation structs the views render.
+/// This is the App layer's job: Domain stays free of AppKit (it deliberately leaves "colors and
+/// glyphs to the presentation layer"), so the status→color/glyph mapping and relative-time
+/// formatting land here, mirroring the existing `Connection.init(domain:)` projection. The pure,
+/// reusable sub-rules (`GitHubRelativeAge`, `GitHubActor.initials/isBot`) live in Domain and are
+/// unit-tested; everything here is deterministic presentation glue verified by running the app.
+
+/// The agent accent (same blue the device-flow/account chrome uses) for bot-authored work.
+private let agentAccent = NSColor.hex(0x7c8cff)
+
+extension Org {
+    init(domain o: GitHubOrg) {
+        self.init(id: o.id,
+                  name: o.name ?? o.login,
+                  color: Org.color(forLogin: o.login),
+                  repos: o.repositories.map(Repo.init(domain:)))
+    }
+
+    /// A deterministic accent per org (keyed off the login's scalars, not `hashValue`, which is
+    /// per-process randomized) so the sidebar squares stay consistent within and across launches.
+    private static func color(forLogin login: String) -> NSColor {
+        let palette: [UInt32] = [0x7c8cff, 0xe0823d, 0xd2a8ff, 0x3fb950, 0x58a6ff, 0xdb6d28]
+        let sum = login.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        return .hex(palette[sum % palette.count])
+    }
+}
+
+extension Repo {
+    init(domain r: GitHubRepo) {
+        // The sidebar shows one "open" badge; the API reports issues and PRs separately.
+        self.init(id: r.id, name: r.name, open: r.openIssues + r.openPullRequests, owner: r.owner)
+    }
+}
+
+extension Item {
+    /// One init for both list (lead) and detail items: a lead item simply carries empty
+    /// `comments`/`checks`/`tasks`, which map to empty arrays, so the detail fetch just upgrades
+    /// the same shape in place. PR-only `branch`/`additions`/`deletions` are nil for issues.
+    init(domain it: GitHubItem) {
+        let isAgent = it.author.isBot
+        let status = Item.status(for: it)
+        let isEpic = it.labels.contains { $0.caseInsensitiveCompare("epic") == .orderedSame }
+        self.init(
+            id: String(it.number),
+            num: "#\(it.number)",
+            title: it.title,
+            kind: it.kind == .pullRequest ? .pr : .issue,
+            glyph: status.glyph,
+            gcolor: status.color,
+            statusLabel: status.label,
+            statusColor: status.color,
+            dotColor: status.color,
+            age: GitHubRelativeAge.compact(from: it.createdAt, now: Date()),
+            author: it.author.login,
+            authorColor: isAgent ? agentAccent : Status.purple,
+            authorInitials: it.author.initials,
+            isAgent: isAgent,
+            metaLeft: Item.metaLeft(for: it),
+            metaRight: isAgent ? "◆ agent" : "",
+            agentColor: isAgent ? Status.purple : Status.dim,
+            body: it.body,
+            tasks: it.tasks.map(TaskItem.init(domain:)),
+            checks: it.checks.map(Check.init(domain:)),
+            comments: it.comments.map(Comment.init(domain:)),
+            branch: it.branch,
+            add: it.additions,
+            del: it.deletions,
+            blocked: nil,         // GitHub has no native "blocked-by" relation to derive from
+            parent: nil,          // …nor a parent/sub-issue link the list fetch exposes
+            epic: isEpic,
+            repo: it.repositoryNameWithOwner
+        )
+    }
+
+    /// The status chip the cards/detail show. Open PRs reflect their checks once hydrated (the
+    /// list fetch carries none, so it reads as plain "open"); issues surface an "epic" label.
+    private static func status(for it: GitHubItem) -> (label: String, color: NSColor, glyph: String) {
+        switch it.kind {
+        case .pullRequest:
+            switch it.state {
+            case .merged: return ("merged", Status.purple, "✓")
+            case .closed: return ("closed", Status.red, "✕")
+            case .open:
+                if it.isDraft { return ("draft", Status.dim, "○") }
+                if let fromChecks = checksStatus(it.checks) { return fromChecks }
+                return ("open", Status.green, "●")
+            }
+        case .issue:
+            switch it.state {
+            case .closed: return ("closed", Status.purple, "✓")
+            case .open, .merged:
+                if it.labels.contains(where: { $0.caseInsensitiveCompare("epic") == .orderedSame }) {
+                    return ("epic", Status.purple, "◆")
+                }
+                return ("open", Status.green, "○")
+            }
+        }
+    }
+
+    private static func checksStatus(_ checks: [GitHubCheck]) -> (label: String, color: NSColor, glyph: String)? {
+        guard !checks.isEmpty else { return nil }
+        if checks.contains(where: { $0.state == .failure || $0.state == .timedOut }) {
+            return ("checks failing", Status.red, "✕")
+        }
+        if checks.contains(where: { $0.state == .inProgress || $0.state == .queued }) {
+            return ("checks running", Status.yellow, "●")
+        }
+        return ("checks passed", Status.green, "✓")
+    }
+
+    private static func metaLeft(for it: GitHubItem) -> String {
+        if let branch = it.branch, !branch.isEmpty { return "⎇ \(branch)" }
+        return it.labels.first ?? ""
+    }
+}
+
+extension Comment {
+    init(domain c: GitHubComment) {
+        let isBot = c.author.isBot
+        self.init(author: c.author.login,
+                  initials: c.author.initials,
+                  color: isBot ? agentAccent : Status.purple,
+                  time: GitHubRelativeAge.compact(from: c.createdAt, now: Date()),
+                  badge: isBot ? "agent" : "",
+                  body: c.body)
+    }
+}
+
+extension Check {
+    init(domain c: GitHubCheck) {
+        let v = Check.visual(for: c.state)
+        self.init(name: c.name, icon: v.icon, color: v.color,
+                  dur: Check.duration(c.durationSeconds), statusText: v.statusText, running: v.running)
+    }
+
+    /// `statusText` says "passed" for success so `DetailView`'s "x/y passing" tally keeps working.
+    private static func visual(for state: CheckState) -> (icon: String, color: NSColor, statusText: String, running: Bool) {
+        switch state {
+        case .success:        return ("✓", Status.green, "passed", false)
+        case .inProgress:     return ("●", Status.yellow, "running", true)
+        case .queued:         return ("○", Status.dim, "queued", false)
+        case .failure:        return ("✕", Status.red, "failed", false)
+        case .timedOut:       return ("✕", Status.red, "timed out", false)
+        case .cancelled:      return ("⊘", Status.dim, "cancelled", false)
+        case .skipped:        return ("⊘", Status.dim, "skipped", false)
+        case .actionRequired: return ("!", Status.yellow, "action required", false)
+        case .neutral:        return ("•", Status.dim, "neutral", false)
+        }
+    }
+
+    private static func duration(_ seconds: Int?) -> String {
+        guard let seconds, seconds > 0 else { return "—" }
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60, rest = seconds % 60
+        return rest == 0 ? "\(minutes)m" : "\(minutes)m\(rest)s"
+    }
+}
+
+extension TaskItem {
+    init(domain t: GitHubTask) {
+        self.init(label: t.title, done: t.isDone)
+    }
+}
