@@ -48,7 +48,7 @@ enum CompositionRoot {
 
     static func makeGitHubAuthServices() -> GitHubAuthServices {
         let tokenStore = KeychainTokenStore()                  // concrete adapters chosen here only
-        let auth = GitHubDeviceAuthClient(clientId: githubClientID())
+        let auth = GitHubDeviceAuthClient(clientId: githubClientID(), scope: oauthScopes)
         return GitHubAuthServices(
             tokenStore: tokenStore,
             authenticate: AuthenticateWithGitHubUseCase(
@@ -64,11 +64,19 @@ enum CompositionRoot {
         GitHubAPIClient(tokenStore: StaticTokenStore(token: token))
     }
 
-    /// The OAuth/GitHub-App client_id. Read from `BOSUN_GITHUB_CLIENT_ID` so a different app can be
-    /// swapped in without a rebuild; falls back to the project's registered GitHub App. (A device-
-    /// flow client_id is not a secret — it's safe to ship as the default.)
+    /// Scopes requested at device-flow sign-in. `read:org` is the one that matters here: without
+    /// it `viewer.organizations` returns only orgs whose membership is *public* (this is why the
+    /// app showed 7 of ~20). `repo` covers private repositories and their open issue/PR counts;
+    /// `read:user` covers the viewer's profile. These take effect ONLY for an **OAuth App** — a
+    /// GitHub App ignores `scope` and derives access from its per-org installation instead.
+    private static let oauthScopes = "read:org repo read:user"
+
+    /// The OAuth App client_id. Read from `BOSUN_GITHUB_CLIENT_ID` so a different app can be swapped
+    /// in without a rebuild. For the scopes above to apply this MUST be an OAuth App
+    /// (github.com/settings/developers → New OAuth App, with "Enable Device Flow" checked), not a
+    /// GitHub App. (A device-flow client_id is not a secret — it's safe to ship as the default.)
     private static func githubClientID() -> String {
-        ProcessInfo.processInfo.environment["BOSUN_GITHUB_CLIENT_ID"] ?? "Iv23liJR8FXU8M894PsK"
+        ProcessInfo.processInfo.environment["BOSUN_GITHUB_CLIENT_ID"] ?? "Ov23liOrAKfzcXed8ucm"
     }
 }
 
