@@ -208,8 +208,12 @@ final class WorkbenchView: NSView {
     override func layout() {
         super.layout()
         let w = bounds.width, h = bounds.height
-        titlebar.frame = NSRect(x: 0, y: 0, width: w, height: 44)
-        let rowY: CGFloat = 44, rowH = h - 44
+        // A touch taller than the standard 28pt titlebar for breathing room; the titlebar's own
+        // icons stay anchored to the traffic-light line (see TitlebarView), so they remain aligned
+        // with close/minimise/zoom rather than drifting to the taller bar's centre.
+        let barH: CGFloat = 34
+        titlebar.frame = NSRect(x: 0, y: 0, width: w, height: barH)
+        let rowY = barH, rowH = h - barH
         let railW: CGFloat = store.railCollapsed ? 0 : 266
         rail.frame = NSRect(x: 0, y: rowY, width: railW, height: rowH)
         repoPanel.frame = NSRect(x: w - 312, y: rowY, width: 312, height: rowH)

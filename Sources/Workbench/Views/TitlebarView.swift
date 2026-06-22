@@ -53,6 +53,21 @@ final class TitlebarView: FlippedView {
         let h = bounds.height
         layer?.backgroundColor = t.bar.cgColor
 
+        // Align every titlebar icon on the centre line of the macOS traffic lights. Read their
+        // real position from the close button so the controls line up exactly with
+        // close/minimise/zoom regardless of bar height; fall back to the standard 28pt zone centre
+        // before the window/buttons exist.
+        let baseCY: CGFloat
+        if let close = window?.standardWindowButton(.closeButton), let host = close.superview {
+            baseCY = convert(close.frame, from: host).midY
+        } else {
+            baseCY = min(h, 28) / 2
+        }
+        let cy = baseCY
+        // The breadcrumb labels render their glyphs a touch high in the frame, so they read as
+        // tight to the top next to the geometrically-centred icons; nudge just the text down ~2pt.
+        let textY = cy - 8 + 2
+
         let border = BoxView(bg: t.line)
         border.frame = NSRect(x: 0, y: h - 1, width: bounds.width, height: 1)
         addSubview(border)
@@ -61,51 +76,30 @@ final class TitlebarView: FlippedView {
         var x: CGFloat = 78
         let toggle = iconButton("sidebar.left",
                                 tint: store.railCollapsed ? t.accent : t.txt3,
-                                frame: NSRect(x: x, y: (h - 24) / 2, width: 30, height: 24), point: 15)
+                                frame: NSRect(x: x, y: cy - 12, width: 30, height: 24), point: 15)
         toggle.onClick = { [weak self] in self?.onToggleSidebar?() }
         addSubview(toggle)
         x += 40
 
-        let sq = Dot(t.accent, 14, radius: 4)
-        sq.frame.origin = NSPoint(x: x, y: (h - 14) / 2)
-        addSubview(sq)
-        x += 22
-
         let name = label(store.selectedConn.name, sys(12.5, .semibold), t.txt)
-        name.frame = NSRect(x: x, y: (h - 16) / 2, width: fitW(name), height: 16)
+        name.frame = NSRect(x: x, y: textY, width: fitW(name), height: 16)
         addSubview(name)
         x += name.frame.width + 7
 
         let slash = label("/", sys(12.5), t.txt4)
-        slash.frame = NSRect(x: x, y: (h - 16) / 2, width: 8, height: 16)
+        slash.frame = NSRect(x: x, y: textY, width: 8, height: 16)
         addSubview(slash)
         x += 13
 
         let repo = label("acme/api-gateway", sys(12.5), t.txt3)
-        repo.frame = NSRect(x: x, y: (h - 16) / 2, width: fitW(repo), height: 16)
+        repo.frame = NSRect(x: x, y: textY, width: fitW(repo), height: 16)
         addSubview(repo)
 
         // Right group.
-        var rx = bounds.width - 13
+        let rx = bounds.width - 13
         let gear = iconButton("gearshape", tint: t.txt3,
-                              frame: NSRect(x: rx - 28, y: (h - 28) / 2, width: 28, height: 28), point: 15)
+                              frame: NSRect(x: rx - 28, y: cy - 12, width: 28, height: 24), point: 15)
         gear.onClick = { [weak self] in self?.onToggleSettings?() }
         addSubview(gear)
-        rx -= 28 + 8
-
-        // Session pill.
-        let running = store.connections.filter { $0.sessionLabel.contains("running") || $0.sessionLabel.contains("claude") }.count
-        let pillText = "\(running) sessions · synced to iCloud"
-        let pillLabel = label(pillText, sys(11.5, .medium), t.txt3)
-        let pw = fitW(pillLabel)
-        let pill = BoxView(bg: t.card, radius: 7, border: t.cardbr)
-        let pillW = pw + 32
-        pill.frame = NSRect(x: rx - pillW, y: (h - 26) / 2, width: pillW, height: 26)
-        let gdot = Dot(Status.green, 7)
-        gdot.frame.origin = NSPoint(x: 11, y: (26 - 7) / 2)
-        pill.addSubview(gdot)
-        pillLabel.frame = NSRect(x: 24, y: 0, width: pw, height: 26)
-        pill.addSubview(pillLabel)
-        addSubview(pill)
     }
 }
