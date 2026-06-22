@@ -1,4 +1,5 @@
 import AppKit
+import Domain
 
 // Color tokens used by the mock's seed data (theme-independent).
 private let P = Status.purple            // epic / roadmap
@@ -23,6 +24,25 @@ struct Connection {
     var isFavorite = false
     var glyph: String { kind == .ssh ? "⧉" : "▦" }
     var kindLabel: String { kind == .ssh ? "SSH" : "FOLDER" }
+}
+
+extension Connection {
+    /// Presentation projection of a persisted `Domain.Connection`. Live status (dot color,
+    /// session label) isn't persisted yet, so a fresh connection reads as idle/dim.
+    init(domain c: Domain.Connection) {
+        let kind: ConnKind
+        let meta: String
+        switch c.kind {
+        case let .ssh(host, _, _): kind = .ssh; meta = host
+        case let .localFolder(path): kind = .folder; meta = path
+        }
+        self.init(id: c.id.uuidString, name: c.name, kind: kind, meta: meta,
+                  dot: Status.dim, sessionLabel: "idle", isFavorite: c.isFavorite)
+    }
+
+    /// Shown only in the brief window before the persisted list loads (or if it's empty).
+    static let placeholder = Connection(id: "", name: "—", kind: .folder, meta: "",
+                                        dot: Status.dim, sessionLabel: "")
 }
 
 struct TaskItem { let label: String; let done: Bool }
@@ -74,19 +94,6 @@ enum Mock {
             Repo(id: "r8", name: "datasets", open: 0),
         ]),
     ]
-
-    static let connections: [Connection] = [
-        Connection(id: "prod-vm-01", name: "prod-vm-01", kind: .ssh, meta: "10.0.2.11", dot: G, sessionLabel: "claude · running", isFavorite: true),
-        Connection(id: "gpu-box", name: "gpu-box", kind: .ssh, meta: "gpu.ts.net", dot: Y, sessionLabel: "reconnecting"),
-        Connection(id: "staging", name: "staging", kind: .ssh, meta: "10.0.4.7", dot: G, sessionLabel: "idle"),
-        Connection(id: "api-gateway", name: "api-gateway", kind: .folder, meta: "~/dev/api-gateway", dot: G, sessionLabel: "claude · running", isFavorite: true),
-        Connection(id: "web-dashboard", name: "web-dashboard", kind: .folder, meta: "~/dev/web-dashboard", dot: G, sessionLabel: "idle"),
-        Connection(id: "infra", name: "infra", kind: .folder, meta: "~/dev/infra", dot: G, sessionLabel: "idle"),
-    ]
-
-    static var favorites: [Connection] { connections.filter { $0.isFavorite } }
-    static var sshRemotes: [Connection] { connections.filter { $0.kind == .ssh } }
-    static var folders: [Connection] { connections.filter { $0.kind == .folder } }
 
     static let prs: [Item] = [
         Item(id: "482", num: "#482", title: "Add token-bucket rate limiter to gateway middleware",

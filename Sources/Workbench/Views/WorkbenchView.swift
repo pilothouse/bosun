@@ -1,4 +1,6 @@
 import AppKit
+import Application
+import Domain
 
 /// Center column: connection header + scrollable detail + docked terminal.
 final class CenterColumnView: FlippedView {
@@ -74,17 +76,20 @@ final class CenterColumnView: FlippedView {
 final class WorkbenchView: NSView {
     let store: Store
     let ghostty: GhosttyApp
+    private let connections: ConnectionServices
     private let titlebar: TitlebarView
     private let rail: ConnectionRailView
     private let center: CenterColumnView
     private let repoPanel: RepoPanelView
     private var settings: SettingsPopover?
+    private var newConn: NewConnectionSheet?
 
     override var isFlipped: Bool { true }
 
-    init(store: Store, ghostty: GhosttyApp) {
+    init(store: Store, ghostty: GhosttyApp, connections: ConnectionServices) {
         self.store = store
         self.ghostty = ghostty
+        self.connections = connections
         self.titlebar = TitlebarView(store: store)
         self.rail = ConnectionRailView(store: store)
         self.center = CenterColumnView(store: store, ghostty: ghostty)
@@ -100,10 +105,53 @@ final class WorkbenchView: NSView {
         titlebar.onToggleSidebar = { [weak self] in self?.store.railCollapsed.toggle() }
         titlebar.onToggleSettings = { [weak self] in self?.store.settingsOpen.toggle() }
 
+        rail.onAdd = { [weak self] in self?.openSheet(editingId: nil) }
+        rail.onEdit = { [weak self] id in self?.openSheet(editingId: id) }
+        rail.onDelete = { [weak self] id in self?.deleteConnection(id) }
+        rail.onToggleFavorite = { [weak self] id in self?.toggleFavorite(id) }
+
         store.observe { [weak self] in self?.onChange() }
         applyTheme()
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    // MARK: Connection flow
+
+    private func openSheet(editingId: String?) {
+        store.editingConnId = editingId
+        store.newConnectionOpen = true
+    }
+
+    private func upsert(_ connection: Domain.Connection) {
+        if let idx = store.domainConnections.firstIndex(where: { $0.id == connection.id }) {
+            store.domainConnections[idx] = connection
+        } else {
+            store.domainConnections.append(connection)
+        }
+        store.selectedConnId = connection.id.uuidString
+    }
+
+    private func deleteConnection(_ id: String) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        store.domainConnections.removeAll { $0.id == uuid }
+        if store.selectedConnId == id {
+            store.selectedConnId = store.domainConnections.first?.id.uuidString ?? ""
+        }
+        let remove = connections.remove
+        Task { try? await remove(id: uuid) }
+    }
+
+    private func toggleFavorite(_ id: String) {
+        guard let uuid = UUID(uuidString: id),
+              let idx = store.domainConnections.firstIndex(where: { $0.id == uuid }) else { return }
+        var connection = store.domainConnections[idx]
+        connection.isFavorite.toggle()
+        store.domainConnections[idx] = connection
+        let save = connections.save
+        let draft = ConnectionDraft(id: connection.id, name: connection.name,
+                                    kind: connection.kind, isFavorite: connection.isFavorite)
+        Task { _ = try? await save(draft) }
+    }
 
     private func applyTheme() {
         layer?.backgroundColor = store.theme.win.cgColor
@@ -125,6 +173,27 @@ final class WorkbenchView: NSView {
             settings = nil
         }
         settings?.needsLayout = true
+
+        // New-connection sheet show/hide.
+        if store.newConnectionOpen, newConn == nil {
+            let editing = store.editingConnId.flatMap { id in
+                store.domainConnections.first { $0.id.uuidString == id }
+            }
+            let sheet = NewConnectionSheet(store: store, save: connections.save, editing: editing)
+            sheet.onSaved = { [weak self] connection in
+                self?.upsert(connection)
+                self?.store.newConnectionOpen = false
+            }
+            sheet.onClose = { [weak self] in self?.store.newConnectionOpen = false }
+            sheet.frame = bounds
+            addSubview(sheet)
+            newConn = sheet
+        } else if !store.newConnectionOpen, let sheet = newConn {
+            sheet.removeFromSuperview()
+            newConn = nil
+            focusTerminal()
+        }
+        newConn?.needsLayout = true
     }
 
     func focusTerminal() {
@@ -143,5 +212,6 @@ final class WorkbenchView: NSView {
         repoPanel.frame = NSRect(x: w - 312, y: rowY, width: 312, height: rowH)
         center.frame = NSRect(x: railW, y: rowY, width: max(0, w - railW - 312), height: rowH)
         settings?.frame = bounds
+        newConn?.frame = bounds
     }
 }

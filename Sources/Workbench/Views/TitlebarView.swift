@@ -76,7 +76,7 @@ final class TitlebarView: FlippedView {
         rx -= 28 + 8
 
         // Session pill.
-        let running = Mock.connections.filter { $0.sessionLabel.contains("running") || $0.sessionLabel.contains("claude") }.count
+        let running = store.connections.filter { $0.sessionLabel.contains("running") || $0.sessionLabel.contains("claude") }.count
         let pillText = "\(running) sessions · synced to iCloud"
         let pillLabel = label(pillText, sys(11.5, .medium), t.txt3)
         let pw = fitW(pillLabel)
