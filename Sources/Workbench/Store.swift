@@ -103,6 +103,12 @@ final class Store {
     /// `TerminalContainerView`), not here.
     var terminalHeight: CGFloat = 240
 
+    /// The open terminal tabs and which one is active, owned by the dock (`TerminalContainerView`):
+    /// it snapshots them here on every tab change and restores them at launch. Persisted, but not
+    /// part of `notify` — the dock manages its own views, so a write here must not rebuild the UI.
+    var terminalTabs: [Domain.TerminalTabState] = []
+    var activeTerminalTabIndex: Int = 0
+
     /// Persistence seam for UI preferences (loaded at launch, saved on change).
     private let preferences: PreferencesStore
     /// True while `applyPersisted` is restoring state, so the property observers don't re-save
@@ -172,7 +178,9 @@ final class Store {
             followedOrgs: followedOrgs,
             selectedRepoKey: selectedRepoKey,
             selectedTab: tab.rawValue,
-            groupBy: groupBy.storageKey)
+            groupBy: groupBy.storageKey,
+            openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
+            activeTabIndex: activeTerminalTabIndex)
         Task { await preferences.save(snapshot) }
     }
 
@@ -189,6 +197,8 @@ final class Store {
         selectedRepoKey = p.selectedRepoKey
         tab = Tab(rawValue: p.selectedTab ?? "") ?? .prs
         groupBy = GroupBy(storageKey: p.groupBy)
+        terminalTabs = p.openTabs ?? []
+        activeTerminalTabIndex = p.activeTabIndex ?? 0
         isLoading = false
         onWindowAlpha?(windowAlpha)
         refresh()

@@ -258,19 +258,17 @@ final class WorkbenchView: NSView {
     }
 
     /// Open a console tab for a connection. SSH connections launch `ssh [user@]host`; local-folder
-    /// connections open a shell in that directory.
+    /// connections open a shell in that directory. The dock builds the command from the connection.
     private func connect(_ id: String) {
         guard let uuid = UUID(uuidString: id),
               let conn = store.domainConnections.first(where: { $0.id == uuid }) else { return }
-        switch conn.kind {
-        case let .ssh(host, port, user):
-            let command = SSHCommand.command(host: host, port: port, user: user, custom: conn.customCommand)
-            center.terminal.openConnection(command: command, title: conn.name)
-        case let .localFolder(path):
-            let dir = (path as NSString).expandingTildeInPath
-            center.terminal.openConnection(workingDirectory: dir, title: conn.name)
-        }
+        center.terminal.openConnection(conn)
         store.selectedConnId = id
+    }
+
+    /// Reopen the terminal tabs saved from the last session (called once connections are loaded).
+    func restoreTerminalTabs() {
+        center.terminal.restoreTabs(connections: store.domainConnections)
     }
 
     override func layout() {

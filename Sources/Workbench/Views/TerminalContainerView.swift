@@ -14,17 +14,27 @@ final class DragHandle: FlippedView {
     override func mouseUp(with e: NSEvent) { onEnd?() }
 }
 
+/// What a tab represents, so it can be reopened on relaunch: a plain local shell, or a saved
+/// connection (keyed by `Connection.id`, re-resolved at restore). See `TerminalTabState`.
+enum TabOrigin: Equatable {
+    case local
+    case connection(String)   // Connection.id.uuidString
+}
+
 /// One terminal tab: a live libghostty surface (or the unavailable placeholder) plus its label.
 final class TerminalSession {
     let id = UUID()
     let view: NSView
     var title: String
     var dot: NSColor
+    /// Where this tab came from, used to persist + reopen it. See `TerminalContainerView.snapshotTabs`.
+    let origin: TabOrigin
 
-    init(view: NSView, title: String, dot: NSColor) {
+    init(view: NSView, title: String, dot: NSColor, origin: TabOrigin) {
         self.view = view
         self.title = title
         self.dot = dot
+        self.origin = origin
     }
 
     var surfaceView: GhosttySurfaceView? { view as? GhosttySurfaceView }
@@ -71,11 +81,12 @@ final class TerminalContainerView: FlippedView {
         handle.onEnd = { [weak self] in self?.store.persist() }
 
         // Seed the dock with one session. When libghostty is down, that's the error placeholder.
+        // Persisted tabs (if any) replace this seed once connections load, via `restoreTabs`.
         if available {
             register(makeLocalSession())
         } else if case .unavailable(let stage) = ghostty.availability {
             register(TerminalSession(view: TerminalUnavailableView(stage: stage),
-                                     title: "terminal", dot: Status.red))
+                                     title: "terminal", dot: Status.red, origin: .local))
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -108,12 +119,31 @@ final class TerminalContainerView: FlippedView {
         add(makeLocalSession())
     }
 
-    /// Open a new connection tab and focus it: `command` runs in place of the shell (an SSH
-    /// session), `workingDirectory` starts the shell in a folder (a local-folder connection).
-    func openConnection(command: String? = nil, workingDirectory: String? = nil, title: String) {
-        guard available, let app = ghostty.app else { return }
+    /// Open a console tab for a connection and focus it: an SSH connection runs `ssh …` in place of
+    /// the shell; a local-folder connection starts the shell in that directory. The same builder is
+    /// reused to reopen connection tabs on relaunch (`restoreTabs`).
+    func openConnection(_ conn: Domain.Connection) {
+        guard available, let session = makeConnectionSession(conn) else { return }
+        add(session)
+    }
+
+    /// Build a (wired) session for a connection without inserting it — shared by `openConnection`
+    /// and the relaunch restore. Tags the session with the connection id so it can be re-resolved.
+    private func makeConnectionSession(_ conn: Domain.Connection) -> TerminalSession? {
+        guard let app = ghostty.app else { return nil }
+        let command: String?
+        let workingDirectory: String?
+        switch conn.kind {
+        case let .ssh(host, port, user):
+            command = SSHCommand.command(host: host, port: port, user: user, custom: conn.customCommand)
+            workingDirectory = nil
+        case let .localFolder(path):
+            command = nil
+            workingDirectory = (path as NSString).expandingTildeInPath
+        }
         let surface = GhosttySurfaceView(app: app, command: command, workingDirectory: workingDirectory)
-        add(wire(TerminalSession(view: surface, title: title, dot: Status.green), surface: surface))
+        return wire(TerminalSession(view: surface, title: conn.name, dot: Status.green,
+                                    origin: .connection(conn.id.uuidString)), surface: surface)
     }
 
     /// Jump to another tab (native ⌘1…9 / next / previous / last).
@@ -123,6 +153,7 @@ final class TerminalContainerView: FlippedView {
         guard tabs.activeID != before else { return }
         refresh()
         focusActive()
+        snapshotTabs()
     }
 
     /// Close a specific tab (its × button or a native close-tab keybinding), confirming first when
@@ -137,10 +168,11 @@ final class TerminalContainerView: FlippedView {
     private func makeLocalSession() -> TerminalSession {
         guard let app = ghostty.app else {
             return TerminalSession(view: TerminalUnavailableView(stage: .application),
-                                   title: "terminal", dot: Status.red)
+                                   title: "terminal", dot: Status.red, origin: .local)
         }
         let surface = GhosttySurfaceView(app: app)
-        return wire(TerminalSession(view: surface, title: "zsh", dot: Status.green), surface: surface)
+        return wire(TerminalSession(view: surface, title: "zsh", dot: Status.green, origin: .local),
+                    surface: surface)
     }
 
     /// Hook a surface's lifecycle/native-action callbacks back to this dock, keyed by session id.
@@ -166,16 +198,68 @@ final class TerminalContainerView: FlippedView {
         return session
     }
 
-    /// Insert a prepared session into the model + map (no relayout); used to seed the first tab.
+    /// Insert a prepared session into the model + map (no relayout, no persist); used to seed the
+    /// first tab and to rebuild tabs during restore.
     private func register(_ session: TerminalSession) {
         views[session.id] = session
         tabs.open(session.id)
+    }
+
+    // MARK: Persistence (reopen tabs on relaunch)
+
+    /// Save the open tabs (order + which is active) so they reopen next launch. Called after every
+    /// tab mutation; `register` deliberately doesn't, so the launch seed never overwrites the saved
+    /// set before `restoreTabs` runs.
+    private func snapshotTabs() {
+        guard available else { return }
+        store.terminalTabs = orderedSessions.map { session in
+            switch session.origin {
+            case .local: return TerminalTabState(kind: .local, title: session.title)
+            case .connection(let id): return TerminalTabState(kind: .connection(id: id), title: session.title)
+            }
+        }
+        store.activeTerminalTabIndex = tabs.activeIndex ?? 0
+        store.persist()
+    }
+
+    /// Reopen the saved tabs at launch (called once connections are loaded). Local shells are
+    /// re-seeded; connection tabs are re-resolved by id and reconnected (re-running their SSH /
+    /// folder command). A tab whose connection was deleted is skipped, and an all-unresolved or
+    /// never-saved set falls back to a single local shell so the dock is never empty.
+    func restoreTabs(connections: [Domain.Connection]) {
+        guard available else { return }
+        let states = store.terminalTabs
+        guard !states.isEmpty else { snapshotTabs(); return }   // nothing saved → persist the seed
+
+        // Drop the seeded session(s) and rebuild from the saved order.
+        for session in views.values { session.view.removeFromSuperview() }
+        views.removeAll()
+        tabs = TerminalTabs<UUID>()
+
+        for state in states {
+            switch state.kind {
+            case .local:
+                register(makeLocalSession())
+            case .connection(let id):
+                guard let conn = connections.first(where: { $0.id.uuidString == id }),
+                      let session = makeConnectionSession(conn) else { continue }
+                register(session)
+            }
+        }
+        if tabs.isEmpty { register(makeLocalSession()) }   // every saved connection was deleted
+
+        let index = min(max(0, store.activeTerminalTabIndex), tabs.ids.count - 1)
+        if tabs.ids.indices.contains(index) { tabs.select(tabs.ids[index]) }
+        refresh()
+        focusActive()
+        snapshotTabs()   // re-persist, dropping any tabs that couldn't be resolved
     }
 
     private func add(_ session: TerminalSession) {
         register(session)
         refresh()
         focusActive()
+        snapshotTabs()
     }
 
     private func updateTitle(id: UUID, _ title: String) {
@@ -207,11 +291,12 @@ final class TerminalContainerView: FlippedView {
 
         // Never leave the dock empty (and so never let the last `exit` quit the app).
         if tabs.isEmpty, available {
-            add(makeLocalSession())
+            add(makeLocalSession())   // `add` snapshots
             return
         }
         refresh()
         focusActive()
+        snapshotTabs()
     }
 
     private func selectSession(id: UUID) {
@@ -219,6 +304,7 @@ final class TerminalContainerView: FlippedView {
         tabs.select(id)
         refresh()
         focusActive()
+        snapshotTabs()
     }
 
     private func focusActive() {

@@ -113,6 +113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     store.selectedConnId = list.first?.id.uuidString ?? ""
                 }
             }
+            // Reopen the saved terminal tabs now that the connections they reference are loaded.
+            self.root?.restoreTerminalTabs()
             auth.restore()   // recompute signed-in state from the Keychain
         }
     }

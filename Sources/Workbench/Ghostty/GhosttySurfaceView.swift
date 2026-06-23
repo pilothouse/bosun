@@ -31,6 +31,13 @@ final class GhosttySurfaceView: NSView {
     /// Latest shell/OSC-reported title for this surface; the dock reads it to label the tab.
     private(set) var title: String?
 
+    /// Whether this surface runs a connection command (an SSH tab) rather than a plain shell. Such a
+    /// surface keeps ghostty's "Process exited. Press any key to close." screen when its process
+    /// exits, so a failed or finished connection stays visible with its error instead of the tab
+    /// vanishing; a plain shell (or local-folder shell) auto-closes its tab on exit. Read by the
+    /// `SHOW_CHILD_EXITED` handler in `GhosttyApp`.
+    let waitsOnExit: Bool
+
     /// Whether libghostty wants confirmation before this surface is torn down (a foreground
     /// child is still running). Used when the user closes a tab manually via its × button.
     var needsConfirmQuit: Bool {
@@ -48,6 +55,7 @@ final class GhosttySurfaceView: NSView {
     /// login shell (e.g. `ssh ubuntu@host` for a connection tab). `workingDirectory`, when set, is
     /// the directory the shell starts in (e.g. a local-folder connection's path).
     init(app: ghostty_app_t, command: String? = nil, workingDirectory: String? = nil) {
+        self.waitsOnExit = (command != nil)
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
@@ -60,11 +68,12 @@ final class GhosttySurfaceView: NSView {
             nsview: Unmanaged.passUnretained(self).toOpaque()))
         cfg.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
 
-        // Close the surface as soon as its process exits, rather than showing ghostty's "Process
-        // exited. Press any key to close the terminal." wait screen. ghostty defaults this on for
-        // custom-command surfaces (the SSH tabs), which left those tabs stuck open after `exit`;
-        // forcing it off makes the child-exit close callback fire so the dock removes the tab.
-        cfg.wait_after_command = false
+        // A local shell auto-closes its tab the moment it exits (no wait screen) — a clean `exit`
+        // shouldn't leave an empty tab behind. A connection command (an SSH tab) instead keeps
+        // ghostty's "Process exited (N). Press any key to close." screen (see the SHOW_CHILD_EXITED
+        // handler in GhosttyApp), so a connection that fails or dies immediately (a bad host/user)
+        // stays open with its error visible rather than the tab vanishing before it can be read.
+        cfg.wait_after_command = waitsOnExit
 
         // `cfg.command` / `cfg.working_directory` only need to stay valid for the duration of
         // ghostty_surface_new (it copies what it needs), so build the surface inside the C-strings'

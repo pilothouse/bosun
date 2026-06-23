@@ -74,10 +74,14 @@ final class GhosttyApp {
                                           body: n.body.map { String(cString: $0) } ?? "")
                     return true
                 case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
-                    // The child (shell or ssh) exited. Close this surface's tab instead of letting
-                    // ghostty render its "Process exited. Press any key to close the terminal."
-                    // fallback (which it does precisely when this action goes unhandled). The
-                    // process is already gone, so no close confirmation is needed.
+                    // The child (shell or ssh) exited. A connection (SSH) tab returns false so
+                    // ghostty renders its "Process exited. Press any key to close the terminal."
+                    // screen (which it does precisely when this action goes unhandled) — a failed or
+                    // finished connection stays visible with its error instead of the tab vanishing;
+                    // the key press then closes it via close_surface_cb. A plain shell auto-closes
+                    // its tab here (its `exit` is intentional); the process is already gone, so no
+                    // close confirmation is needed.
+                    if view.waitsOnExit { return false }
                     view.onChildExit?(false)
                     return true
                 case GHOSTTY_ACTION_NEW_TAB:

@@ -26,6 +26,10 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// open item's kind can still override the restored tab so the item stays visible.
     public var selectedTab: String?
     public var groupBy: String?
+    /// The open terminal tabs and which one was active, reopened on relaunch. `nil` means never
+    /// saved — seed a single local shell (today's behaviour). See `TerminalTabState`.
+    public var openTabs: [TerminalTabState]?
+    public var activeTabIndex: Int?
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -39,7 +43,9 @@ public struct Preferences: Sendable, Equatable, Codable {
         followedOrgs: [String]? = nil,
         selectedRepoKey: String? = nil,
         selectedTab: String? = nil,
-        groupBy: String? = nil
+        groupBy: String? = nil,
+        openTabs: [TerminalTabState]? = nil,
+        activeTabIndex: Int? = nil
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -50,6 +56,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.selectedRepoKey = selectedRepoKey
         self.selectedTab = selectedTab
         self.groupBy = groupBy
+        self.openTabs = openTabs
+        self.activeTabIndex = activeTabIndex
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -69,7 +77,9 @@ public struct Preferences: Sendable, Equatable, Codable {
             followedOrgs: try container.decodeIfPresent([String].self, forKey: .followedOrgs) ?? fallback.followedOrgs,
             selectedRepoKey: try container.decodeIfPresent(String.self, forKey: .selectedRepoKey) ?? fallback.selectedRepoKey,
             selectedTab: try container.decodeIfPresent(String.self, forKey: .selectedTab) ?? fallback.selectedTab,
-            groupBy: try container.decodeIfPresent(String.self, forKey: .groupBy) ?? fallback.groupBy
+            groupBy: try container.decodeIfPresent(String.self, forKey: .groupBy) ?? fallback.groupBy,
+            openTabs: try container.decodeIfPresent([TerminalTabState].self, forKey: .openTabs) ?? fallback.openTabs,
+            activeTabIndex: try container.decodeIfPresent(Int.self, forKey: .activeTabIndex) ?? fallback.activeTabIndex
         )
     }
 
