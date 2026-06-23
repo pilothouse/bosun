@@ -14,11 +14,16 @@ public struct Connection: Sendable, Equatable, Identifiable, Codable {
     public var name: String
     public var kind: ConnectionKind
     public var isFavorite: Bool
+    /// An optional command run after connecting (SSH only today, e.g. `tmux new -n dev`).
+    /// Synthesized `Codable` decodes a missing key as `nil`, so older stores load unchanged.
+    public var customCommand: String?
 
-    public init(id: UUID, name: String, kind: ConnectionKind, isFavorite: Bool = false) {
+    public init(id: UUID, name: String, kind: ConnectionKind, isFavorite: Bool = false,
+                customCommand: String? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
         self.isFavorite = isFavorite
+        self.customCommand = customCommand
     }
 }

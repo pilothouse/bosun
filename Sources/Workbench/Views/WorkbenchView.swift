@@ -167,7 +167,8 @@ final class WorkbenchView: NSView {
         store.domainConnections[idx] = connection
         let save = connections.save
         let draft = ConnectionDraft(id: connection.id, name: connection.name,
-                                    kind: connection.kind, isFavorite: connection.isFavorite)
+                                    kind: connection.kind, isFavorite: connection.isFavorite,
+                                    customCommand: connection.customCommand)
         Task { _ = try? await save(draft) }
     }
 
@@ -288,7 +289,7 @@ final class WorkbenchView: NSView {
               let conn = store.domainConnections.first(where: { $0.id == uuid }) else { return }
         switch conn.kind {
         case let .ssh(host, port, user):
-            let command = SSHCommand.command(host: host, port: port, user: user)
+            let command = SSHCommand.command(host: host, port: port, user: user, custom: conn.customCommand)
             center.terminal.openConnection(command: command, title: conn.name)
         case let .localFolder(path):
             let dir = (path as NSString).expandingTildeInPath

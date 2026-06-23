@@ -6,7 +6,7 @@ import Domain
 /// (full-bounds overlay, dim backdrop, themed card) but holds editable `NSTextField`s. Form
 /// state lives in plain vars so a rebuild (kind toggle / validation error) never loses input;
 /// fields are only recreated, never the source of truth.
-final class NewConnectionSheet: FlippedView {
+final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
     private let store: Store
     private let save: SaveConnectionUseCase
     private let editing: Domain.Connection?
@@ -20,6 +20,7 @@ final class NewConnectionSheet: FlippedView {
     private var port: String
     private var user: String
     private var path: String
+    private var customCommand: String
     private var isFavorite: Bool
     private var errors: [ConnectionValidationError] = []
     private var didFocus = false
@@ -30,6 +31,7 @@ final class NewConnectionSheet: FlippedView {
     private weak var portField: NSTextField?
     private weak var userField: NSTextField?
     private weak var pathField: NSTextField?
+    private weak var customCommandView: NSTextView?
 
     init(store: Store, save: SaveConnectionUseCase, editing: Domain.Connection?) {
         self.store = store
@@ -38,6 +40,7 @@ final class NewConnectionSheet: FlippedView {
         if let e = editing {
             name = e.name
             isFavorite = e.isFavorite
+            customCommand = e.customCommand ?? ""
             switch e.kind {
             case let .ssh(h, p, u):
                 kind = .ssh; host = h; port = String(p); user = u ?? ""; path = ""
@@ -45,7 +48,8 @@ final class NewConnectionSheet: FlippedView {
                 kind = .folder; path = pth; host = ""; port = "22"; user = ""
             }
         } else {
-            kind = .ssh; name = ""; host = ""; port = "22"; user = ""; path = ""; isFavorite = false
+            kind = .ssh; name = ""; host = ""; port = "22"; user = ""; path = ""
+            customCommand = ""; isFavorite = false
         }
         super.init(frame: .zero)
         wantsLayer = true
@@ -62,6 +66,7 @@ final class NewConnectionSheet: FlippedView {
         if let f = portField { port = f.stringValue }
         if let f = userField { user = f.stringValue }
         if let f = pathField { path = f.stringValue }
+        if let f = customCommandView { customCommand = f.string }
     }
 
     override func layout() {
@@ -70,7 +75,9 @@ final class NewConnectionSheet: FlippedView {
         let t = store.theme
         layer?.backgroundColor = NSColor.blackA(0.45).cgColor
 
-        let cardW: CGFloat = 380, cardH: CGFloat = 404
+        // SSH cards are taller to fit the optional CUSTOM COMMAND field; folder cards stay compact.
+        let cardW: CGFloat = 380
+        let cardH: CGFloat = kind == .ssh ? 486 : 404
         let card = ClickRow(bg: t.panel, radius: 12)
         card.layer?.borderWidth = 1
         card.layer?.borderColor = t.line2.cgColor
@@ -123,6 +130,13 @@ final class NewConnectionSheet: FlippedView {
             card.addSubview(caption("USER (OPTIONAL)", t: t, frame: NSRect(x: pad + 108, y: 200, width: innerW - 108, height: 12)))
             let uf = field(user, placeholder: "root", t: t)
             uf.frame = NSRect(x: pad + 108, y: 216, width: innerW - 108, height: 26); card.addSubview(uf); userField = uf
+
+            // Optional post-connect command, embedded into the launch line as `ssh … -t '<cmd>'`.
+            // A tall, wrapping text box (not a single-line field) so a long command stays fully
+            // visible without scrolling horizontally inside the input.
+            card.addSubview(caption("CUSTOM COMMAND (OPTIONAL)", t: t, frame: NSRect(x: pad, y: 250, width: innerW, height: 12)))
+            let cmdBox = commandBox(t: t, frame: NSRect(x: pad, y: 266, width: innerW, height: 58))
+            card.addSubview(cmdBox)
         } else {
             card.addSubview(caption("FOLDER", t: t, frame: NSRect(x: pad, y: 150, width: innerW, height: 12)))
             let chooseW: CGFloat = 84
@@ -133,10 +147,13 @@ final class NewConnectionSheet: FlippedView {
             card.addSubview(choose)
         }
 
-        // Favorite toggle.
+        // Favorite toggle + validation errors sit below the kind-specific fields; the SSH card's
+        // taller CUSTOM COMMAND row pushes them down by 82pt (matched by the taller cardH).
+        let favY: CGFloat = kind == .ssh ? 338 : 256
+        let errY: CGFloat = kind == .ssh ? 372 : 290
         let fav = ClickRow(radius: 6)
         fav.hoverColor = t.hover
-        fav.frame = NSRect(x: pad - 6, y: 256, width: innerW + 12, height: 26)
+        fav.frame = NSRect(x: pad - 6, y: favY, width: innerW + 12, height: 26)
         fav.onClick = { [weak self] in self?.toggleFavorite() }
         let star = label(isFavorite ? "★" : "☆", sys(13), isFavorite ? t.accent : t.txt4)
         star.frame = NSRect(x: 6, y: 5, width: 16, height: 16); fav.addSubview(star)
@@ -148,7 +165,7 @@ final class NewConnectionSheet: FlippedView {
         if !errors.isEmpty {
             let msg = errors.map(message(for:)).joined(separator: "  ·  ")
             let err = label(msg, sys(11), Status.red, lines: 2)
-            err.frame = NSRect(x: pad, y: 290, width: innerW, height: 32); card.addSubview(err)
+            err.frame = NSRect(x: pad, y: errY, width: innerW, height: 32); card.addSubview(err)
         }
 
         // Buttons.
@@ -166,7 +183,8 @@ final class NewConnectionSheet: FlippedView {
             nameField?.nextKeyView = hostField
             hostField?.nextKeyView = portField
             portField?.nextKeyView = userField
-            userField?.nextKeyView = nameField
+            userField?.nextKeyView = customCommandView
+            customCommandView?.nextKeyView = nameField
         } else {
             nameField?.nextKeyView = pathField
             pathField?.nextKeyView = nameField
@@ -192,6 +210,81 @@ final class NewConnectionSheet: FlippedView {
         // dismiss the sheet (that made it feel impossible to finish editing, e.g. the user field).
         // Submission is an explicit "Add"/"Save" click.
         return tf
+    }
+
+    /// A themed, wrapping, multi-line text box for the custom command — mirrors the card-style
+    /// container used by the comment composer. A single-line `NSTextField` would scroll a long
+    /// command horizontally; this keeps the whole command visible (wrapping, then vertical scroll).
+    private func commandBox(t: Theme, frame: NSRect) -> NSView {
+        let box = BoxView(bg: t.card, radius: 8, border: t.cardbr)
+        box.frame = frame
+
+        let scroll = NSScrollView(frame: NSRect(x: 1, y: 1, width: frame.width - 2, height: frame.height - 2))
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        scroll.autoresizingMask = [.width, .height]
+
+        let tv = PlaceholderTextView(frame: NSRect(x: 0, y: 0, width: scroll.contentSize.width, height: frame.height - 2))
+        tv.string = customCommand
+        tv.placeholder = "tmux new -n dev"
+        tv.placeholderColor = t.txt4
+        tv.font = sys(12.5)
+        tv.textColor = t.txt
+        tv.insertionPointColor = t.txt
+        tv.drawsBackground = false
+        tv.isRichText = false
+        tv.isEditable = true
+        tv.isSelectable = true
+        tv.allowsUndo = true
+        // It's a shell command, not prose: turn off every "smart" substitution so a typed single
+        // quote stays `'` (not a curly `'`), `--` stays `--`, paths aren't auto-linked, etc.
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isAutomaticTextReplacementEnabled = false
+        tv.isAutomaticSpellingCorrectionEnabled = false
+        tv.isContinuousSpellCheckingEnabled = false
+        tv.isGrammarCheckingEnabled = false
+        tv.isAutomaticDataDetectionEnabled = false
+        tv.isAutomaticLinkDetectionEnabled = false
+        tv.smartInsertDeleteEnabled = false
+        tv.textContainerInset = NSSize(width: 6, height: 6)
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.textContainer?.widthTracksTextView = true
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.autoresizingMask = [.width]
+        tv.delegate = self
+        tv.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+
+        scroll.documentView = tv
+        box.addSubview(scroll)
+        customCommandView = tv
+        return box
+    }
+
+    /// Tab / Shift-Tab inside the command box move focus (instead of inserting a tab), keeping the
+    /// form's key-view loop intact. Return is left to insert a newline — submission is an explicit
+    /// "Add"/"Save" click, matching the single-line fields.
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        switch commandSelector {
+        case #selector(NSResponder.insertTab(_:)):
+            textView.window?.selectNextKeyView(nil); return true
+        case #selector(NSResponder.insertBacktab(_:)):
+            textView.window?.selectPreviousKeyView(nil); return true
+        default:
+            return false
+        }
+    }
+
+    // Keep the box's value in sync and repaint so the placeholder clears/returns as it empties.
+    func textDidChange(_ notification: Notification) {
+        if let tv = notification.object as? NSTextView {
+            customCommand = tv.string
+            tv.needsDisplay = true
+        }
     }
 
     private func segButton(_ title: String, selected: Bool, t: Theme, frame: NSRect, action: @escaping () -> Void) -> ClickRow {
@@ -251,7 +344,11 @@ final class NewConnectionSheet: FlippedView {
         case .folder:
             resolved = .localFolder(path: path)
         }
-        return ConnectionDraft(id: editing?.id, name: name, kind: resolved, isFavorite: isFavorite)
+        // Custom command is SSH-only; the use case re-trims and normalizes blank to nil.
+        let trimmedCustom = customCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let customCmd = (kind == .ssh && !trimmedCustom.isEmpty) ? trimmedCustom : nil
+        return ConnectionDraft(id: editing?.id, name: name, kind: resolved,
+                               isFavorite: isFavorite, customCommand: customCmd)
     }
 
     private func selectKind(_ k: ConnKind) {
@@ -284,5 +381,24 @@ final class NewConnectionSheet: FlippedView {
         guard !didFocus, let window, let nameField else { return }
         didFocus = true
         window.makeFirstResponder(nameField)
+    }
+}
+
+/// An editable `NSTextView` that draws a placeholder string when empty — `NSTextView` has no
+/// built-in placeholder, unlike the bezeled `NSTextField`s the rest of the form uses.
+final class PlaceholderTextView: NSTextView {
+    var placeholder = ""
+    var placeholderColor: NSColor = .placeholderTextColor
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !placeholder.isEmpty else { return }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 12.5),
+            .foregroundColor: placeholderColor
+        ]
+        let pad = textContainer?.lineFragmentPadding ?? 0
+        placeholder.draw(at: NSPoint(x: textContainerInset.width + pad, y: textContainerInset.height),
+                         withAttributes: attrs)
     }
 }

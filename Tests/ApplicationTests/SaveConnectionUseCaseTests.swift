@@ -53,6 +53,21 @@ final class SaveConnectionUseCaseTests: XCTestCase {
         XCTAssertEqual(stored.first?.name, "renamed")
     }
 
+    func testCustomCommandIsSavedAndBlankIsNormalizedToNil() async throws {
+        let store = FakeConnectionStore()
+        let save = SaveConnectionUseCase(store: store)
+
+        let withCommand = ConnectionDraft(id: nil, name: "dev", kind: .ssh(host: "h", port: 22, user: "u"),
+                                          customCommand: "  tmux new -n dev  ")
+        guard case let .saved(c1) = try await save(withCommand) else { return XCTFail("expected .saved") }
+        XCTAssertEqual(c1.customCommand, "tmux new -n dev", "trimmed custom command is persisted")
+
+        let blankCommand = ConnectionDraft(id: nil, name: "plain", kind: .ssh(host: "h", port: 22, user: "u"),
+                                           customCommand: "   ")
+        guard case let .saved(c2) = try await save(blankCommand) else { return XCTFail("expected .saved") }
+        XCTAssertNil(c2.customCommand, "a blank custom command persists as nil")
+    }
+
     func testInvalidDraftIsNotSaved() async throws {
         let store = FakeConnectionStore()
         let save = SaveConnectionUseCase(store: store)

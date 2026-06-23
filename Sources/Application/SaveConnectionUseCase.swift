@@ -20,11 +20,13 @@ public struct SaveConnectionUseCase: Sendable {
         let errors = ConnectionPolicy.validate(draft)
         guard errors.isEmpty else { return .invalid(errors) }
 
+        let trimmedCustom = draft.customCommand?.trimmingCharacters(in: .whitespacesAndNewlines)
         let connection = Connection(
             id: draft.id ?? UUID(),
             name: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
             kind: draft.kind,
-            isFavorite: draft.isFavorite
+            isFavorite: draft.isFavorite,
+            customCommand: (trimmedCustom?.isEmpty == false) ? trimmedCustom : nil
         )
         try await store.save(connection)
         return .saved(connection)

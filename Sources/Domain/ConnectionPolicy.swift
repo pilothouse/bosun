@@ -7,12 +7,16 @@ public struct ConnectionDraft: Sendable, Equatable {
     public var name: String
     public var kind: ConnectionKind
     public var isFavorite: Bool
+    /// Optional post-connect command (SSH only); blank input is normalized to `nil` on save.
+    public var customCommand: String?
 
-    public init(id: UUID?, name: String, kind: ConnectionKind, isFavorite: Bool = false) {
+    public init(id: UUID?, name: String, kind: ConnectionKind, isFavorite: Bool = false,
+                customCommand: String? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
         self.isFavorite = isFavorite
+        self.customCommand = customCommand
     }
 }
 

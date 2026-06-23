@@ -24,4 +24,29 @@ final class SSHCommandTests: XCTestCase {
         XCTAssertEqual(SSHCommand.command(host: "10.0.2.11", port: 2222, user: "root"),
                        "ssh -p 2222 root@10.0.2.11")
     }
+
+    func testCustomCommandIsFoldedInWithPty() {
+        XCTAssertEqual(SSHCommand.command(host: "host", port: 22, user: "u", custom: "tmux new -n dev"),
+                       "ssh u@host -t 'tmux new -n dev'")
+    }
+
+    func testCustomCommandWithNonDefaultPort() {
+        XCTAssertEqual(SSHCommand.command(host: "10.0.2.11", port: 2222, user: "root", custom: "tmux a"),
+                       "ssh -p 2222 root@10.0.2.11 -t 'tmux a'")
+    }
+
+    func testBlankCustomCommandLeavesBaseUnchanged() {
+        XCTAssertEqual(SSHCommand.command(host: "gpu.ts.net", port: 22, user: nil, custom: "   "),
+                       "ssh gpu.ts.net")
+    }
+
+    func testNilCustomCommandLeavesBaseUnchanged() {
+        XCTAssertEqual(SSHCommand.command(host: "gpu.ts.net", port: 22, user: nil, custom: nil),
+                       "ssh gpu.ts.net")
+    }
+
+    func testCustomCommandWithSingleQuoteIsPosixEscaped() {
+        XCTAssertEqual(SSHCommand.command(host: "host", port: 22, user: "u", custom: "echo it's"),
+                       "ssh u@host -t 'echo it'\\''s'")
+    }
 }
