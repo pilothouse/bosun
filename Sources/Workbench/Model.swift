@@ -9,7 +9,9 @@ enum ItemKind { case issue, pr }
 
 struct Repo { let id, name: String; let open: Int; var owner = "" }
 
-struct Org { let id, name: String; let color: NSColor; let repos: [Repo] }
+/// `color` is the deterministic placeholder tint; `avatarURL` (when present) is the real org icon
+/// the `AvatarView` async-loads over it.
+struct Org { let id, name: String; let color: NSColor; let avatarURL: URL?; let repos: [Repo] }
 
 struct Connection {
     let id, name: String
@@ -43,11 +45,10 @@ extension Connection {
 
 struct TaskItem { let label: String; let done: Bool }
 struct Check { let name, icon: String; let color: NSColor; let dur, statusText: String; var running = false }
-struct Comment { let author, initials: String; let color: NSColor; let time, badge, body: String }
+struct Comment { let author, initials: String; let color: NSColor; let time, badge, body: String; let avatarURL: URL? }
 
-/// The signed-in viewer, projected for the comment composer's avatar. Real avatar images are
-/// deferred to #25; for now we render the initials `Dot` (mirroring `Comment`). `avatarURL` is
-/// carried so #25 can swap in the image without re-plumbing.
+/// The signed-in viewer, projected for the comment composer's avatar. `color`/`initials` are the
+/// placeholder the `AvatarView` shows until `avatarURL` (the viewer's real avatar) loads.
 struct CurrentUser { let initials: String; let color: NSColor; let avatarURL: URL? }
 
 /// Presentation projection of a GitHub issue/PR. Built from `Domain.GitHubItem` by the mapper in
@@ -64,6 +65,7 @@ struct Item {
     let age, author: String
     let authorColor: NSColor
     let authorInitials: String
+    let authorAvatarURL: URL?
     var isAgent = false
     let metaLeft, metaRight: String
     var agentColor: NSColor = dim

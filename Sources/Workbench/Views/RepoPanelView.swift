@@ -80,11 +80,11 @@ final class RepoPanelView: FlippedView {
                 if self.store.expandedOrgs.contains(org.id) { self.store.expandedOrgs.remove(org.id) }
                 else { self.store.expandedOrgs.insert(org.id) }
             }
-            let sq = BoxView(bg: org.color, radius: 6)
+            let sq = AvatarView(size: 22, cornerRadius: 6, url: org.avatarURL,
+                                placeholderColor: org.color,
+                                initials: String(org.name.prefix(2)).uppercased(),
+                                initialsFont: sys(9, .bold), initialsColor: .white)
             sq.frame = NSRect(x: 14, y: 7, width: 22, height: 22)
-            let initials = String(org.name.prefix(2)).uppercased()
-            let il = label(initials, sys(9, .bold), .white, align: .center)
-            il.frame = sq.bounds.insetBy(dx: 0, dy: 5); sq.addSubview(il)
             row.addSubview(sq)
             let nm = label(org.name, sys(12.5, .semibold), t.txt)
             nm.frame = NSRect(x: 46, y: 9, width: w - 46 - 60, height: 18); row.addSubview(nm)

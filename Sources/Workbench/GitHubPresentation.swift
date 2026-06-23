@@ -16,6 +16,7 @@ extension Org {
         self.init(id: o.id,
                   name: o.name ?? o.login,
                   color: Org.color(forLogin: o.login),
+                  avatarURL: o.avatarURL,
                   repos: o.repositories.map(Repo.init(domain:)))
     }
 
@@ -28,6 +29,7 @@ extension Org {
         self.init(id: Org.personalID,
                   name: "@\(login)",
                   color: Org.color(forLogin: login),
+                  avatarURL: nil,   // synthetic group — no org node, so no icon; keeps colored initials
                   repos: repos.map(Repo.init(domain:)))
     }
 
@@ -73,6 +75,7 @@ extension Item {
             author: it.author.login,
             authorColor: isAgent ? agentAccent : Status.purple,
             authorInitials: it.author.initials,
+            authorAvatarURL: it.author.avatarURL,
             isAgent: isAgent,
             metaLeft: Item.metaLeft(for: it),
             metaRight: isAgent ? "◆ agent" : "",
@@ -152,7 +155,8 @@ extension Comment {
                   color: isBot ? agentAccent : Status.purple,
                   time: GitHubRelativeAge.compact(from: c.createdAt, now: Date()),
                   badge: isBot ? "agent" : "",
-                  body: c.body)
+                  body: c.body,
+                  avatarURL: c.author.avatarURL)
     }
 }
 

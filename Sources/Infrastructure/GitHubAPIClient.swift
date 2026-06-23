@@ -354,11 +354,14 @@ private struct OrgNode: Decodable {
     let id: String
     let login: String
     let name: String?
+    let avatarUrl: String?
     let repositories: RepoConnection
     struct RepoConnection: Decodable { let nodes: [RepoNode] }
 
     func toDomain() -> GitHubOrg {
-        GitHubOrg(id: id, login: login, name: name, repositories: repositories.nodes.map { $0.toDomain() })
+        GitHubOrg(id: id, login: login, name: name,
+                  avatarURL: avatarUrl.flatMap(URL.init(string:)),
+                  repositories: repositories.nodes.map { $0.toDomain() })
     }
 }
 

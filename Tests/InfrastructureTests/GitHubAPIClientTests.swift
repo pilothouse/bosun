@@ -33,6 +33,7 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(orgs.count, 1)
         let acme = try XCTUnwrap(orgs.first)
         XCTAssertEqual(acme.login, "acme-corp")
+        XCTAssertEqual(acme.avatarURL?.host, "avatars.githubusercontent.com")
         XCTAssertEqual(acme.repositories.map(\.name), ["api-gateway", "web-dashboard"])
         let gateway = try XCTUnwrap(acme.repositories.first)
         XCTAssertEqual(gateway.openIssues, 8)

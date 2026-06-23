@@ -14,6 +14,7 @@ enum GitHubGraphQLQueries {
             id
             login
             name
+            avatarUrl
             repositories(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
               nodes {
                 id

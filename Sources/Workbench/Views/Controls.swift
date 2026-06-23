@@ -111,6 +111,70 @@ final class Dot: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+/// An avatar / org icon: shows a colored-initials placeholder immediately, then async-loads the
+/// real image (via `AvatarLoader`) and swaps it in, clipped to `cornerRadius`. Pass
+/// `cornerRadius == size/2` for a circle (users) or a small radius for a rounded square (orgs).
+/// `ring` draws a thin accent border (used for bot/agent accounts). Because the panels rebuild
+/// every `layout()`, a cache hit renders synchronously here — no initials flash on relayout — and
+/// a load that finishes after the view is gone is a harmless no-op (the completion captures `self`
+/// weakly).
+final class AvatarView: NSView {
+    private weak var initials: NSTextField?
+
+    init(size: CGFloat, cornerRadius: CGFloat, url: URL?,
+         placeholderColor: NSColor, initials: String,
+         initialsFont: NSFont, initialsColor: NSColor,
+         ring: NSColor? = nil) {
+        super.init(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        wantsLayer = true
+        layer?.cornerRadius = cornerRadius
+        layer?.masksToBounds = true
+        layer?.contentsGravity = .resizeAspectFill
+        layer?.contentsScale = Self.backingScale(for: nil)
+        if let ring {
+            layer?.borderWidth = 1.5
+            layer?.borderColor = ring.cgColor
+        }
+
+        // Placeholder: solid fill + centered initials. The 12pt label height reproduces the prior
+        // hand-tuned offsets for the 20/22/26pt avatars exactly (y = 4/5/7).
+        layer?.backgroundColor = placeholderColor.cgColor
+        let il = label(initials, initialsFont, initialsColor, align: .center)
+        il.frame = NSRect(x: 0, y: (size - 12) / 2, width: size, height: 12)
+        addSubview(il)
+        self.initials = il
+
+        guard let url else { return }
+        let loader = AvatarLoader.shared
+        if let cached = loader.cachedImage(for: url) { apply(cached); return }
+        loader.load(url) { [weak self] image in self?.apply(image) }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func apply(_ image: NSImage) {
+        layer?.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        layer?.contentsScale = Self.backingScale(for: window)
+        layer?.backgroundColor = nil   // image now covers the placeholder fill
+        initials?.removeFromSuperview()
+        initials = nil
+    }
+
+    // Keep the layer's scale matched to the screen so the avatar stays sharp on Retina and when the
+    // window is dragged between displays of different scale.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        layer?.contentsScale = Self.backingScale(for: window)
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        layer?.contentsScale = Self.backingScale(for: window)
+    }
+
+    private static func backingScale(for window: NSWindow?) -> CGFloat {
+        window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    }
+}
+
 /// An indeterminate spinning indicator, already animating and sized to `size`. The caller
 /// positions it and adds it to the view being (re)built; like `DeviceFlowSheet.addSpinner`
 /// it needs no explicit stop — the next `layout()` removes it from the window, halting the timer.

@@ -132,10 +132,11 @@ final class DetailView: FlippedView {
         add(title); y += title.frame.height + 11
 
         // Author row.
-        let avatar = Dot(it.authorColor, 20)
+        let avatar = AvatarView(size: 20, cornerRadius: 10, url: it.authorAvatarURL,
+                                placeholderColor: it.authorColor, initials: it.authorInitials,
+                                initialsFont: sys(9, .bold), initialsColor: .hex(0x0d0f13),
+                                ring: it.isAgent ? it.authorColor : nil)
         avatar.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(avatar)
-        let ai = label(it.authorInitials, sys(9, .bold), .hex(0x0d0f13), align: .center)
-        ai.frame = NSRect(x: 0, y: 4, width: 20, height: 12); avatar.addSubview(ai)
         var rx = padX + 28
         let auth = label(it.author, sys(12, .semibold), t.txt2); auth.frame = NSRect(x: rx, y: y + 3, width: fitW(auth), height: 16); doc.addSubview(auth); rx += auth.frame.width + 9
         let opened = label("opened \(it.age)", sys(12), t.txt4); opened.frame = NSRect(x: rx, y: y + 3, width: fitW(opened), height: 16); doc.addSubview(opened); rx += opened.frame.width + 9
@@ -218,8 +219,11 @@ final class DetailView: FlippedView {
         let chdr = label("COMMENTS · \(it.comments.count)", mono(9.5, .semibold), t.txt4)
         chdr.frame = NSRect(x: padX, y: y, width: cw, height: 14); doc.addSubview(chdr); y += 22
         for cm in it.comments {
-            let av = Dot(cm.color, 26); av.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(av)
-            let ai = label(cm.initials, sys(10, .bold), .hex(0x0d0f13), align: .center); ai.frame = NSRect(x: 0, y: 7, width: 26, height: 12); av.addSubview(ai)
+            let av = AvatarView(size: 26, cornerRadius: 13, url: cm.avatarURL,
+                                placeholderColor: cm.color, initials: cm.initials,
+                                initialsFont: sys(10, .bold), initialsColor: .hex(0x0d0f13),
+                                ring: cm.badge == "agent" ? cm.color : nil)
+            av.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(av)
             let bubbleW = cw - 37
             let body = markdownView(cm.body, baseFont: sys(12.5), width: bubbleW - 26)
             let bubbleH = body.frame.height + 38
@@ -234,12 +238,13 @@ final class DetailView: FlippedView {
             doc.addSubview(bubble); y += bubbleH + 13
         }
 
-        // Composer. The avatar is the signed-in viewer (initials Dot until #25 loads real images);
-        // the field is editable and Send posts the comment. Sized like a comment row above it.
-        let cav = Dot(store.viewer?.color ?? Status.dim, 26)
+        // Composer. The avatar is the signed-in viewer (real image once it loads, initials until
+        // then); the field is editable and Send posts the comment. Sized like a comment row above it.
+        let cav = AvatarView(size: 26, cornerRadius: 13, url: store.viewer?.avatarURL,
+                             placeholderColor: store.viewer?.color ?? Status.dim,
+                             initials: store.viewer?.initials ?? "?",
+                             initialsFont: sys(10, .bold), initialsColor: .hex(0x0d0f13))
         cav.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(cav)
-        let ci = label(store.viewer?.initials ?? "?", sys(10, .bold), .hex(0x0d0f13), align: .center)
-        ci.frame = NSRect(x: 0, y: 7, width: 26, height: 12); cav.addSubview(ci)
 
         let compW = cw - 37
         let comp = BoxView(bg: t.card, radius: 10, border: t.cardbr)
