@@ -43,14 +43,16 @@ final class GitHubDataController {
         loadTask?.cancel()
         store.dataError = nil
         loadTask = Task { @MainActor in
-            // 1) Hydrate from cache. Select the first repo only when nothing is selected yet (a fresh
-            // launch), so a mid-session reload never yanks the user's current selection.
+            // 1) Hydrate from cache. Establish a selection only when nothing is realized yet (a fresh
+            // launch), so a mid-session reload never yanks the user's current selection. `currentRepo`
+            // is nil until `selectRepo` runs — true here even when a persisted key was restored but
+            // not yet realized, so that key gets honored (or fallen back from) below.
             let cachedOrgs = await cache.loadOrgs()
             let cachedRepos = await cache.loadViewerRepos()
             let hadCache = !cachedOrgs.isEmpty || !cachedRepos.isEmpty
             if hadCache {
                 applyOrgGroups(orgs: cachedOrgs, personalRepos: cachedRepos,
-                               selectFirst: store.selectedRepoKey == nil)
+                               establishSelection: currentRepo == nil)
             } else {
                 store.isLoadingOrgs = true   // cold start: this is the one spinner the user sees
             }
@@ -77,7 +79,7 @@ final class GitHubDataController {
                 // unchanged refresh leaves the store, the selection, and the views alone.
                 if !hadCache || !orgsDelta.isUnchanged || !reposDelta.isUnchanged {
                     applyOrgGroups(orgs: orgsDelta.merged, personalRepos: reposDelta.merged,
-                                   selectFirst: store.selectedRepoKey == nil)
+                                   establishSelection: currentRepo == nil)
                 }
             } catch {
                 handle(error)
@@ -89,14 +91,28 @@ final class GitHubDataController {
         }
     }
 
-    /// Project the org groups into the store, and — when `selectFirst` — expand the first visible org
-    /// and select its first repo (which loads that repo's items). Honors the user's followed/ordered
-    /// choice so a hidden org never steals focus.
-    private func applyOrgGroups(orgs: [GitHubOrg], personalRepos: [GitHubRepo], selectFirst: Bool) {
+    /// Project the org groups into the store, and — when `establishSelection` — pick the repo to show.
+    /// A persisted selection is honored when its repo is still available (restored on relaunch);
+    /// otherwise (access lost, repo gone, or nothing saved) it falls back to expanding the first
+    /// visible org and selecting its first repo. Honors the user's followed/ordered choice so a
+    /// hidden org never steals focus.
+    private func applyOrgGroups(orgs: [GitHubOrg], personalRepos: [GitHubRepo], establishSelection: Bool) {
         var groups = orgs.map(Org.init(domain:))
         if let personal = Org(personalRepos: personalRepos) { groups.insert(personal, at: 0) }
         store.orgs = groups
-        guard selectFirst else { return }
+        guard establishSelection else { return }
+
+        let availableKeys = store.visibleOrgs.flatMap { org in org.repos.map { "\($0.owner)/\($0.name)" } }
+        if case .restore(let key) = RepoSelection.reconcile(persisted: store.selectedRepoKey,
+                                                            available: availableKeys),
+           let target = locate(repoKey: key) {
+            store.expandedOrgs = [target.orgID]
+            selectRepo(owner: target.owner, name: target.name)   // expands org's items, loads PRs/issues
+            return
+        }
+
+        // Nothing saved, or the saved repo is gone — drop any stale key and auto-select the first repo.
+        store.selectedRepoKey = nil
         guard let firstOrg = store.visibleOrgs.first else { clearItems(); return }
         store.expandedOrgs = [firstOrg.id]
         if let firstRepo = firstOrg.repos.first {
@@ -104,6 +120,18 @@ final class GitHubDataController {
         } else {
             clearItems()
         }
+    }
+
+    /// Find the visible org holding `repoKey` (`owner/name`), returning its id plus the repo's
+    /// owner/name. Only repos in `visibleOrgs` are reachable, so a key in a hidden/removed org
+    /// resolves to nil and the caller falls back to auto-selection.
+    private func locate(repoKey: String) -> (orgID: String, owner: String, name: String)? {
+        for org in store.visibleOrgs {
+            if let repo = org.repos.first(where: { "\($0.owner)/\($0.name)" == repoKey }) {
+                return (org.id, repo.owner, repo.name)
+            }
+        }
+        return nil
     }
 
     /// Switch the active repo: update the breadcrumb/header and reload its PRs and issues.
@@ -222,6 +250,13 @@ final class GitHubDataController {
     /// Keep the open item valid for the freshly-loaded list: re-hydrate it if it's still present,
     /// otherwise default to the first item of the active tab (PRs, else issues).
     private func reconcileSelection(owner: String, name: String) {
+        // Keep the open item visible: if it lives in the other tab — e.g. an issue restored from a
+        // previous session while the tab defaulted to PRs — switch to that tab so the list shows it.
+        // Mid-session this is a no-op, since the open item is always in the current tab.
+        if !store.listItems.contains(where: { $0.id == store.selectedItemId }) {
+            if store.prs.contains(where: { $0.id == store.selectedItemId }) { store.tab = .prs }
+            else if store.issues.contains(where: { $0.id == store.selectedItemId }) { store.tab = .issues }
+        }
         if store.listItems.contains(where: { $0.id == store.selectedItemId }),
            let number = Int(store.selectedItemId) {
             store.selectedItemDetail = nil

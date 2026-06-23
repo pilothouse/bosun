@@ -90,4 +90,54 @@ final class PreferencesTests: XCTestCase {
 
         XCTAssertNil(decoded.followedOrgs)
     }
+
+    func testSelectedRepoKeyDefaultsToNil() {
+        XCTAssertNil(Preferences.default.selectedRepoKey,
+                     "no remembered repo means 'auto-select the first one'")
+    }
+
+    func testSelectedRepoKeyRoundTripsThroughCodable() throws {
+        let original = Preferences(selectedRepoKey: "acme/widgets")
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.selectedRepoKey, "acme/widgets")
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutSelectedRepoKeyFallsBackToNil() throws {
+        // A payload written by a build before repo selection was remembered.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertNil(decoded.selectedRepoKey)
+    }
+
+    func testSelectedTabAndGroupByDefaultToNil() {
+        XCTAssertNil(Preferences.default.selectedTab, "nil means 'use the default tab'")
+        XCTAssertNil(Preferences.default.groupBy, "nil means 'use the default View'")
+    }
+
+    func testSelectedTabAndGroupByRoundTripThroughCodable() throws {
+        let original = Preferences(selectedTab: "issues", groupBy: "parent")
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.selectedTab, "issues")
+        XCTAssertEqual(decoded.groupBy, "parent")
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutTabOrGroupByFallsBackToNil() throws {
+        // A payload written by a build before the tab/View were remembered.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertNil(decoded.selectedTab)
+        XCTAssertNil(decoded.groupBy)
+    }
 }

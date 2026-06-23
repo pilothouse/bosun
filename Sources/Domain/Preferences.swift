@@ -17,6 +17,15 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// list was never customized — show every org GitHub returns. An empty array means the user
     /// explicitly hid them all. See `OrgFollowing` for how this drives the visible set.
     public var followedOrgs: [String]?
+    /// The last selected repo, as `owner/name`. `nil` means none was remembered — auto-select the
+    /// first available repo on launch. On restore, a key the viewer can no longer reach (access
+    /// lost or repo gone) falls back to that same auto-selection. See `RepoSelection`.
+    public var selectedRepoKey: String?
+    /// The active item tab (PRs vs Issues) and the list grouping ("View"), stored as opaque keys
+    /// the App layer maps to its own enums. `nil` means never customized — use the default. The
+    /// open item's kind can still override the restored tab so the item stays visible.
+    public var selectedTab: String?
+    public var groupBy: String?
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -27,7 +36,10 @@ public struct Preferences: Sendable, Equatable, Codable {
         selectedConnId: String = "api-gateway",
         selectedItemId: String = "482",
         windowAlpha: Double = 1.0,
-        followedOrgs: [String]? = nil
+        followedOrgs: [String]? = nil,
+        selectedRepoKey: String? = nil,
+        selectedTab: String? = nil,
+        groupBy: String? = nil
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -35,6 +47,9 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.selectedItemId = selectedItemId
         self.windowAlpha = Preferences.clampAlpha(windowAlpha)
         self.followedOrgs = followedOrgs
+        self.selectedRepoKey = selectedRepoKey
+        self.selectedTab = selectedTab
+        self.groupBy = groupBy
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -51,7 +66,10 @@ public struct Preferences: Sendable, Equatable, Codable {
             selectedConnId: try container.decodeIfPresent(String.self, forKey: .selectedConnId) ?? fallback.selectedConnId,
             selectedItemId: try container.decodeIfPresent(String.self, forKey: .selectedItemId) ?? fallback.selectedItemId,
             windowAlpha: try container.decodeIfPresent(Double.self, forKey: .windowAlpha) ?? fallback.windowAlpha,
-            followedOrgs: try container.decodeIfPresent([String].self, forKey: .followedOrgs) ?? fallback.followedOrgs
+            followedOrgs: try container.decodeIfPresent([String].self, forKey: .followedOrgs) ?? fallback.followedOrgs,
+            selectedRepoKey: try container.decodeIfPresent(String.self, forKey: .selectedRepoKey) ?? fallback.selectedRepoKey,
+            selectedTab: try container.decodeIfPresent(String.self, forKey: .selectedTab) ?? fallback.selectedTab,
+            groupBy: try container.decodeIfPresent(String.self, forKey: .groupBy) ?? fallback.groupBy
         )
     }
 

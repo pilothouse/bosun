@@ -9,6 +9,10 @@ final class RepoPanelView: FlippedView {
     /// Open the "manage organizations" sheet (follow/unfollow + reorder).
     var onManageOrgs: (() -> Void)?
 
+    /// The item the list was last auto-scrolled to, so we focus the open item once when the
+    /// selection changes (e.g. restored on launch) without fighting the user's manual scrolling.
+    private var focusedItemId: String?
+
     init(store: Store) {
         self.store = store
         super.init(frame: .zero)
@@ -234,6 +238,7 @@ final class RepoPanelView: FlippedView {
         listScroll.autohidesScrollers = true
         let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: 10))
         var ly: CGFloat = 6
+        var selectedRect: NSRect?   // the open item's card, captured so we can scroll it into view
         let items = store.listItems
         if store.isLoadingItems && items.isEmpty {
             // First load of this repo's items: a spinner where the cards will appear.
@@ -243,23 +248,38 @@ final class RepoPanelView: FlippedView {
         } else if store.groupBy == .none {
             for it in items {
                 let c = itemCard(it, width: w, t: t)
-                c.frame.origin.y = ly; doc.addSubview(c); ly += 58
+                c.frame.origin.y = ly; doc.addSubview(c)
+                if it.id == store.selectedItemId { selectedRect = c.frame }
+                ly += 58
             }
         } else {
             // Grouped tree: parents first, then children indented.
             let parents = items.filter { $0.parent == nil }
             for p in parents {
                 let r = groupedRow(p, indent: 0, width: w, t: t)
-                r.frame.origin.y = ly; doc.addSubview(r); ly += 29
+                r.frame.origin.y = ly; doc.addSubview(r)
+                if p.id == store.selectedItemId { selectedRect = r.frame }
+                ly += 29
                 for child in items where child.parent == p.id {
                     let cr = groupedRow(child, indent: 18, width: w, t: t)
-                    cr.frame.origin.y = ly; doc.addSubview(cr); ly += 29
+                    cr.frame.origin.y = ly; doc.addSubview(cr)
+                    if child.id == store.selectedItemId { selectedRect = cr.frame }
+                    ly += 29
                 }
             }
         }
         doc.frame.size.height = max(ly, listScroll.frame.height)
         listScroll.documentView = doc
         addSubview(listScroll)
+
+        // Focus the open item: scroll it into view once when the selection changes (e.g. restored on
+        // launch, or switched to its tab), but never on a plain repaint — so manual scrolling sticks.
+        if store.selectedItemId.isEmpty {
+            focusedItemId = nil
+        } else if let rect = selectedRect, store.selectedItemId != focusedItemId {
+            focusedItemId = store.selectedItemId
+            DispatchQueue.main.async { [weak doc] in doc?.scrollToVisible(rect.insetBy(dx: 0, dy: -28)) }
+        }
 
         // Dropdown overlay.
         if store.viewMenuOpen {

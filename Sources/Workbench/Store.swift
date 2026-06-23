@@ -5,11 +5,24 @@ import Domain
 /// Shared UI state for the Workbench. Views register an `observe` closure that
 /// fires on any data/theme change (used to re-apply content + colors).
 final class Store {
-    enum Tab { case prs, issues }
+    enum Tab: String { case prs, issues }   // rawValue is the stable persistence key
     enum GroupBy: String, CaseIterable {
         case none = "Flat list"
         case parent = "By parent"
         case blocked = "By blocked-by"
+
+        /// Stable key for persistence, independent of the display `rawValue` above (so renaming a
+        /// label never invalidates a stored value). See `Preferences.groupBy`.
+        var storageKey: String {
+            switch self { case .none: "none"; case .parent: "parent"; case .blocked: "blocked" }
+        }
+        init(storageKey: String?) {
+            switch storageKey {
+            case "parent": self = .parent
+            case "blocked": self = .blocked
+            default: self = .none
+            }
+        }
     }
 
     /// GitHub sign-in state. Deliberately NOT persisted in `Preferences` — the token lives in the
@@ -27,8 +40,10 @@ final class Store {
     var theme: Theme { Theme.named(themeKey) }
 
     var railCollapsed = false { didSet { if oldValue != railCollapsed { notify() } } }
-    var tab: Tab = .prs { didSet { if oldValue != tab { notify() } } }
-    var groupBy: GroupBy = .none { didSet { if oldValue != groupBy { notify() } } }
+    /// The active item tab and the list grouping ("View"). Persisted, so they're restored on relaunch
+    /// (the restored item's kind can still flip the tab — see `GitHubDataController.reconcileSelection`).
+    var tab: Tab = .prs { didSet { if oldValue != tab { changed() } } }
+    var groupBy: GroupBy = .none { didSet { if oldValue != groupBy { changed() } } }
     var viewMenuOpen = false { didSet { if oldValue != viewMenuOpen { notify() } } }
     var settingsOpen = false { didSet { if oldValue != settingsOpen { notify() } } }
     var newConnectionOpen = false { didSet { if oldValue != newConnectionOpen { notify() } } }
@@ -48,8 +63,9 @@ final class Store {
     var prs: [Item] = [] { didSet { notify() } }
     var issues: [Item] = [] { didSet { notify() } }
     /// The currently-selected repo as `owner/name`, shown in the titlebar/header; nil before a
-    /// repo is picked. Drives which `prs`/`issues` the panel lists.
-    var selectedRepoKey: String? { didSet { if oldValue != selectedRepoKey { notify() } } }
+    /// repo is picked. Drives which `prs`/`issues` the panel lists. Persisted, so the selection is
+    /// restored on relaunch (see `GitHubDataController.applyOrgGroups` and `RepoSelection`).
+    var selectedRepoKey: String? { didSet { if oldValue != selectedRepoKey { changed() } } }
     /// The fully-hydrated item (body tasks, comments, PR checks) for the open detail pane. Lead
     /// list items render immediately; this upgrades them once the detail fetch completes.
     var selectedItemDetail: Item? { didSet { notify() } }
@@ -153,7 +169,10 @@ final class Store {
             selectedConnId: selectedConnId,
             selectedItemId: selectedItemId,
             windowAlpha: Double(windowAlpha),
-            followedOrgs: followedOrgs)
+            followedOrgs: followedOrgs,
+            selectedRepoKey: selectedRepoKey,
+            selectedTab: tab.rawValue,
+            groupBy: groupBy.storageKey)
         Task { await preferences.save(snapshot) }
     }
 
@@ -167,6 +186,9 @@ final class Store {
         selectedItemId = p.selectedItemId
         windowAlpha = CGFloat(p.windowAlpha)
         followedOrgs = p.followedOrgs
+        selectedRepoKey = p.selectedRepoKey
+        tab = Tab(rawValue: p.selectedTab ?? "") ?? .prs
+        groupBy = GroupBy(storageKey: p.groupBy)
         isLoading = false
         onWindowAlpha?(windowAlpha)
         refresh()

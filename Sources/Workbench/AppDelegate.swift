@@ -49,8 +49,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.window = win
         // Opacity is applied straight to the live window; restoring prefs (below) fires this once.
         store.onWindowAlpha = { [weak win] alpha in win?.alphaValue = alpha }
-        restoreState(into: store, connections: services, preferences: preferences)
-        auth.restore()   // recompute signed-in state from the Keychain
+        // Restore prefs first, then recompute signed-in state from the Keychain. The order matters:
+        // `auth.restore()` can fire `data.load()`, which reconciles the *restored* `selectedRepoKey`
+        // against the live orgs — so the key must be applied before the data load can run.
+        restoreState(into: store, connections: services, preferences: preferences, then: auth)
         runAPISmokeIfRequested(githubServices.api)
 
         NSApp.activate(ignoringOtherApps: true)
@@ -95,16 +97,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// loads persisted connections into the rail. Preferences are applied first so the restored
     /// connection selection is honored when it still exists in the loaded list; otherwise the
     /// selection falls back to the first connection. The rail starts empty until a connection is added.
+    ///
+    /// `auth.restore()` runs last, after the prefs are applied: it may trigger `data.load()`, which
+    /// restores the saved `selectedRepoKey` by reconciling it against the live orgs — so the key has
+    /// to be in place before that load can run (otherwise the auto-select would overwrite it).
     private func restoreState(into store: Store,
                               connections services: ConnectionServices,
-                              preferences: PreferencesStore) {
+                              preferences: PreferencesStore,
+                              then auth: GitHubAuthController) {
         Task { @MainActor in
             store.applyPersisted(await preferences.load())
-            guard let list = try? await services.store.all() else { return }
-            store.domainConnections = list
-            if !list.contains(where: { $0.id.uuidString == store.selectedConnId }) {
-                store.selectedConnId = list.first?.id.uuidString ?? ""
+            if let list = try? await services.store.all() {
+                store.domainConnections = list
+                if !list.contains(where: { $0.id.uuidString == store.selectedConnId }) {
+                    store.selectedConnId = list.first?.id.uuidString ?? ""
+                }
             }
+            auth.restore()   // recompute signed-in state from the Keychain
         }
     }
 
