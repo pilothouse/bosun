@@ -25,8 +25,8 @@ public struct AuthenticateWithGitHubUseCase: Sendable {
         let grant = try await auth.requestDeviceCode()
         onCodeIssued(grant)
 
-        var interval = DeviceFlowPolicy.effectiveInterval(grant.interval)
         var elapsed = 0
+        var interval = DeviceFlowPolicy.effectiveInterval(grant.interval)
 
         while DeviceFlowPolicy.hasBudget(elapsedSeconds: elapsed, expiresIn: grant.expiresIn) {
             try await sleeper.sleep(seconds: interval)   // throws on cancel → loop unwinds
