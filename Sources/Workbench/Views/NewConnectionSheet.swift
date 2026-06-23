@@ -2,8 +2,8 @@ import AppKit
 import Application
 import Domain
 
-/// Modal overlay for adding or editing a connection. Follows the `SettingsPopover` pattern
-/// (full-bounds overlay, dim backdrop, themed card) but holds editable `NSTextField`s. Form
+/// Modal overlay for adding or editing a connection. The canonical sheet pattern
+/// (full-bounds dim backdrop, centered themed card) but holds editable `NSTextField`s. Form
 /// state lives in plain vars so a rebuild (kind toggle / validation error) never loses input;
 /// fields are only recreated, never the source of truth.
 final class NewConnectionSheet: FlippedView, NSTextViewDelegate {

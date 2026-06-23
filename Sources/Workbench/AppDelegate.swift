@@ -113,11 +113,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         root.store.newConnectionOpen = true
     }
 
+    @objc private func openSettings() {
+        root.store.settingsOpen = true
+    }
+
     private func installMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Workbench", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 

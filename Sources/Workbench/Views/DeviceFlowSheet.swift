@@ -1,7 +1,7 @@
 import AppKit
 import Domain
 
-/// Modal overlay for GitHub's OAuth device flow. Follows the `NewConnectionSheet`/`SettingsPopover`
+/// Modal overlay for GitHub's OAuth device flow. Follows the `NewConnectionSheet`/`ManageOrgsSheet`
 /// pattern (full-bounds dim backdrop, themed centered card rebuilt in `layout()`). It renders one
 /// of three states off `Store.authState`: requesting a code (pending), the issued code + where to
 /// enter it (authenticating), or a friendly error. Dismissing cancels the in-flight sign-in.

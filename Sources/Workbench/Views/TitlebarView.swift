@@ -3,7 +3,6 @@ import AppKit
 final class TitlebarView: FlippedView {
     let store: Store
     var onToggleSidebar: (() -> Void)?
-    var onToggleSettings: (() -> Void)?
 
     init(store: Store) {
         self.store = store
@@ -99,12 +98,5 @@ final class TitlebarView: FlippedView {
             repo.frame = NSRect(x: x, y: textY, width: fitW(repo), height: 16)
             addSubview(repo)
         }
-
-        // Right group.
-        let rx = bounds.width - 13
-        let gear = iconButton("gearshape", tint: t.txt3,
-                              frame: NSRect(x: rx - 28, y: cy - 12, width: 28, height: 24), point: 15)
-        gear.onClick = { [weak self] in self?.onToggleSettings?() }
-        addSubview(gear)
     }
 }

@@ -55,7 +55,7 @@ final class WorkbenchView: NSView {
     private let rail: ConnectionRailView
     private let center: CenterColumnView
     private let repoPanel: RepoPanelView
-    private var settings: SettingsPopover?
+    private var settings: SettingsSheet?
     private var newConn: NewConnectionSheet?
     private var manageOrgs: ManageOrgsSheet?
     private var deviceFlow: DeviceFlowSheet?
@@ -90,7 +90,6 @@ final class WorkbenchView: NSView {
         addSubview(titlebar)
 
         titlebar.onToggleSidebar = { [weak self] in self?.store.railCollapsed.toggle() }
-        titlebar.onToggleSettings = { [weak self] in self?.store.settingsOpen.toggle() }
 
         rail.onAdd = { [weak self] in self?.openSheet(editingId: nil) }
         rail.onEdit = { [weak self] id in self?.openSheet(editingId: id) }
@@ -183,16 +182,17 @@ final class WorkbenchView: NSView {
             railShown = store.railCollapsed
             slideRail()
         }
-        // Settings overlay show/hide.
+        // Settings sheet show/hide.
         if store.settingsOpen, settings == nil {
-            let pop = SettingsPopover(store: store, auth: auth)
-            pop.onClose = { [weak self] in self?.store.settingsOpen = false }
-            pop.frame = bounds
-            addSubview(pop)
-            settings = pop
-        } else if !store.settingsOpen, let pop = settings {
-            pop.removeFromSuperview()
+            let sheet = SettingsSheet(store: store, auth: auth)
+            sheet.onClose = { [weak self] in self?.store.settingsOpen = false }
+            sheet.frame = bounds
+            addSubview(sheet)
+            settings = sheet
+        } else if !store.settingsOpen, let sheet = settings {
+            sheet.removeFromSuperview()
             settings = nil
+            focusTerminal()
         }
         settings?.needsLayout = true
 
