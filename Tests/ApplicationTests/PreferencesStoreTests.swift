@@ -14,9 +14,7 @@ final class PreferencesStoreTests: XCTestCase {
     }
 
     func testLoadReturnsDefaultsBeforeAnythingIsSaved() async {
-        let store = FakePreferencesStore()
-
-        let loaded = await store.load()
+        let loaded = await FakePreferencesStore().load()
 
         XCTAssertEqual(loaded, .default)
     }
