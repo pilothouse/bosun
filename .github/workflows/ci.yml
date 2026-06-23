@@ -2,10 +2,10 @@ name: CI
 
 # Build, test, and report coverage.
 #
-# Why `--test-product WorkbenchPackageTests` and not a bare `swift test`: the macOS GUI
-# app (the `Workbench` executable) links a ~141 MB vendored `Vendor/libghostty.a` that is
+# Why `--test-product BosunPackageTests` and not a bare `swift test`: the macOS GUI
+# app (the `Bosun` executable) links a ~141 MB vendored `Vendor/libghostty.a` that is
 # .gitignored and therefore absent in CI. A bare `swift test` builds the *whole* package —
-# including the `Workbench` executable — and would fail at the link step with
+# including the `Bosun` executable — and would fail at the link step with
 # `ld: library 'ghostty' not found`. Scoping to the test product builds only the test
 # bundle and its dependencies (Domain/Application/Infrastructure), none of which link
 # libghostty, so it compiles and runs cleanly without the vendored archive. The SwiftLint
@@ -59,8 +59,8 @@ jobs:
         # --disable-sandbox: the SwiftLint build-tool plugin on the inner layers needs to
         # run unsandboxed on a clean checkout (matches the documented local build path).
         # --test-product: build only the test bundle + its deps, never the libghostty-linked
-        # Workbench executable (see header comment). The product name is "<PackageName>PackageTests".
-        run: swift test --enable-code-coverage --disable-sandbox --test-product WorkbenchPackageTests
+        # Bosun executable (see header comment). The product name is "<PackageName>PackageTests".
+        run: swift test --enable-code-coverage --disable-sandbox --test-product BosunPackageTests
 
       - name: Export coverage to LCOV
         # SwiftPM emits raw LLVM coverage; octocov reads LCOV. Convert the merged test

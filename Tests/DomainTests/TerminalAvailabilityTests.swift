@@ -4,7 +4,7 @@ import XCTest
 /// Contract tests for the terminal-subsystem availability fact. They describe what
 /// `TerminalAvailability` promises outward — whether the terminal came up and, if not, which
 /// startup stage failed — not how the App layer renders it. User-facing copy is presentation and
-/// lives in Workbench, so it is deliberately NOT asserted here: wording can change without
+/// lives in Bosun (the App layer), so it is deliberately NOT asserted here: wording can change without
 /// touching this contract.
 final class TerminalAvailabilityTests: XCTestCase {
     func testReadyIsReady() {

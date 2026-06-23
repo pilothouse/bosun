@@ -1,6 +1,6 @@
-# bosun
+# Bosun
 
-**Workbench** is a macOS console for working with GitHub and coding agents. It has a connection
+**Bosun** is a macOS console for working with GitHub and coding agents. It has a connection
 rail you can collapse, a pane that shows issues and pull requests, a tree of organizations and
 repositories, themes you can switch between, and a terminal that stays open and can be resized.
 The terminal is powered by real [libghostty](https://github.com/ghostty-org/ghostty) and drawn
@@ -18,17 +18,17 @@ with Metal.
 
 The code is layered with Clean Architecture, and the boundaries are enforced by the build
 itself — the compiler (SPM target graph) plus SwiftLint. Dependencies point inward:
-`Workbench → Infrastructure → Application → Domain`. See [`CLAUDE.md`](CLAUDE.md) for the rules.
+`Bosun → Infrastructure → Application → Domain`. See [`CLAUDE.md`](CLAUDE.md) for the rules.
 
 * `Sources/Domain/`: entities and pure rules (e.g. `DispatchPolicy`). Depends on nothing.
 * `Sources/Application/`: use cases and the ports (protocols) they talk through.
 * `Sources/Infrastructure/`: adapters that implement those ports (SSH, storage, …).
-* `Sources/Workbench/`: the App layer — composition root plus the AppKit/Metal/libghostty UI.
+* `Sources/Bosun/`: the App layer — composition root plus the AppKit/Metal/libghostty UI.
   The only layer that links libghostty.
 * `Sources/CGhostty/`: a small C layer that exposes the libghostty header to Swift.
-* `Sources/Workbench/Ghostty/`: the libghostty bridge (`GhosttyApp`, `GhosttySurfaceView`).
-* `Sources/Workbench/Views/`: the AppKit interface (titlebar, rail, detail, repo panel, terminal).
-* `Sources/Workbench/{Theme,Model,Store}.swift`: themes, data models, and interface state.
+* `Sources/Bosun/Ghostty/`: the libghostty bridge (`GhosttyApp`, `GhosttySurfaceView`).
+* `Sources/Bosun/Views/`: the AppKit interface (titlebar, rail, detail, repo panel, terminal).
+* `Sources/Bosun/{Theme,Model,Store}.swift`: themes, data models, and interface state.
 
 ## Build
 
@@ -37,7 +37,7 @@ The app is a SwiftPM package. Build the libghostty archive once, then run it:
 ```sh
 bash scripts/build-libghostty.sh --check   # verify prerequisites only (fast); builds nothing
 bash scripts/build-libghostty.sh           # creates Vendor/libghostty.a (several minutes)
-swift run Workbench
+swift run Bosun
 ```
 
 The build needs **full Xcode** plus the **Metal Toolchain**, a component you download once with

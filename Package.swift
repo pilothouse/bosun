@@ -2,23 +2,23 @@
 import PackageDescription
 
 // Clean Architecture as a compiler-enforced target graph (see CLAUDE.md).
-// Dependency direction is all inward:  Workbench → Infrastructure → Application → Domain.
+// Dependency direction is all inward:  Bosun → Infrastructure → Application → Domain.
 // `Domain` has `dependencies: []`, so it physically cannot import another layer — the
 // compiler rejects it before SwiftLint ever runs. SwiftLint is left with the two jobs the
 // compiler genuinely can't do: banning always-importable system frameworks (AppKit, Metal,
 // Network, …) in the inner layers, and catching transitive skip-imports.
 let package = Package(
-    name: "Workbench",
+    name: "Bosun",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "Workbench", targets: ["Workbench"]),
+        .executable(name: "Bosun", targets: ["Bosun"]),
     ],
     dependencies: [
         // Dedicated plugins repo: avoids pulling SwiftLint's full dependency tree into the
         // build graph. Functionally identical rules to realm/SwiftLint.
         .package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", from: "0.57.0"),
         // GitHub-flavored Markdown parser (Swift `Markdown` over C `cmark-gfm`). Source-only —
-        // no linker settings of its own — so it's added to the Workbench target alone and leaves
+        // no linker settings of its own — so it's added to the Bosun target alone and leaves
         // the vendored libghostty link flags untouched. Renders issue/PR/comment bodies (issue #27).
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.6.0"),
     ],
@@ -57,9 +57,13 @@ let package = Package(
         // dense AppKit views would only police style, not architecture. Inner-layer purity (the
         // part the compiler can't see) is enforced on Domain/Application above.
         .executableTarget(
-            name: "Workbench",
+            name: "Bosun",
             dependencies: ["CGhostty", "Application", "Infrastructure", "Domain",
                            .product(name: "Markdown", package: "swift-markdown")],
+            // The app icon (a copy of Assets/AppIcon/bosun-pipe.png). Bare SwiftPM executables have no
+            // .app bundle/Info.plist, so the dock icon is set at runtime from this bundled resource
+            // via NSApp.applicationIconImage (see AppDelegate).
+            resources: [.process("Resources")],
             linkerSettings: [
                 .unsafeFlags(["-L", "Vendor", "-lghostty"]),
                 .linkedFramework("AppKit"),

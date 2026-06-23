@@ -1,4 +1,4 @@
-# .swiftlint.yml — bosun architecture guardrails
+# .swiftlint.yml — Bosun architecture guardrails
 #
 # The compiler already blocks layer -> layer imports (a target only sees the modules in its
 # `dependencies:`). These rules cover the two things it CAN'T: system frameworks (always
@@ -6,7 +6,7 @@
 # build — for an agent, a red pipeline it fixes in-loop beats a paragraph it reinterprets.
 #
 # The plugin runs on the inner layers (Domain, Application, Infrastructure). The App layer
-# (Sources/Workbench) is the unconstrained composition layer; the `no_io_in_views` rule below
+# (Sources/Bosun) is the unconstrained composition layer; the `no_io_in_views` rule below
 # is kept for a manual `swiftlint` CLI sweep of the whole tree.
 included:
   - Sources
@@ -25,7 +25,7 @@ custom_rules:
     name: "Domain must stay UI-free"
     regex: 'import\s+(AppKit|UIKit|SwiftUI|Metal|MetalKit|GhosttyKit|CGhostty)'
     included: ".*/Sources/Domain/.*"
-    message: "Domain is pure rules. UI/render frameworks belong in the App layer (Sources/Workbench). See CLAUDE.md → 'Where logic lives'."
+    message: "Domain is pure rules. UI/render frameworks belong in the App layer (Sources/Bosun). See CLAUDE.md → 'Where logic lives'."
     severity: error
 
   domain_no_io:
@@ -52,6 +52,6 @@ custom_rules:
   no_io_in_views:
     name: "Views call use cases, not adapters"
     regex: 'import\s+(Network|SQLite|FMDB|GRDB)'
-    included: ".*/Sources/Workbench/.*View.*\\.swift"
+    included: ".*/Sources/Bosun/.*View.*\\.swift"
     message: "An AppKit view does I/O only through an injected use case. Wire concretes in CompositionRoot."
     severity: error

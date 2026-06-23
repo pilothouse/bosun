@@ -337,7 +337,7 @@ stage_header() {
 done_banner() {
   echo
   echo "==> DONE: $VENDOR/libghostty.a ($(du -h "$VENDOR/libghostty.a" | cut -f1)) + ghostty.h staged."
-  echo "    Now: swift build && swift run Workbench"
+  echo "    Now: swift build && swift run Bosun"
 }
 
 main() {

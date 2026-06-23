@@ -1,7 +1,7 @@
 import AppKit
 
 /// Loads and caches avatar/org-icon images for `AvatarView`. Presentation-only glue (no business
-/// rule), so it lives in Workbench rather than behind an Application port — see CLAUDE.md's "light
+/// rule), so it lives in Bosun (the App layer) rather than behind an Application port — see CLAUDE.md's "light
 /// path": fetching bytes and caching an `NSImage` has nothing to unit-test and `NSImage`/`NSCache`
 /// are AppKit-only anyway.
 ///

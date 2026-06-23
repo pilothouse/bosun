@@ -1,4 +1,4 @@
-# bosun — architecture rules for agents
+# Bosun — architecture rules for agents
 
 You're in a Swift + AppKit app with Clean Architecture enforced by the compiler
 (SPM targets) and SwiftLint. The build fails if you cross a boundary, so read the
@@ -12,7 +12,7 @@ map before adding code.
   world only through *ports* (protocols) defined here. Max 3 collaborators per use case.
 - `Sources/Infrastructure` — adapters. SSH, SQLite, Git-forge clients, libghostty
   bridges. Implements the ports from Application.
-- `Sources/Workbench` — the App layer: composition root + AppKit/Metal/libghostty views.
+- `Sources/Bosun` — the App layer: composition root + AppKit/Metal/libghostty views.
   The only place allowed to import every layer (and the only place that links libghostty).
   Views stay thin: read input, call a use case, render.
 
@@ -23,7 +23,7 @@ map before adding code.
 - **Purity is SwiftLint's job.** System frameworks (`AppKit`, `Metal`, `Network`, `SQLite`,
   …) are always importable, so the compiler can't stop them. The SwiftLint plugin runs on
   Domain/Application at build time and fails the build if one leaks in (`.swiftlint.yml`).
-- The plugin is intentionally *not* attached to `Sources/Workbench` — it's the unconstrained
+- The plugin is intentionally *not* attached to `Sources/Bosun` — it's the unconstrained
   composition layer, and linting the dense AppKit views would only police style. Run
   `swiftlint` (CLI) over the whole tree if you want the `no_io_in_views` rule checked there too.
 
@@ -37,7 +37,7 @@ Domain and both callers share it. If a rule has an `if`, it belongs in Domain.
 ## Reaching the outside world
 Need SSH, a database, or a forge API? Define a protocol (a port) in `Application`,
 implement it in `Infrastructure`, and wire the concrete type in
-`Sources/Workbench/CompositionRoot.swift`.
+`Sources/Bosun/CompositionRoot.swift`.
 Why: that seam is what lets a use case run against a fake in a unit test instead of a
 live SSH connection (see `Tests/ApplicationTests`). An `import Network` in Application or
 Domain fails the build on purpose.

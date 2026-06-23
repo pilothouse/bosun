@@ -4,7 +4,7 @@ import Domain
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
-    private var root: WorkbenchView!
+    private var root: BosunView!
     private var authController: GitHubAuthController!
     private var dataController: GitHubDataController!
     let ghostty = GhosttyApp.shared
@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         ghostty.start()
         installMenu()
+        applyDockIcon()
 
         let preferences = CompositionRoot.makePreferencesStore()
         let store = Store(preferences: preferences)
@@ -26,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.dataController = data
         auth.onSignedIn = { [weak data] in data?.load() }
         auth.onSignedOut = { [weak data] in data?.clear() }
-        let root = WorkbenchView(store: store, ghostty: ghostty, connections: services,
+        let root = BosunView(store: store, ghostty: ghostty, connections: services,
                                  auth: auth, data: data)
         self.root = root
 
@@ -37,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false)
         win.titlebarAppearsTransparent = true
         win.titleVisibility = .hidden
-        win.title = "Workbench"
+        win.title = "Bosun"
         win.isReleasedWhenClosed = false
         win.minSize = NSSize(width: 1100, height: 720)
         win.contentView = root
@@ -128,6 +129,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         root.store.settingsOpen = true
     }
 
+    /// Sets the dock/app icon at runtime. A bare SwiftPM executable ships no `.app` bundle or
+    /// Info.plist to carry an `.icns`, so the icon — `Resources/AppIcon.png`, the bosun's-call
+    /// mark extracted from the design system (also kept as source in `Assets/AppIcon/bosun-pipe.svg`) — is
+    /// bundled as a package resource and applied to `NSApp` here.
+    ///
+    /// The design mark is full-bleed (the squircle fills the whole canvas), but macOS sizes dock
+    /// icons against a grid where the rounded-square body covers ~80% of the tile, leaving a
+    /// transparent margin. Drawn full-bleed it reads slightly larger than its neighbors, so we
+    /// inset it onto a transparent canvas to match the system footprint (824 of 1024 = Apple's
+    /// macOS app-icon grid).
+    private func applyDockIcon() {
+        guard let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+              let mark = NSImage(contentsOf: url) else {
+            NSLog("[icon] AppIcon.png missing from bundle resources")
+            return
+        }
+        let side: CGFloat = 1024
+        let bodyRatio: CGFloat = 824.0 / 1024.0          // Apple macOS app-icon grid
+        let inset = (side - side * bodyRatio) / 2
+        let icon = NSImage(size: NSSize(width: side, height: side))
+        icon.lockFocus()
+        mark.draw(in: NSRect(x: inset, y: inset, width: side - inset * 2, height: side - inset * 2),
+                  from: .zero, operation: .sourceOver, fraction: 1.0)
+        icon.unlockFocus()
+        NSApp.applicationIconImage = icon
+    }
+
     private func installMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -137,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsItem.target = self
         appMenu.addItem(settingsItem)
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Workbench", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Bosun", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
         let fileItem = NSMenuItem()
