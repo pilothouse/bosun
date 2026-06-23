@@ -2,12 +2,14 @@ name: CI
 
 # Build, test, and report coverage.
 #
-# Why `swift test` and not `swift build`: the macOS GUI app (the `Workbench`
-# executable) links a ~141 MB vendored `Vendor/libghostty.a` that is .gitignored and
-# therefore absent in CI. The test targets depend only on Domain/Application/
-# Infrastructure — none of which link libghostty — so `swift test` compiles and runs
-# cleanly without the vendored archive. Building the full package here would fail at the
-# link step.
+# Why `--test-product WorkbenchPackageTests` and not a bare `swift test`: the macOS GUI
+# app (the `Workbench` executable) links a ~141 MB vendored `Vendor/libghostty.a` that is
+# .gitignored and therefore absent in CI. A bare `swift test` builds the *whole* package —
+# including the `Workbench` executable — and would fail at the link step with
+# `ld: library 'ghostty' not found`. Scoping to the test product builds only the test
+# bundle and its dependencies (Domain/Application/Infrastructure), none of which link
+# libghostty, so it compiles and runs cleanly without the vendored archive. The SwiftLint
+# build-tool plugin on those inner layers still runs (they're test dependencies).
 
 on:
   push:
@@ -30,7 +32,15 @@ concurrency:
 jobs:
   test:
     name: Test & coverage
-    runs-on: macos-latest
+    # Pinned to macos-26 (Xcode 26.x, Swift >= 6.2) on purpose. The SwiftLint build-tool
+    # plugin emits a *prebuild* command, and Swift 6.1's SwiftPM rejects prebuild commands
+    # whose executable comes from a binary artifact ("a prebuild command cannot use
+    # executables built from source, including executable target 'swiftlint'"). That was a
+    # toolchain bug fixed in swiftlang/swift-package-manager#8440, shipped in Swift 6.2.
+    # `macos-latest` still resolves to macos-15 / Xcode 16.4 / Swift 6.1.2 (buggy), so the
+    # build-tool plugin fails build planning and `swift test` never runs. macos-26's default
+    # Xcode (26.x) carries the fix.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -48,7 +58,9 @@ jobs:
       - name: Test (with code coverage)
         # --disable-sandbox: the SwiftLint build-tool plugin on the inner layers needs to
         # run unsandboxed on a clean checkout (matches the documented local build path).
-        run: swift test --enable-code-coverage --disable-sandbox
+        # --test-product: build only the test bundle + its deps, never the libghostty-linked
+        # Workbench executable (see header comment). The product name is "<PackageName>PackageTests".
+        run: swift test --enable-code-coverage --disable-sandbox --test-product WorkbenchPackageTests
 
       - name: Export coverage to LCOV
         # SwiftPM emits raw LLVM coverage; octocov reads LCOV. Convert the merged test
