@@ -1,0 +1,72 @@
+name: CI
+
+# Build, test, and report coverage.
+#
+# Why `swift test` and not `swift build`: the macOS GUI app (the `Workbench`
+# executable) links a ~141 MB vendored `Vendor/libghostty.a` that is .gitignored and
+# therefore absent in CI. The test targets depend only on Domain/Application/
+# Infrastructure — none of which link libghostty — so `swift test` compiles and runs
+# cleanly without the vendored archive. Building the full package here would fail at the
+# link step.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Permissions required by octocov-action:
+#   contents: read        — checkout + read the test step's duration from the Actions API
+#   pull-requests: write  — post the coverage report as a PR comment
+#   actions: write        — store/read the previous report as a workflow artifact (for diff)
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test & coverage
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Test (with code coverage)
+        # --disable-sandbox: the SwiftLint build-tool plugin on the inner layers needs to
+        # run unsandboxed on a clean checkout (matches the documented local build path).
+        run: swift test --enable-code-coverage --disable-sandbox
+
+      - name: Export coverage to LCOV
+        # SwiftPM emits raw LLVM coverage; octocov reads LCOV. Convert the merged test
+        # bundle's profile with llvm-cov, dropping dependency and test sources.
+        run: |
+          set -euo pipefail
+          bin_path="$(swift build --show-bin-path)"
+          profdata="$(find "${bin_path}/codecov" -name '*.profdata' | head -n 1)"
+          xctest="$(find "${bin_path}" -maxdepth 1 -name '*.xctest' | head -n 1)"
+          binary="${xctest}/Contents/MacOS/$(basename "${xctest}" .xctest)"
+          xcrun llvm-cov export \
+            -format=lcov \
+            -instr-profile "${profdata}" \
+            -ignore-filename-regex='\.build/|Tests/' \
+            "${binary}" > coverage.lcov
+          echo "Wrote $(wc -l < coverage.lcov) lines to coverage.lcov"
+
+      - name: Report coverage (octocov)
+        uses: k1LoW/octocov-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

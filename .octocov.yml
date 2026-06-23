@@ -1,0 +1,37 @@
+# octocov — coverage reporting in CI.  https://github.com/k1LoW/octocov
+#
+# The CI workflow (.github/workflows/ci.yml) runs `swift test --enable-code-coverage`
+# and exports the result to coverage.lcov via `xcrun llvm-cov export`. octocov reads
+# that file, posts a report as a PR comment + job summary, and diffs each PR against the
+# latest default-branch run stored as a workflow artifact.
+
+coverage:
+  paths:
+    - coverage.lcov
+
+# Application code (Sources/) vs. test code (Tests/).
+codeToTestRatio:
+  code:
+    - 'Sources/**/*.swift'
+  test:
+    - 'Tests/**/*.swift'
+
+# Read the test step's duration back from the GitHub Actions API.
+testExecutionTime:
+  if: true
+
+# Post the report as a PR comment; always render the job summary.
+comment:
+  if: is_pull_request
+summary:
+  if: true
+
+# Persist the report as a workflow artifact on the default branch so pull requests can
+# show the coverage delta against it.
+report:
+  if: is_default_branch
+  datastores:
+    - artifact://${GITHUB_REPOSITORY}
+diff:
+  datastores:
+    - artifact://${GITHUB_REPOSITORY}
