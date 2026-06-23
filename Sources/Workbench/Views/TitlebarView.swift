@@ -78,6 +78,7 @@ final class TitlebarView: FlippedView {
                                 tint: store.railCollapsed ? t.accent : t.txt3,
                                 frame: NSRect(x: x, y: cy - 12, width: 30, height: 24), point: 15)
         toggle.onClick = { [weak self] in self?.onToggleSidebar?() }
+        toggle.toolTip = store.railCollapsed ? "Show sidebar" : "Hide sidebar"
         addSubview(toggle)
         x += 40
 
