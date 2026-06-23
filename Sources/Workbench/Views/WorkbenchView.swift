@@ -2,10 +2,10 @@ import AppKit
 import Application
 import Domain
 
-/// Center column: connection header + scrollable detail + docked terminal.
+/// Center column: scrollable detail + docked terminal. Connection name/type live in the
+/// macOS titlebar (see TitlebarView), so the center column carries no header of its own.
 final class CenterColumnView: FlippedView {
     let store: Store
-    private let header = FlippedView()
     let detail: DetailView
     let terminal: TerminalContainerView
 
@@ -20,8 +20,6 @@ final class CenterColumnView: FlippedView {
         wantsLayer = true
         addSubview(detail)
         addSubview(terminal)
-        addSubview(header)
-        header.wantsLayer = true
         terminal.onRelayout = { [weak self] in self?.needsLayout = true }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -34,34 +32,11 @@ final class CenterColumnView: FlippedView {
         layer?.backgroundColor = t.win.cgColor
         let w = bounds.width, h = bounds.height
 
-        // Header.
-        let headH: CGFloat = 44
-        header.frame = NSRect(x: 0, y: 0, width: w, height: headH)
-        header.layer?.backgroundColor = t.win.cgColor
-        header.subviews.forEach { $0.removeFromSuperview() }
-        let hbTop = BoxView(bg: t.line); hbTop.frame = NSRect(x: 0, y: 0, width: w, height: 1); header.addSubview(hbTop)
-        let hb = BoxView(bg: t.line); hb.frame = NSRect(x: 0, y: headH - 1, width: w, height: 1); header.addSubview(hb)
-        let conn = store.selectedConn
-        var hx: CGFloat = 18
-        let glyph = label(conn.glyph, sys(13), t.txt3); glyph.frame = NSRect(x: hx, y: 13, width: 16, height: 16); header.addSubview(glyph); hx += 22
-        let nm = label(conn.name, sys(13.5, .bold), t.txt); nm.frame = NSRect(x: hx, y: 12, width: fitW(nm), height: 18); header.addSubview(nm); hx += nm.frame.width + 10
-        let kb = badge(conn.kindLabel, fg: conn.dot, border: conn.dot); kb.frame.origin = NSPoint(x: hx, y: 13); header.addSubview(kb)
-        // Right meta.
-        let sess = label(conn.sessionLabel, mono(10.5), conn.dot, align: .right)
-        sess.frame = NSRect(x: w - 230, y: 14, width: 214, height: 14); header.addSubview(sess)
-        let sd = Dot(conn.dot, 6); sd.frame.origin = NSPoint(x: w - 244, y: 19); header.addSubview(sd)
-        let meta = label(conn.meta, mono(10.5), t.txt4, align: .right)
-        meta.frame = NSRect(x: w - 470, y: 14, width: 210, height: 14); header.addSubview(meta)
-
-        // Resizable bottom region: the connection header sits directly on top of the terminal —
-        // so connection name / type / IP / status read as the terminal's own header — with the
-        // issue/PR detail filling the space above. Dragging the terminal grip moves the header with
-        // it, keeping them together as one resizable unit.
-        let maxTerm = max(120, (h - headH) * 0.9)
+        // Resizable bottom region: the docked terminal sits at the bottom with its own drag grip
+        // on its top edge, and the issue/PR detail pane fills everything above it down to that grip.
+        let maxTerm = max(120, h * 0.9)
         let termH = min(max(120, store.terminalHeight), maxTerm)
-        let headerY = max(0, h - termH - headH)
-        detail.frame = NSRect(x: 0, y: 0, width: w, height: headerY)
-        header.frame = NSRect(x: 0, y: headerY, width: w, height: headH)
+        detail.frame = NSRect(x: 0, y: 0, width: w, height: h - termH)
         terminal.frame = NSRect(x: 0, y: h - termH, width: w, height: termH)
 
         detail.apply()
