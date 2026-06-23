@@ -10,6 +10,21 @@ final class DetailView: FlippedView {
     private var mdCache: [String: NSAttributedString] = [:]
     private var mdThemeKey = ""
 
+    /// Called when the user submits a comment. The view hands over the text and a completion the
+    /// controller runs on the main actor: `(true, nil)` clears the composer; `(false, message)`
+    /// keeps the draft so the user can retry and surfaces `message`.
+    var onSubmitComment: ((String, @escaping (Bool, String?) -> Void) -> Void)?
+
+    // Composer state lives on the view (not the rebuilt subviews), so it survives `rebuild()`:
+    // an in-flight post, a typed-but-unsent draft, and the last error all persist across relayouts.
+    private var composerDraft = ""
+    private var composerError: String?
+    private var isPosting = false
+    /// The id the draft belongs to, so switching items starts a fresh, empty composer.
+    private var composerItemId = ""
+    /// The live composer field for the current rebuild; read on submit (Return key / Send click).
+    private weak var composerField: NSTextField?
+
     init(store: Store) {
         self.store = store
         super.init(frame: .zero)
@@ -91,6 +106,12 @@ final class DetailView: FlippedView {
             let empty = label("Select an item", sys(14), t.txt4)
             empty.frame = NSRect(x: padX, y: 30, width: cw, height: 20); doc.addSubview(empty)
             doc.frame.size.height = 80; scroll.documentView = doc; return
+        }
+
+        // A new item gets a clean composer — don't carry one item's half-typed draft to the next.
+        if it.id != composerItemId {
+            composerItemId = it.id
+            composerDraft = ""; composerError = nil; isPosting = false
         }
 
         func add(_ v: NSView, x: CGFloat = padX) { v.frame.origin = NSPoint(x: x, y: y); doc.addSubview(v) }
@@ -213,20 +234,92 @@ final class DetailView: FlippedView {
             doc.addSubview(bubble); y += bubbleH + 13
         }
 
-        // Composer.
-        let cav = NSView(frame: NSRect(x: padX, y: y, width: 26, height: 26))
-        cav.wantsLayer = true
-        let g = CAGradientLayer(); g.frame = cav.bounds; g.colors = [NSColor.hex(0x7c8cff).cgColor, NSColor.hex(0xd2a8ff).cgColor]; g.cornerRadius = 13
-        cav.layer?.addSublayer(g); doc.addSubview(cav)
+        // Composer. The avatar is the signed-in viewer (initials Dot until #25 loads real images);
+        // the field is editable and Send posts the comment. Sized like a comment row above it.
+        let cav = Dot(store.viewer?.color ?? Status.dim, 26)
+        cav.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(cav)
+        let ci = label(store.viewer?.initials ?? "?", sys(10, .bold), .hex(0x0d0f13), align: .center)
+        ci.frame = NSRect(x: 0, y: 7, width: 26, height: 12); cav.addSubview(ci)
+
+        let compW = cw - 37
         let comp = BoxView(bg: t.card, radius: 10, border: t.cardbr)
-        comp.frame = NSRect(x: padX + 37, y: y, width: cw - 37, height: 38)
-        let cph = label("Comment, or @claude to delegate…", sys(12.5), t.txt4); cph.frame = NSRect(x: 12, y: 11, width: cw - 200, height: 16); comp.addSubview(cph)
-        let send = BoxView(bg: t.accent, radius: 7); send.frame = NSRect(x: cw - 37 - 64, y: 7, width: 56, height: 24)
-        let sl = label("Send", sys(11, .semibold), t.onacc, align: .center); sl.frame = NSRect(x: 0, y: 4, width: 56, height: 16); send.addSubview(sl); comp.addSubview(send)
-        doc.addSubview(comp); y += 50
+        comp.frame = NSRect(x: padX + 37, y: y, width: compW, height: 38)
+
+        let field = NSTextField(string: composerDraft)
+        field.font = sys(12.5)
+        field.placeholderString = "Write a comment…"
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.textColor = t.txt
+        field.lineBreakMode = .byTruncatingTail
+        field.delegate = self
+        field.target = self
+        field.action = #selector(composerReturn)   // Return submits; fires only on Enter, not on blur
+        field.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+        field.isEnabled = !isPosting
+        field.frame = NSRect(x: 12, y: 9, width: compW - 84, height: 20)
+        comp.addSubview(field)
+        composerField = field
+
+        if isPosting {
+            let spinner = makeSpinner(size: 14)
+            spinner.frame.origin = NSPoint(x: compW - 64 + 21, y: 12); comp.addSubview(spinner)
+        } else {
+            let send = ClickRow(bg: t.accent, radius: 7)
+            send.frame = NSRect(x: compW - 64, y: 7, width: 56, height: 24)
+            send.onClick = { [weak self] in self?.submitComposer() }
+            let sl = label("Send", sys(11, .semibold), t.onacc, align: .center)
+            sl.frame = NSRect(x: 0, y: 4, width: 56, height: 16); send.addSubview(sl)
+            comp.addSubview(send)
+        }
+        doc.addSubview(comp); y += 46
+
+        if let composerError {
+            let err = label(composerError, sys(11), Status.red, lines: 0)
+            err.preferredMaxLayoutWidth = compW
+            err.frame = NSRect(x: padX + 37, y: y, width: compW, height: 30)
+            doc.addSubview(err); y += 22
+        }
+        y += 8
 
         doc.frame.size.height = y + 10
         scroll.documentView = doc
+    }
+
+    /// Post the current composer text. Shared by the Send button and the Return key. No-ops while a
+    /// post is in flight or the body is blank; otherwise flips to the posting state and hands the
+    /// text to the controller via `onSubmitComment`, which calls back to clear or restore the draft.
+    private func submitComposer() {
+        guard !isPosting, let onSubmitComment else { return }
+        let text = composerField?.stringValue ?? composerDraft
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        composerDraft = text
+        composerError = nil
+        isPosting = true
+        needsLayout = true
+        onSubmitComment(text) { [weak self] ok, message in
+            guard let self else { return }
+            self.isPosting = false
+            if ok {
+                self.composerDraft = ""
+                self.composerError = nil
+            } else if let message {
+                self.composerError = message   // keep the draft so the user can retry
+            }
+            self.needsLayout = true
+        }
+    }
+
+    @objc private func composerReturn() { submitComposer() }
+}
+
+extension DetailView: NSTextFieldDelegate {
+    /// Keep the persisted draft in sync as the user types, so a rebuild (resize, theme, a comment
+    /// landing) preserves the in-progress text instead of resetting the field.
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === composerField else { return }
+        composerDraft = field.stringValue
     }
 }
 

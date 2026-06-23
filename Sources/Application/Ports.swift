@@ -86,6 +86,16 @@ public protocol GitHubAPI: Sendable {
     func items(owner: String, repo: String, kind: GitHubItemKind) async throws -> [GitHubItem]
     /// One item fully hydrated: body-derived tasks, comments, and (for PRs) check runs.
     func itemDetail(owner: String, repo: String, number: Int) async throws -> GitHubItem
+    /// Post a comment on an issue/PR and return it as GitHub stored it. The one write on this
+    /// otherwise read-only port (REST `POST /repos/{owner}/{repo}/issues/{number}/comments`).
+    func addComment(owner: String, repo: String, number: Int, body: String) async throws -> GitHubComment
+}
+
+/// Why posting a comment didn't happen before the network was even touched. `.empty` is a blank
+/// (whitespace-only) body — there's nothing to post; transport/HTTP failures surface as
+/// `GitHubAPIError` from the adapter, not here.
+public enum AddCommentError: Error, Sendable, Equatable {
+    case empty
 }
 
 /// Persistence seam for a local copy of the viewer's GitHub data, so the UI hydrates instantly on

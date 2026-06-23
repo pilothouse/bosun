@@ -45,6 +45,11 @@ struct TaskItem { let label: String; let done: Bool }
 struct Check { let name, icon: String; let color: NSColor; let dur, statusText: String; var running = false }
 struct Comment { let author, initials: String; let color: NSColor; let time, badge, body: String }
 
+/// The signed-in viewer, projected for the comment composer's avatar. Real avatar images are
+/// deferred to #25; for now we render the initials `Dot` (mirroring `Comment`). `avatarURL` is
+/// carried so #25 can swap in the image without re-plumbing.
+struct CurrentUser { let initials: String; let color: NSColor; let avatarURL: URL? }
+
 /// Presentation projection of a GitHub issue/PR. Built from `Domain.GitHubItem` by the mapper in
 /// `GitHubPresentation.swift` (colors, glyphs, and relative-time strings live there); the views
 /// render straight off these fields. `tasks`/`checks`/`comments` are populated by the detail fetch.

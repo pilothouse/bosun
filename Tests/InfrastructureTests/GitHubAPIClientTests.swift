@@ -121,6 +121,32 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(item.comments.map(\.author.login), ["raj", "maya"])
     }
 
+    // MARK: Write (the one mutation)
+
+    func testAddCommentPostsBodyAndDecodesCreatedComment() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.status(request, 201), try fixture("comment-created"))   // GitHub returns 201 Created
+        }
+        let body = "Thanks — fixing the retry path now."
+        let comment = try await makeClient().addComment(
+            owner: "acme-corp", repo: "api-gateway", number: 482, body: body)
+
+        // Decodes the single created-comment object (not a list) into a Domain entity.
+        XCTAssertEqual(comment.author.login, "octocat")
+        XCTAssertEqual(comment.body, body)
+        XCTAssertEqual(comment.authorAssociation, "OWNER")
+
+        // POSTs `{ "body": ... }` to the issue-comments endpoint.
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/repos/acme-corp/api-gateway/issues/482/comments")
+        let sent = try XCTUnwrap(bodyData(request))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: String])
+        XCTAssertEqual(json, ["body": body])
+    }
+
     // MARK: Error mapping
 
     func testNoStoredTokenIsUnauthorizedWithoutHittingNetwork() async throws {
@@ -177,6 +203,22 @@ final class GitHubAPIClientTests: XCTestCase {
         HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: "HTTP/1.1", headerFields: headers)!
     }
 
+    /// The request body URLSession hands a `URLProtocol`. It often moves `httpBody` into a stream,
+    /// so read whichever is set — lets us assert what `addComment` actually serialized.
+    private func bodyData(_ request: URLRequest) -> Data? {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open(); defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            if read <= 0 { break }
+            data.append(buffer, count: read)
+        }
+        return data
+    }
+
     private func assertThrows(_ expected: GitHubAPIError,
                               _ body: () async throws -> Void,
                               file: StaticString = #filePath, line: UInt = #line) async {
@@ -189,6 +231,11 @@ final class GitHubAPIClientTests: XCTestCase {
             XCTFail("expected \(expected) but got \(error)", file: file, line: line)
         }
     }
+}
+
+/// Captures the request the stub saw, so a test can assert method/URL/body after the call returns.
+private final class RequestBox: @unchecked Sendable {
+    var value: URLRequest?
 }
 
 /// A canned `GitHubTokenStore` — returns a fixed token (or nil to simulate signed-out).

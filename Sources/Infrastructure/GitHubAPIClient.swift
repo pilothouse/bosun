@@ -106,6 +106,17 @@ public actor GitHubAPIClient: GitHubAPI {
                              comments: comments.map { $0.toDomain() }, checks: node.rollupChecks)
     }
 
+    public func addComment(owner: String, repo: String, number: Int, body: String) async throws -> GitHubComment {
+        // The one write: REST `POST .../comments` returns the single created comment (201), which
+        // decodes through the same `CommentDTO` the detail fetch uses.
+        let payload = try JSONEncoder().encode(CommentBody(body: body))
+        let url = restURL(path: "/repos/\(owner)/\(repo)/issues/\(number)/comments")
+        let request = try await authorizedRequest(url: url, method: "POST", body: payload)
+        let (data, _) = try await perform(request)
+        let dto: CommentDTO = try decode(data)
+        return dto.toDomain()
+    }
+
     // MARK: - REST transport
 
     /// A single REST resource (no pagination), e.g. `/user`.
@@ -272,6 +283,11 @@ private extension Optional {
 }
 
 // MARK: - REST DTOs
+
+/// The `POST .../comments` request body — GitHub takes just `{ "body": "…" }`.
+private struct CommentBody: Encodable {
+    let body: String
+}
 
 private struct UserDTO: Decodable {
     let login: String

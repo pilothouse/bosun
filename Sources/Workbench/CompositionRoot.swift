@@ -22,6 +22,8 @@ struct GitHubAuthServices {
     /// Local cache of the fetched data so the data controller can hydrate the UI instantly on launch
     /// and apply a delta on refresh. Cleared on sign-out alongside the token.
     let cache: GitHubCacheStore
+    /// The app's only write: post a comment on an issue/PR. Shares `api`'s client (same token).
+    let addComment: AddCommentUseCase
 }
 
 /// The one place allowed to choose concrete adapters and wire them into use cases.
@@ -52,12 +54,14 @@ enum CompositionRoot {
     static func makeGitHubAuthServices() -> GitHubAuthServices {
         let tokenStore = KeychainTokenStore()                  // concrete adapters chosen here only
         let auth = GitHubDeviceAuthClient(clientId: githubClientID(), scope: oauthScopes)
+        let client = GitHubAPIClient(tokenStore: tokenStore)   // one client: reads + the comment write
         return GitHubAuthServices(
             tokenStore: tokenStore,
             authenticate: AuthenticateWithGitHubUseCase(
                 auth: auth, tokens: tokenStore, sleeper: TaskSleeper()),
-            api: GitHubAPIClient(tokenStore: tokenStore),      // shares the one token store
-            cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL())
+            api: client,                                       // shares the one token store
+            cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL()),
+            addComment: AddCommentUseCase(api: client)
         )
     }
 

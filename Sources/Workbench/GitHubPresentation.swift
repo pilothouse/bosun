@@ -133,6 +133,17 @@ extension Item {
     }
 }
 
+extension CurrentUser {
+    /// Reuse the canonical `GitHubActor.initials` rule (the viewer is just an actor for chip
+    /// purposes) so the composer avatar matches how authored comments render. The viewer is never
+    /// a bot, so it takes the same `Status.purple` a human comment author gets.
+    init(domain u: GitHubUser) {
+        self.init(initials: GitHubActor(login: u.login).initials,
+                  color: Status.purple,
+                  avatarURL: u.avatarURL)
+    }
+}
+
 extension Comment {
     init(domain c: GitHubComment) {
         let isBot = c.author.isBot

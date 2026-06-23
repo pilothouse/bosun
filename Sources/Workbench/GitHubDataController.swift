@@ -17,6 +17,9 @@ final class GitHubDataController {
     private let api: GitHubAPI
     private let cache: GitHubCacheStore
     private let store: Store
+    /// The write seam (the app's only mutation). The controller drives it like every other use
+    /// case; the view never touches the client directly.
+    private let addCommentUseCase: AddCommentUseCase
 
     private var loadTask: Task<Void, Never>?
     private var itemsTask: Task<Void, Never>?
@@ -26,10 +29,11 @@ final class GitHubDataController {
     /// late responses for a previous repo can be ignored.
     private var currentRepo: (owner: String, name: String)?
 
-    init(api: GitHubAPI, cache: GitHubCacheStore, store: Store) {
+    init(api: GitHubAPI, cache: GitHubCacheStore, store: Store, addComment: AddCommentUseCase) {
         self.api = api
         self.cache = cache
         self.store = store
+        self.addCommentUseCase = addComment
     }
 
     /// Hydrate the orgs panel from the local cache (instant, no spinner), then fetch live, diff it
@@ -59,7 +63,9 @@ final class GitHubDataController {
                 async let personalCall = api.viewerRepositories()
                 async let userCall = api.currentUser()
                 let (orgs, personalRepos) = try await (orgsCall, personalCall)
-                let login = (try? await userCall)?.login ?? personalRepos.first?.owner
+                let viewer = try? await userCall
+                if let viewer { store.currentUser = viewer }   // drives the composer avatar
+                let login = viewer?.login ?? personalRepos.first?.owner
 
                 let orgsDelta = GitHubDelta.apply(incoming: orgs, to: cachedOrgs)
                 let reposDelta = GitHubDelta.apply(incoming: personalRepos, to: cachedRepos)
@@ -116,10 +122,38 @@ final class GitHubDataController {
         loadDetail(owner: repo.owner, name: repo.name, number: number)
     }
 
+    /// Post a comment on the open item and, on success, append the comment GitHub stored to the
+    /// detail in place (no re-fetch) so it shows immediately, authored by the viewer. `completion`
+    /// runs on the main actor: `(true, nil)` clears the composer; `(false, message)` keeps the
+    /// user's draft and surfaces `message`. A blank body is reported as `(false, nil)` (no message —
+    /// the view just doesn't send). Mirrors the read path's task ownership: a comment that lands
+    /// after the user moved on isn't grafted onto a different item.
+    func submitComment(body: String, completion: @escaping (Bool, String?) -> Void) {
+        guard let repo = currentRepo, let number = Int(store.selectedItemId) else {
+            completion(false, nil); return
+        }
+        Task { @MainActor in
+            do {
+                let comment = try await addCommentUseCase(
+                    owner: repo.owner, repo: repo.name, number: number, body: body)
+                if store.selectedItemId == String(number), var detail = store.selectedItemDetail {
+                    detail.comments.append(Comment(domain: comment))
+                    store.selectedItemDetail = detail
+                }
+                completion(true, nil)
+            } catch AddCommentError.empty {
+                completion(false, nil)
+            } catch {
+                completion(false, Self.message(for: error))
+            }
+        }
+    }
+
     /// Drop all live data on sign-out so the UI returns to an empty, signed-out shell.
     func clear() {
         loadTask?.cancel(); itemsTask?.cancel(); detailTask?.cancel()
         currentRepo = nil
+        store.currentUser = nil
         store.orgs = []
         store.expandedOrgs = []
         store.selectedRepoKey = nil

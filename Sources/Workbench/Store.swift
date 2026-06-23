@@ -55,6 +55,9 @@ final class Store {
     var selectedItemDetail: Item? { didSet { notify() } }
     /// A user-facing message when a fetch fails (e.g. signed out, rate-limited); nil when healthy.
     var dataError: String? { didSet { notify() } }
+    /// The authenticated viewer, set by `GitHubDataController.load()` and cleared on sign-out. Not
+    /// persisted (recomputed from the token at launch, like `authState`). Drives the composer avatar.
+    var currentUser: Domain.GitHubUser? { didSet { notify() } }
     /// Transient first-load flags: a region shows a spinner while its fetch is in flight *and* its
     /// collection is still empty, so a refresh over existing data never flashes one. Not persisted.
     var isLoadingOrgs = false { didSet { if oldValue != isLoadingOrgs { notify() } } }
@@ -93,6 +96,10 @@ final class Store {
     init(preferences: PreferencesStore) {
         self.preferences = preferences
     }
+
+    /// The signed-in viewer projected for the composer avatar; nil until the first fetch lands or
+    /// after sign-out (the composer falls back to a neutral placeholder dot).
+    var viewer: CurrentUser? { currentUser.map(CurrentUser.init(domain:)) }
 
     /// Presentation projections the rail/header read from.
     var connections: [Connection] { domainConnections.map(Connection.init(domain:)) }
