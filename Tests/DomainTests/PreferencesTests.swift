@@ -79,6 +79,54 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(decoded.windowAlpha, 0.3, "clamping holds however a Preferences is built")
     }
 
+    // MARK: - Opacity slider easing (issue #39)
+
+    func testSliderEndpointsMapToFullRange() {
+        XCTAssertEqual(Preferences.windowAlpha(forSliderPosition: 1.0), 1.0,
+                       "the top of the slider is fully opaque")
+        XCTAssertEqual(Preferences.windowAlpha(forSliderPosition: 0.0), Preferences.minAlpha,
+                       accuracy: 1e-12, "the bottom of the slider is the most transparent we allow")
+    }
+
+    func testSliderAlphaIncreasesMonotonicallyWithPosition() {
+        let a25 = Preferences.windowAlpha(forSliderPosition: 0.25)
+        let a50 = Preferences.windowAlpha(forSliderPosition: 0.50)
+        let a75 = Preferences.windowAlpha(forSliderPosition: 0.75)
+        XCTAssertLessThan(a25, a50)
+        XCTAssertLessThan(a50, a75)
+    }
+
+    func testSmallMoveFromOpaqueStaysSubtle() {
+        // The core of #39: a ~10% drag down from fully opaque must barely change the window.
+        XCTAssertGreaterThan(Preferences.windowAlpha(forSliderPosition: 0.9), 0.99,
+                             "a small move near the top should be nearly invisible")
+    }
+
+    func testSliderPositionIsClampedToRange() {
+        XCTAssertEqual(Preferences.windowAlpha(forSliderPosition: 2.0), 1.0,
+                       "positions above 1 clamp to opaque")
+        XCTAssertEqual(Preferences.windowAlpha(forSliderPosition: -1.0), Preferences.minAlpha,
+                       accuracy: 1e-12, "positions below 0 clamp to the safe floor")
+    }
+
+    func testInversePositionEndpoints() {
+        XCTAssertEqual(Preferences.sliderPosition(forWindowAlpha: 1.0), 1.0)
+        XCTAssertEqual(Preferences.sliderPosition(forWindowAlpha: Preferences.minAlpha), 0.0,
+                       accuracy: 1e-12)
+        let belowFloor = Preferences.sliderPosition(forWindowAlpha: 0.0)
+        XCTAssertGreaterThanOrEqual(belowFloor, 0.0, "an alpha under the floor still yields a valid position")
+        XCTAssertLessThanOrEqual(belowFloor, 1.0)
+    }
+
+    func testCurveRoundTripsThroughItsInverse() {
+        for alpha in [0.4, 0.6, 0.85, 1.0] {
+            let roundTripped = Preferences.windowAlpha(
+                forSliderPosition: Preferences.sliderPosition(forWindowAlpha: alpha))
+            XCTAssertEqual(roundTripped, alpha, accuracy: 1e-9,
+                           "position(alpha) then alpha(position) returns the original alpha")
+        }
+    }
+
     func testFollowedOrgsDefaultsToNil() {
         XCTAssertNil(Preferences.default.followedOrgs,
                      "an uncustomized list means 'show every org GitHub returns'")

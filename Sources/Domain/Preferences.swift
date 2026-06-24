@@ -47,6 +47,28 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
 
+    /// Exponent of the opacity easing curve. >1 flattens the top of the range so a small drag
+    /// from fully-opaque barely changes the window. See `windowAlpha(forSliderPosition:)`.
+    public static let alphaCurve: Double = 2.2
+
+    /// Maps a slider position in `[0, 1]` (0 = most transparent, 1 = opaque) to a window alpha
+    /// in `[minAlpha, 1]`. The curve eases the top of the range — near position 1 the slope is
+    /// ~0, so a small move down from opaque is nearly invisible (issue #39) — while the far end
+    /// still reaches `minAlpha`. A pure rule, so it stays in Domain and is shared by the slider's
+    /// setup, its change handler, and the readout.
+    public static func windowAlpha(forSliderPosition position: Double) -> Double {
+        let pos = min(1.0, max(0.0, position))
+        return clampAlpha(1.0 - (1.0 - minAlpha) * pow(1.0 - pos, alphaCurve))
+    }
+
+    /// Inverse of `windowAlpha(forSliderPosition:)` — the slider position that yields a stored
+    /// alpha, used to place the knob when the sheet opens and to render the readout.
+    public static func sliderPosition(forWindowAlpha alpha: Double) -> Double {
+        let clamped = clampAlpha(alpha)
+        let ratio = (1.0 - clamped) / (1.0 - minAlpha) // in [0, 1]
+        return 1.0 - pow(ratio, 1.0 / alphaCurve)
+    }
+
     public init(
         themeKey: String = "operator",
         terminalHeight: Double = 240,

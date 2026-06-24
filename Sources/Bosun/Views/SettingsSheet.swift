@@ -115,8 +115,10 @@ final class SettingsSheet: FlippedView {
         let readout = label(percentText, mono(10.5), t.txt4, align: .right)
         readout.frame = NSRect(x: pad + innerW - 55, y: winY + 35, width: 55, height: 14); card.addSubview(readout)
         opacityReadout = readout
-        let slider = NSSlider(value: Double(store.windowAlpha),
-                              minValue: Double(Preferences.minAlpha), maxValue: 1.0,
+        // The slider position runs 0…1 and is mapped through Preferences' easing curve so a small
+        // drag from opaque stays subtle (#39); the knob starts at the position of the stored alpha.
+        let slider = NSSlider(value: Preferences.sliderPosition(forWindowAlpha: Double(store.windowAlpha)),
+                              minValue: 0.0, maxValue: 1.0,
                               target: self, action: #selector(opacityChanged(_:)))
         slider.isContinuous = true
         slider.frame = NSRect(x: pad, y: winY + 56, width: innerW, height: 20); card.addSubview(slider)
@@ -166,10 +168,14 @@ final class SettingsSheet: FlippedView {
         return r
     }
 
-    private var percentText: String { "\(Int((store.windowAlpha * 100).rounded()))%" }
+    // The readout shows the slider position (the opacity level the user picks), not the raw alpha —
+    // derived from the stored alpha so `store.windowAlpha` stays the single source of truth.
+    private var percentText: String {
+        "\(Int((Preferences.sliderPosition(forWindowAlpha: Double(store.windowAlpha)) * 100).rounded()))%"
+    }
 
     @objc private func opacityChanged(_ sender: NSSlider) {
-        store.windowAlpha = CGFloat(sender.doubleValue)
+        store.windowAlpha = CGFloat(Preferences.windowAlpha(forSliderPosition: sender.doubleValue))
         opacityReadout?.stringValue = percentText
     }
 }
