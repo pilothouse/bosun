@@ -1,4 +1,5 @@
 import AppKit
+import Domain
 
 final class ConnectionRailView: FlippedView {
     let store: Store
@@ -13,6 +14,15 @@ final class ConnectionRailView: FlippedView {
     // detection fired only intermittently ("sometimes doesn't open").
     private var lastClickId: String?
     private var lastClickAt: TimeInterval = 0
+
+    /// Live "Search connections" filter. The query is rail-local transient state (like the detail
+    /// composer's draft), deliberately *not* in `Store`: it must not persist and must not route
+    /// through `store.notify()` — a notify per keystroke would tear the whole rail down and drop the
+    /// field's focus mid-type. Typing instead rebuilds only the list document below the (sibling)
+    /// field via `repopulateList()`, so the field keeps its focus and insertion point.
+    private var searchQuery = ""
+    private weak var searchField: NSTextField?
+    private weak var listScroll: NSScrollView?
 
     init(store: Store) {
         self.store = store
@@ -123,9 +133,10 @@ final class ConnectionRailView: FlippedView {
         if let id = sender.representedObject as? String { onDelete?(id) }
     }
 
-    /// Whole-rail empty state: a muted, bordered card that also opens the New-connection
-    /// sheet when clicked. Height hugs the wrapped text so there's no slack at the bottom.
-    private func emptyHint(_ text: String, width: CGFloat, t: Theme) -> ClickRow {
+    /// A muted, bordered card holding a wrapped message. With `tap` it highlights on hover and runs
+    /// the closure on click (the no-connections prompt opens the New-connection sheet); without it
+    /// the card is inert (the no-matches notice). Height hugs the wrapped text so there's no slack.
+    private func emptyHint(_ text: String, width: CGFloat, t: Theme, tap: (() -> Void)? = nil) -> ClickRow {
         let rowW = width - 28
         let pad: CGFloat = 11
         let textW = rowW - 24
@@ -134,8 +145,10 @@ final class ConnectionRailView: FlippedView {
         let textH = ceil(l.fittingSize.height)
         l.frame = NSRect(x: 12, y: pad, width: textW, height: textH)
         let row = ClickRow(bg: t.card, radius: 8)
-        row.hoverColor = t.hover
-        row.onClick = { [weak self] in self?.onAdd?() }
+        if let tap {
+            row.hoverColor = t.hover
+            row.onClick = tap
+        }
         row.frame = NSRect(x: 14, y: 0, width: rowW, height: textH + pad * 2)
         row.layer?.borderColor = t.line2.cgColor
         row.layer?.borderWidth = 1
@@ -155,17 +168,31 @@ final class ConnectionRailView: FlippedView {
         border.frame = NSRect(x: w - 1, y: 0, width: 1, height: bounds.height)
         addSubview(border)
 
-        // Search header.
+        // Search header: an editable field that filters the list live as the user types (⌘K
+        // focuses it). Styled borderless like the detail composer so it blends into the card.
         let search = BoxView(bg: t.card, radius: 8, border: t.cardbr)
         search.frame = NSRect(x: 14, y: 12, width: w - 28, height: 34)
         let mag = label("⌕", sys(13), t.txt4)
         mag.frame = NSRect(x: 10, y: 8, width: 16, height: 18); search.addSubview(mag)
-        let ph = label("Search connections…", sys(12.5), t.txt4)
-        ph.frame = NSRect(x: 30, y: 8, width: w - 28 - 70, height: 18); search.addSubview(ph)
+        let field = NSTextField(string: searchQuery)
+        field.font = sys(12.5)
+        field.placeholderString = "Search connections…"
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.textColor = t.txt
+        field.lineBreakMode = .byTruncatingTail
+        field.delegate = self
+        field.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+        field.frame = NSRect(x: 30, y: 8, width: w - 28 - 70, height: 18)
+        search.addSubview(field)
+        searchField = field
         let kbd = BoxView(bg: t.hover, radius: 4)
         kbd.frame = NSRect(x: w - 28 - 38, y: 9, width: 28, height: 16)
-        let kl = label("⌘K", mono(10), t.txt5, align: .center)
-        kl.frame = kbd.bounds; kbd.addSubview(kl); search.addSubview(kbd)
+        // Center the glyphs on both axes inside the pill (a plain label top-aligns its text, so
+        // "⌘K" sat high); same treatment as the footer "+".
+        let kl = centeredGlyph("⌘K", mono(10), t.txt5, in: kbd.frame.size)
+        kbd.addSubview(kl); search.addSubview(kbd)
         addSubview(search)
 
         // Footer.
@@ -190,13 +217,22 @@ final class ConnectionRailView: FlippedView {
         cmdN.frame = NSRect(x: w - 44, y: mid - ftH / 2, width: 30, height: ftH); footer.addSubview(cmdN)
         addSubview(footer)
 
-        // Scrollable list.
+        // Scrollable list. Its document is built by `makeListDocument` so a keystroke can rebuild
+        // just the document (keeping the sibling search field focused), not the whole rail.
         let top: CGFloat = 56
         let scroll = NSScrollView(frame: NSRect(x: 0, y: top, width: w, height: bounds.height - top - footerH))
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.verticalScrollElasticity = .allowed
+        scroll.documentView = makeListDocument(width: w, minHeight: scroll.frame.height, t: t)
+        addSubview(scroll)
+        listScroll = scroll
+    }
+
+    /// Build the (filtered) connection list as a fresh document view. Each section is narrowed by the
+    /// current `searchQuery` via the pure `ConnectionSearch` rule (an empty query yields the full list).
+    private func makeListDocument(width w: CGFloat, minHeight: CGFloat, t: Theme) -> FlippedView {
         let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: 10))
         var y: CGFloat = 6
 
@@ -210,18 +246,64 @@ final class ConnectionRailView: FlippedView {
             }
             y += 8
         }
+        func place(_ hint: NSView) { hint.frame.origin.y = y; doc.addSubview(hint); y += hint.frame.height + 4 }
+
         if store.connections.isEmpty {
             // Whole-rail empty state: one merged prompt, no section headers.
-            let hint = emptyHint("No connections yet. Press ⌘N to add an SSH remote or a local folder.", width: w, t: t)
-            hint.frame.origin.y = y; doc.addSubview(hint); y += hint.frame.height + 4
+            place(emptyHint("No connections yet. Press ⌘N to add an SSH remote or a local folder.",
+                            width: w, t: t, tap: { [weak self] in self?.onAdd?() }))
         } else {
-            section("FAVORITES", store.favorites, star: true, count: "\(store.favorites.count)")
-            section("SSH REMOTES", store.sshRemotes, star: false, count: nil)
-            section("LOCAL FOLDERS", store.folders, star: false, count: nil)
+            let query = searchQuery
+            func keep(_ c: Connection) -> Bool { ConnectionSearch.matches(query: query, in: c.name, c.meta) }
+            let favs = store.favorites.filter(keep)
+            let ssh = store.sshRemotes.filter(keep)
+            let folders = store.folders.filter(keep)
+            section("FAVORITES", favs, star: true, count: "\(favs.count)")
+            section("SSH REMOTES", ssh, star: false, count: nil)
+            section("LOCAL FOLDERS", folders, star: false, count: nil)
+            if favs.isEmpty, ssh.isEmpty, folders.isEmpty {
+                // A live query that matched nothing — distinct from the no-connections state above.
+                let shown = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                place(emptyHint("No connections match “\(shown)”.", width: w, t: t))
+            }
         }
 
-        doc.frame.size.height = max(y, scroll.frame.height)
-        scroll.documentView = doc
-        addSubview(scroll)
+        doc.frame.size.height = max(y, minHeight)
+        return doc
+    }
+
+    /// Rebuild only the list document in response to a keystroke, leaving the (sibling) search field
+    /// untouched so it keeps first-responder status and its insertion point.
+    private func repopulateList() {
+        guard let scroll = listScroll else { return }
+        scroll.documentView = makeListDocument(width: scroll.frame.width,
+                                                minHeight: scroll.frame.height, t: store.theme)
+    }
+
+    /// Focus the search field (the ⌘K target). The field exists only when the rail is expanded; the
+    /// App layer expands the rail first (see `BosunView.focusConnectionSearch`).
+    func focusSearch() {
+        guard let field = searchField else { return }
+        window?.makeFirstResponder(field)
+    }
+}
+
+extension ConnectionRailView: NSTextFieldDelegate {
+    /// Live-filter the list as the user types. Updates only the rail-local query and the list
+    /// document — never `store.notify()` — so the field keeps focus while the list below it changes.
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === searchField else { return }
+        searchQuery = field.stringValue
+        repopulateList()
+    }
+
+    /// Esc clears an active filter (and the field) instead of AppKit's default "revert" behavior.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard control === searchField, selector == #selector(NSResponder.cancelOperation(_:)),
+              !(searchField?.stringValue.isEmpty ?? true) else { return false }
+        searchField?.stringValue = ""
+        searchQuery = ""
+        repopulateList()
+        return true
     }
 }

@@ -139,6 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         root.store.settingsOpen = true
     }
 
+    @objc private func focusSearch() {
+        root.focusConnectionSearch()
+    }
+
     /// Sets the dock/app icon at runtime. A bare SwiftPM executable ships no `.app` bundle or
     /// Info.plist to carry an `.icns`, so the icon — `Resources/AppIcon.png`, the bosun's-call
     /// mark extracted from the design system (also kept as source in `Assets/AppIcon/bosun-pipe.svg`) — is
@@ -192,6 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        let searchItem = NSMenuItem(title: "Search Connections", action: #selector(focusSearch), keyEquivalent: "k")
+        searchItem.target = self
+        editMenu.addItem(searchItem)
         editItem.submenu = editMenu
 
         NSApp.mainMenu = mainMenu

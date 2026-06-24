@@ -284,6 +284,14 @@ final class BosunView: NSView {
         window?.makeFirstResponder(term)
     }
 
+    /// Focus the connection-rail search field (the ⌘K target). The field exists only when the rail is
+    /// expanded, so expand it first; the rebuild that follows happens on the next runloop tick, so we
+    /// defer the focus until the field has been recreated.
+    func focusConnectionSearch() {
+        if store.railCollapsed { store.railCollapsed = false }
+        DispatchQueue.main.async { [weak self] in self?.rail.focusSearch() }
+    }
+
     /// Open a console tab for a connection. SSH connections launch `ssh [user@]host`; local-folder
     /// connections open a shell in that directory. The dock builds the command from the connection.
     private func connect(_ id: String) {
