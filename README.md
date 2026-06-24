@@ -56,8 +56,11 @@ Until v1 there's no release, but every successful CI run on `master` produces a 
 artifact (you'll need to be signed in to GitHub). Unzip it, open the `.dmg`, and drag **Bosun** to
 Applications.
 
-The build is **ad-hoc signed, not notarized**, so on first launch Gatekeeper says it "cannot be
-opened". Clear it once — right-click the app → **Open**, or:
+When **Developer ID signing + notarization secrets** are configured (see
+[`docs/signing.md`](docs/signing.md)), the CI build is signed, notarized, and stapled, and opens
+with no Gatekeeper workaround. Without those secrets the build is **ad-hoc signed, not notarized**
+(still hardened-runtime), so on first launch Gatekeeper says it "cannot be opened". Clear it once —
+right-click the app → **Open**, or:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Bosun.app
@@ -65,4 +68,5 @@ xattr -dr com.apple.quarantine /Applications/Bosun.app
 
 It's a single-architecture build for the CI runner's arch (Apple Silicon / arm64). You can produce
 the same bundle locally from a release build with `bash scripts/package-app.sh` (writes
-`dist/Bosun.dmg`).
+`dist/Bosun.dmg`); set `SIGN_IDENTITY` + notary credentials to get a notarized one — see
+[`docs/signing.md`](docs/signing.md).

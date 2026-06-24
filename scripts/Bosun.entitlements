@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for Bosun (required by notarization).
+
+  Intentionally EMPTY (no exception entitlements). Why nothing is needed:
+    - libghostty is *statically* linked into the Bosun Mach-O, not a separate
+      dylib, so there is nothing to validate against — `disable-library-validation`
+      is unnecessary.
+    - The terminal exec's a login shell via posix_spawn, which hardened runtime
+      allows without any entitlement.
+    - Metal shaders are precompiled at build time (the Metal Toolchain step), so
+      no runtime JIT / writable-executable memory is required.
+
+  If a hardened-runtime launch ever faults with a code-signing error (e.g. an
+  EXC_BAD_ACCESS in a JIT/W^X path), add the *minimal* exception here and re-test:
+    <key>com.apple.security.cs.allow-jit</key><true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  Each added key widens the attack surface, so add only what an actual fault proves
+  is needed — verified by launching the hardened-runtime-signed app, not by guessing.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>

@@ -17,20 +17,31 @@
 #                                    it as plain data. It has no Info.plist, so it is NOT a code
 #                                    bundle; signing it (or using `codesign --deep`) fails on it.
 #
-# Then it ad-hoc code-signs the bundle (required for the app to launch at all on Apple Silicon)
-# and rolls a compressed .dmg with a drag-to-/Applications symlink.
+# Then it code-signs the app with the hardened runtime, optionally notarizes + staples it, and
+# rolls a compressed .dmg with a drag-to-/Applications symlink.
 #
-# This is a pre-v1 convenience build: single-architecture (the host arch — arm64 on the CI
-# runners and on Apple Silicon Macs) and *not* notarized. Gatekeeper will quarantine it on first
-# open; the recipient clears it once (right-click → Open, or `xattr -dr com.apple.quarantine`).
+# Signing is env-driven (see SIGN_IDENTITY below):
+#   - With a Developer ID Application identity: hardened runtime + entitlements + secure timestamp,
+#     then (if notary credentials are set) `notarytool` submit + `stapler` staple of BOTH the .app
+#     and the .dmg → a Gatekeeper-clean download that opens with no right-click workaround.
+#   - With no identity: an ad-hoc signature (identity "-"), still with the hardened runtime so the
+#     convenience build behaves identically. This path is NOT notarized — Gatekeeper quarantines it
+#     on first open; the recipient clears it once (right-click → Open, or `xattr -dr com.apple.quarantine`).
+# Either way the build is single-architecture (the host arch — arm64 on CI and Apple Silicon Macs);
+# a universal notarized DMG is the release workflow's job, not this convenience script's.
 #
 # Usage:
 #   bash scripts/package-app.sh            package the release build into dist/Bosun.dmg
 # Env (all optional):
-#   CONFIG   build configuration to package (default: release)
-#   VERSION  CFBundleShortVersionString    (default: 0.0.0)
-#   BUILD    CFBundleVersion               (default: 0)
-#   BIN_DIR  build products dir            (default: `swift build -c $CONFIG --show-bin-path`)
+#   CONFIG         build configuration to package (default: release)
+#   VERSION        CFBundleShortVersionString    (default: 0.0.0)
+#   BUILD          CFBundleVersion               (default: 0)
+#   BIN_DIR        build products dir            (default: `swift build -c $CONFIG --show-bin-path`)
+#   SIGN_IDENTITY  Developer ID Application identity, e.g. "Developer ID Application: Name (TEAMID)".
+#                  Empty → ad-hoc signature (un-notarizable convenience build).
+#   NOTARY_PROFILE / NOTARY_KEY+NOTARY_KEY_ID+NOTARY_ISSUER
+#                  Apple notary credentials, consumed by scripts/notarize.sh. Empty → sign only
+#                  (no notarization). See docs/signing.md.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,6 +51,8 @@ BUILD="${BUILD:-0}"
 APP_NAME="Bosun"
 BUNDLE_ID="com.jeckerson.bosun"
 ICON_SRC="$ROOT/Sources/Bosun/Resources/AppIcon.png"
+ENTITLEMENTS="$ROOT/scripts/Bosun.entitlements"
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
@@ -108,14 +121,35 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# ---- 5. ad-hoc code signature ----
-# Apple Silicon refuses to launch an unsigned binary; an ad-hoc signature (identity "-") satisfies
-# that without a Developer ID. No `--deep`: the only nested item is the resource bundle, which has
-# no Info.plist and so isn't a signable code bundle — codesign seals it as a plain resource. This
-# is NOT notarized, so Gatekeeper still quarantines downloads — recipients clear it once (header).
-echo "==> ad-hoc signing $APP_NAME.app"
-codesign --force --sign - "$APP"
-codesign --verify --strict "$APP" && echo "   signature verified"
+# ---- 5. code signature (hardened runtime) ----
+# Sign the .app EXPLICITLY, never with `--deep`: the only nested item is the resource bundle, which
+# has no Info.plist and so isn't a signable code bundle — `--deep` would try to sign it and fail.
+# Signing the bundle (without --deep) signs the main Mach-O and seals the resource bundle as a plain
+# resource, which is exactly what we want. `--options runtime` enables the hardened runtime that
+# notarization requires; the entitlements file is empty today (see scripts/Bosun.entitlements).
+#
+# With a Developer ID identity we add `--timestamp` (a secure Apple timestamp, mandatory for
+# notarization). Ad-hoc (identity "-") can't use Apple's TSA, so it omits `--timestamp` — Apple
+# Silicon still needs *a* signature to launch, and the hardened runtime keeps both paths identical.
+if [ -n "$SIGN_IDENTITY" ]; then
+  echo "==> signing $APP_NAME.app with Developer ID: $SIGN_IDENTITY"
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --timestamp \
+    --sign "$SIGN_IDENTITY" "$APP"
+else
+  echo "==> ad-hoc signing $APP_NAME.app (no SIGN_IDENTITY — un-notarizable convenience build)"
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP"
+fi
+codesign --verify --strict --deep --verbose=2 "$APP" && echo "   signature verified"
+codesign --display --entitlements - --verbose=2 "$APP" 2>/dev/null || true
+
+# ---- 5b. notarize + staple the .app ----
+# The notary service takes a .zip but `stapler` writes the ticket into the .app, so we submit a
+# ditto-zip and staple the .app. Stapling the app (not just the .dmg) keeps it valid even after a
+# user drags it out of the disk image. No-op when no notary credentials are set (header / notarize.sh).
+APP_ZIP="$DIST/$APP_NAME.app.zip"
+ditto -c -k --keepParent "$APP" "$APP_ZIP"
+bash "$ROOT/scripts/notarize.sh" --submit "$APP_ZIP" --staple "$APP"
+rm -f "$APP_ZIP"
 
 # ---- 6. compressed .dmg with a drag-to-Applications target ----
 echo "==> building $APP_NAME.dmg"
@@ -125,7 +159,20 @@ ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
 
+# ---- 6b. sign + notarize + staple the .dmg ----
+# Sign the disk image itself (Developer ID only) so it carries a verifiable signature, then notarize
+# and staple it so the *download* opens cleanly — Gatekeeper reads the stapled ticket offline.
+if [ -n "$SIGN_IDENTITY" ]; then
+  echo "==> signing $APP_NAME.dmg"
+  codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
+fi
+bash "$ROOT/scripts/notarize.sh" --submit "$DMG" --staple "$DMG"
+
 echo
 echo "==> DONE: $DMG ($(du -h "$DMG" | cut -f1))"
 echo "    Install: open the .dmg, drag $APP_NAME to Applications."
-echo "    First launch (unsigned): right-click → Open, or  xattr -dr com.apple.quarantine /Applications/$APP_NAME.app"
+if [ -n "$SIGN_IDENTITY" ] && { [ -n "${NOTARY_PROFILE:-}" ] || [ -n "${NOTARY_KEY:-}" ]; }; then
+  echo "    Signed (Developer ID) + notarized + stapled — opens with no Gatekeeper workaround."
+else
+  echo "    Not notarized: first launch needs right-click → Open, or  xattr -dr com.apple.quarantine /Applications/$APP_NAME.app"
+fi
