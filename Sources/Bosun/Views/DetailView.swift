@@ -9,6 +9,11 @@ final class DetailView: FlippedView {
     // The attributed string is width-independent; only the cheap height measurement uses width.
     private var mdCache: [String: NSAttributedString] = [:]
     private var mdThemeKey = ""
+    /// The item id the scroll offset belongs to. `rebuild()` replaces the document view (which would
+    /// reset scrolling to the top); we restore the prior offset while this stays the same item — so a
+    /// detail hydrating or the pane resizing doesn't yank the user back up — and let a switch to a
+    /// different item start at the top.
+    private var lastScrollItemId = ""
 
     /// Called when the user submits a comment. The view hands over the text and a completion the
     /// controller runs on the main actor: `(true, nil)` clears the composer; `(false, message)`
@@ -105,7 +110,7 @@ final class DetailView: FlippedView {
         guard let it = store.selectedItem else {
             let empty = label("Select an item", sys(14), t.txt4)
             empty.frame = NSRect(x: padX, y: 30, width: cw, height: 20); doc.addSubview(empty)
-            doc.frame.size.height = 80; scroll.documentView = doc; return
+            doc.frame.size.height = 80; scroll.documentView = doc; lastScrollItemId = ""; return
         }
 
         // A new item gets a clean composer — don't carry one item's half-typed draft to the next.
@@ -301,7 +306,20 @@ final class DetailView: FlippedView {
         y += 8
 
         doc.frame.size.height = y + 10
+
+        // Replacing the document view resets the scroll to the top. Restore the prior offset when
+        // we're re-rendering the same item (a detail hydrating, a comment landing, a resize) so the
+        // user stays put; only a switch to a different item starts at the top. Clamp to the new
+        // content height so a now-shorter document (e.g. the checks section collapsed) can't overscroll.
+        let sameItem = it.id == lastScrollItemId
+        let priorOrigin = scroll.contentView.bounds.origin
         scroll.documentView = doc
+        if sameItem {
+            let maxY = max(0, doc.frame.height - scroll.contentView.bounds.height)
+            scroll.contentView.scroll(to: NSPoint(x: priorOrigin.x, y: min(priorOrigin.y, maxY)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        lastScrollItemId = it.id
     }
 
     /// Post the current composer text. Shared by the Send button and the Return key. No-ops while a
