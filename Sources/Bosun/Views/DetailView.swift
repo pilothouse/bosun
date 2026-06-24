@@ -48,16 +48,8 @@ final class DetailView: FlippedView {
         rebuild()
     }
 
-    private func wrapped(_ text: String, _ font: NSFont, _ color: NSColor, width: CGFloat) -> NSTextField {
-        let l = label(text, font, color, lines: 0)
-        l.preferredMaxLayoutWidth = width
-        let h = l.sizeThatFits(NSSize(width: width, height: 100000)).height
-        l.frame = NSRect(x: 0, y: 0, width: width, height: ceil(h))
-        return l
-    }
-
     /// A read-only, non-scrolling text view rendering `text` as themed Markdown, sized to fit
-    /// `width`. Drop-in for `wrapped(...)`: returns an `NSView` the caller positions by frame.
+    /// `width`. Returns an `NSView` the caller positions by frame.
     private func markdownView(_ text: String, baseFont: NSFont, width: CGFloat) -> NSTextView {
         let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
         tv.textStorage?.setAttributedString(cachedMarkdown(text, baseFont: baseFont))
@@ -75,6 +67,26 @@ final class DetailView: FlippedView {
             .underlineStyle: NSUnderlineStyle.single.rawValue,
             .cursor: NSCursor.pointingHand,
         ]
+        let h = measuredHeight(of: tv, width: width)
+        tv.frame = NSRect(x: 0, y: 0, width: width, height: ceil(h))
+        return tv
+    }
+
+    /// A read-only, *selectable* text view rendering `text` as plain text in `font`/`color`, sized to
+    /// fit `width`. Used where the text must be copyable (the title). No Markdown, no link handling;
+    /// transparent background.
+    private func selectableText(_ text: String, font: NSFont, color: NSColor, width: CGFloat) -> NSTextView {
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
+        tv.textStorage?.setAttributedString(
+            NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color]))
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.drawsBackground = false
+        tv.isVerticallyResizable = false
+        tv.isHorizontallyResizable = false
+        tv.textContainerInset = .zero
+        tv.textContainer?.lineFragmentPadding = 0   // flush-left like the NSTextField it replaces
+        tv.textContainer?.widthTracksTextView = false
         let h = measuredHeight(of: tv, width: width)
         tv.frame = NSRect(x: 0, y: 0, width: width, height: ceil(h))
         return tv
@@ -140,8 +152,8 @@ final class DetailView: FlippedView {
         }
         y += 30
 
-        // Title.
-        let title = wrapped(it.title, sys(21, .bold), t.txt, width: cw)
+        // Title. A selectable (read-only) text view so it can be copied, like the body below.
+        let title = selectableText(it.title, font: sys(21, .bold), color: t.txt, width: cw)
         add(title); y += title.frame.height + 11
 
         // Author row.
