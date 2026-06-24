@@ -38,6 +38,9 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// saved — seed a single local shell (today's behaviour). See `TerminalTabState`.
     public var openTabs: [TerminalTabState]?
     public var activeTabIndex: Int?
+    /// Whether the PR detail pane's `ACTIONS` (CI checks) section is collapsed. Global — one
+    /// app-wide preference shared across every PR, not per-PR. `false` (expanded) by default.
+    public var prChecksCollapsed: Bool
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -56,7 +59,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         prStates: [String]? = nil,
         issueStates: [String]? = nil,
         openTabs: [TerminalTabState]? = nil,
-        activeTabIndex: Int? = nil
+        activeTabIndex: Int? = nil,
+        prChecksCollapsed: Bool = false
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -72,6 +76,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.issueStates = issueStates
         self.openTabs = openTabs
         self.activeTabIndex = activeTabIndex
+        self.prChecksCollapsed = prChecksCollapsed
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -96,7 +101,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             prStates: try container.decodeIfPresent([String].self, forKey: .prStates) ?? fallback.prStates,
             issueStates: try container.decodeIfPresent([String].self, forKey: .issueStates) ?? fallback.issueStates,
             openTabs: try container.decodeIfPresent([TerminalTabState].self, forKey: .openTabs) ?? fallback.openTabs,
-            activeTabIndex: try container.decodeIfPresent(Int.self, forKey: .activeTabIndex) ?? fallback.activeTabIndex
+            activeTabIndex: try container.decodeIfPresent(Int.self, forKey: .activeTabIndex) ?? fallback.activeTabIndex,
+            prChecksCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prChecksCollapsed) ?? fallback.prChecksCollapsed
         )
     }
 

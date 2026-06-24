@@ -188,29 +188,43 @@ final class DetailView: FlippedView {
         }
         doc.addSubview(card); y += cardH + 20
 
-        // PR checks.
+        // PR checks. The ACTIONS header is a disclosure: clicking it toggles the global,
+        // persisted collapsed state (`store.prChecksCollapsed`). The X/Y tally stays in the
+        // header even when collapsed so the pass summary is always readable.
         if it.kind == .pr && !it.checks.isEmpty {
             let passed = it.checks.filter { $0.statusText == "passed" }.count
+            let collapsed = store.prChecksCollapsed
+            let header = ClickRow(bg: nil, radius: 6)
+            header.hoverColor = t.hover
+            header.frame = NSRect(x: padX, y: y, width: cw, height: 18)
+            header.onClick = { [weak store] in store?.prChecksCollapsed.toggle() }
+            // A solid disclosure triangle that rotates with state: ▶ (collapsed) → ▼ (expanded).
+            let caret = label(collapsed ? "▶" : "▼", sys(8), t.txt4, align: .center)
+            caret.frame = NSRect(x: 0, y: 4, width: 14, height: 12); header.addSubview(caret)
             let hdr = label("ACTIONS · \(passed)/\(it.checks.count) passing", mono(9.5, .semibold), t.txt4)
-            hdr.frame = NSRect(x: padX, y: y, width: cw, height: 14); doc.addSubview(hdr); y += 24
-            let box = BoxView(bg: t.card, radius: 11, border: t.cardbr)
-            let rowH: CGFloat = 38
-            box.frame = NSRect(x: padX, y: y, width: cw, height: rowH * CGFloat(it.checks.count))
-            var cy: CGFloat = 0
-            for (i, c) in it.checks.enumerated() {
-                let row = FlippedView(frame: NSRect(x: 0, y: cy, width: cw, height: rowH))
-                let icon = BoxView(bg: .hexA(UInt32(c.color.toHex()), 0.12), radius: 5, border: c.color)
-                icon.frame = NSRect(x: 14, y: 11, width: 16, height: 16)
-                icon.addSubview(centeredGlyph(c.icon, sys(9), c.color, in: icon.frame.size)); row.addSubview(icon)
-                let nm = label(c.name, sys(12.5, .medium), t.txt2); nm.frame = NSRect(x: 40, y: 11, width: cw - 220, height: 16); row.addSubview(nm)
-                let stt = label(c.statusText, mono(10.5), c.color, align: .right); stt.frame = NSRect(x: cw - 180, y: 11, width: 110, height: 16); row.addSubview(stt)
-                let dur = label(c.dur, mono(10), t.txt4, align: .right); dur.frame = NSRect(x: cw - 62, y: 11, width: 48, height: 16); row.addSubview(dur)
-                if i < it.checks.count - 1 {
-                    let sep = BoxView(bg: t.line); sep.frame = NSRect(x: 0, y: rowH - 1, width: cw, height: 1); row.addSubview(sep)
+            hdr.frame = NSRect(x: 15, y: 2, width: cw - 15, height: 14); header.addSubview(hdr)
+            doc.addSubview(header); y += 24
+            if !collapsed {
+                let box = BoxView(bg: t.card, radius: 11, border: t.cardbr)
+                let rowH: CGFloat = 31
+                box.frame = NSRect(x: padX, y: y, width: cw, height: rowH * CGFloat(it.checks.count))
+                var cy: CGFloat = 0
+                for (i, c) in it.checks.enumerated() {
+                    let row = FlippedView(frame: NSRect(x: 0, y: cy, width: cw, height: rowH))
+                    let icon = BoxView(bg: .hexA(UInt32(c.color.toHex()), 0.12), radius: 5, border: c.color)
+                    icon.frame = NSRect(x: 14, y: 8, width: 16, height: 16)
+                    icon.addSubview(centeredGlyph(c.icon, sys(9), c.color, in: icon.frame.size)); row.addSubview(icon)
+                    let nm = label(c.name, sys(12.5, .medium), t.txt2); nm.frame = NSRect(x: 40, y: 7, width: cw - 220, height: 16); row.addSubview(nm)
+                    let stt = label(c.statusText, mono(10.5), c.color, align: .right); stt.frame = NSRect(x: cw - 180, y: 7, width: 110, height: 16); row.addSubview(stt)
+                    let dur = label(c.dur, mono(10), t.txt4, align: .right); dur.frame = NSRect(x: cw - 62, y: 7, width: 48, height: 16); row.addSubview(dur)
+                    if i < it.checks.count - 1 {
+                        let sep = BoxView(bg: t.line); sep.frame = NSRect(x: 0, y: rowH - 1, width: cw, height: 1); row.addSubview(sep)
+                    }
+                    box.addSubview(row); cy += rowH
                 }
-                box.addSubview(row); cy += rowH
+                doc.addSubview(box); y += box.frame.height
             }
-            doc.addSubview(box); y += box.frame.height + 22
+            y += 22
         }
 
         // Comments.

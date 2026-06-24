@@ -204,4 +204,28 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNil(decoded.openTabs)
         XCTAssertNil(decoded.activeTabIndex)
     }
+
+    func testPRChecksCollapsedDefaultsToFalse() {
+        XCTAssertFalse(Preferences.default.prChecksCollapsed,
+                       "the PR Actions list starts expanded")
+    }
+
+    func testPRChecksCollapsedRoundTripsThroughCodable() throws {
+        let original = Preferences(prChecksCollapsed: true)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertTrue(decoded.prChecksCollapsed)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutPRChecksCollapsedFallsBackToFalse() throws {
+        // A payload written by a build before the Actions section was collapsible.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertFalse(decoded.prChecksCollapsed)
+    }
 }

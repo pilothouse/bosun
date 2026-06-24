@@ -40,6 +40,10 @@ final class Store {
     var theme: Theme { Theme.named(themeKey) }
 
     var railCollapsed = false { didSet { if oldValue != railCollapsed { notify() } } }
+    /// Whether the PR detail's `ACTIONS` (CI checks) section is collapsed. Global and persisted
+    /// (the `groupBy` precedent), so a change repaints the open PR and survives relaunch, shared
+    /// across every PR.
+    var prChecksCollapsed = false { didSet { if oldValue != prChecksCollapsed { changed() } } }
     /// The active item tab and the list grouping ("View"). Persisted, so they're restored on relaunch
     /// (the restored item's kind can still flip the tab — see `GitHubDataController.reconcileSelection`).
     var tab: Tab = .prs { didSet { if oldValue != tab { changed() } } }
@@ -218,7 +222,8 @@ final class Store {
             prStates: prStates.map(\.rawValue).sorted(),
             issueStates: issueStates.map(\.rawValue).sorted(),
             openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
-            activeTabIndex: activeTerminalTabIndex)
+            activeTabIndex: activeTerminalTabIndex,
+            prChecksCollapsed: prChecksCollapsed)
         Task { await preferences.save(snapshot) }
     }
 
@@ -240,6 +245,7 @@ final class Store {
         issueStates = Store.states(from: p.issueStates, default: [.open]).subtracting([.merged])
         terminalTabs = p.openTabs ?? []
         activeTerminalTabIndex = p.activeTabIndex ?? 0
+        prChecksCollapsed = p.prChecksCollapsed
         isLoading = false
         onWindowAlpha?(windowAlpha)
         refresh()
