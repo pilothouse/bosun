@@ -25,6 +25,20 @@ final class GitHubDataController {
     private var itemsTask: Task<Void, Never>?
     private var detailTask: Task<Void, Never>?
 
+    /// Fired when repeated 401s confirm the stored token is revoked. The App layer wires this to the
+    /// auth controller's session-expiry recovery (sign out + reopen the device flow). Explicit hook
+    /// (vs. the controller reaching into auth) mirrors `GitHubAuthController`'s `onSignedIn`/`onSignedOut`.
+    var onUnauthorized: (() -> Void)?
+
+    /// Consecutive `unauthorized` responses with no success between them — the first is retried, the
+    /// second re-authenticates (see `SessionExpiryPolicy`). Reset by any successful fetch.
+    private var consecutiveUnauthorized = 0
+    /// True from the moment a recovery is fired until the next successful authenticated call. While
+    /// set, a fresh 401 surfaces an error instead of re-recovering — this is what bounds a sign-out
+    /// loop if the replacement token is also bad. Deliberately NOT cleared by `clear()` (which runs
+    /// *during* recovery via `onSignedOut`); only a real success clears it.
+    private var awaitingRevalidation = false
+
     /// The repo whose items are currently shown, so an item-detail fetch knows its owner/name and
     /// late responses for a previous repo can be ignored.
     private var currentRepo: (owner: String, name: String)?
@@ -69,6 +83,7 @@ final class GitHubDataController {
                 async let personalCall = api.viewerRepositories()
                 async let userCall = api.currentUser()
                 let (orgs, personalRepos) = try await (orgsCall, personalCall)
+                sessionValidated()   // a successful authenticated call clears any 401 streak/recovery
                 let viewer = try? await userCall
                 if let viewer { store.currentUser = viewer }   // drives the composer avatar
                 let login = viewer?.login ?? personalRepos.first?.owner
@@ -86,7 +101,7 @@ final class GitHubDataController {
                                    establishSelection: currentRepo == nil)
                 }
             } catch {
-                handle(error)
+                handleFetchError(error) { [weak self] in self?.load() }
                 // A cancelled load means a newer load() already owns the spinner — leave it on. On a
                 // real failure the cached data (if any) stays on screen alongside the error.
                 if !Task.isCancelled { store.isLoadingOrgs = false }
@@ -273,6 +288,8 @@ final class GitHubDataController {
         loadTask?.cancel(); itemsTask?.cancel(); detailTask?.cancel()
         currentRepo = nil
         blockedByLoaded = []
+        consecutiveUnauthorized = 0   // a fresh streak starts next session; `awaitingRevalidation`
+                                      // intentionally survives (clear() runs during recovery itself)
         store.collapsedItems = []
         store.currentUser = nil
         store.orgs = []
@@ -327,6 +344,7 @@ final class GitHubDataController {
                 async let issues = api.items(owner: owner, repo: name, kind: .issue,
                                              states: store.issueStates)
                 let (prResult, issueResult) = try await (prs, issues)
+                sessionValidated()   // a successful authenticated call clears any 401 streak/recovery
                 // Ignore a response that landed after the user switched repos.
                 guard isCurrent() else { return }
                 let prDelta = GitHubDelta.apply(incoming: prResult.items, to: cachedPRs)
@@ -344,7 +362,7 @@ final class GitHubDataController {
                 }
                 loadBlockedByIfNeeded()   // populate the ⊘ tree when this repo opens already in that mode
             } catch {
-                handle(error)
+                handleFetchError(error) { [weak self] in self?.loadItems(owner: owner, name: name) }
                 if isCurrent() { store.isLoadingItems = false }
             }
             itemsTask = nil
@@ -412,9 +430,38 @@ final class GitHubDataController {
         store.selectedItemDetail = nil
     }
 
-    private func handle(_ error: Error) {
+    /// A successful authenticated fetch: the token works, so end any 401 streak and clear a pending
+    /// recovery (it's now revalidated). Called on the happy path of `load()`/`loadItems()`.
+    private func sessionValidated() {
+        consecutiveUnauthorized = 0
+        awaitingRevalidation = false
+    }
+
+    /// Funnel for a failed fetch. A 401 is special: a one-off is retried once (it may be a blip), a
+    /// second in a row re-authenticates, and a 401 while a recovery is already pending just surfaces
+    /// the error instead of looping (see `SessionExpiryPolicy`). `retry` re-runs the exact failed
+    /// scope; it's deferred onto a fresh task so the current failing task fully unwinds (and nils its
+    /// own handle) before the retry re-enters. Everything else maps to a user-facing message as before.
+    private func handleFetchError(_ error: Error, retry: @escaping () -> Void) {
         if error is CancellationError { return }
-        store.dataError = Self.message(for: error)
+        guard (error as? GitHubAPIError) == .unauthorized else {
+            store.dataError = Self.message(for: error)
+            return
+        }
+        consecutiveUnauthorized += 1
+        switch SessionExpiryPolicy.reaction(consecutiveUnauthorized: consecutiveUnauthorized,
+                                            recoveryPending: awaitingRevalidation) {
+        case .retry:
+            Task { @MainActor in retry() }
+        case .reauthenticate:
+            awaitingRevalidation = true
+            consecutiveUnauthorized = 0
+            store.dataError = nil          // the recovery sheet takes over the screen
+            onUnauthorized?()
+        case .surfaceError:
+            consecutiveUnauthorized = 0
+            store.dataError = Self.message(for: GitHubAPIError.unauthorized)
+        }
     }
 
     private static func message(for error: Error) -> String {

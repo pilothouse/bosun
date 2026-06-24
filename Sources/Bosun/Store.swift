@@ -95,6 +95,10 @@ final class Store {
     var selectedItemDetail: Item? { didSet { notify() } }
     /// A user-facing message when a fetch fails (e.g. signed out, rate-limited); nil when healthy.
     var dataError: String? { didSet { notify() } }
+    /// Why the device-flow sheet was opened, when sign-in was *forced* by an expired/revoked token
+    /// (vs. a user-initiated sign-in, which leaves this nil and shows no subtitle). Set by the auth
+    /// controller's recovery; the sheet renders it under the title. Not persisted.
+    var signInReason: String? { didSet { notify() } }
     /// The authenticated viewer, set by `GitHubDataController.load()` and cleared on sign-out. Not
     /// persisted (recomputed from the token at launch, like `authState`). Drives the composer avatar.
     var currentUser: Domain.GitHubUser? { didSet { notify() } }

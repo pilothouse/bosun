@@ -39,9 +39,13 @@ final class GitHubAuthController {
     }
 
     /// Begin the device flow. Opens the sheet immediately (pending), fills in the code when it
-    /// arrives, flips to `signedIn` on success, or shows a friendly error.
-    func signIn() {
+    /// arrives, flips to `signedIn` on success, or shows a friendly error. `reason` explains a sign-in
+    /// the app forced (an expired token); a user-initiated sign-in passes nil, so the sheet shows no
+    /// subtitle. Setting it here — the single entry point — means a manual sign-in always clears a
+    /// stale reason and recovery always sets it, with no leak path.
+    func signIn(reason: String? = nil) {
         guard pollTask == nil else { return }
+        store.signInReason = reason
         store.authState = .authenticatingPending
         let authenticate = services.authenticate
         pollTask = Task { @MainActor in
@@ -50,6 +54,7 @@ final class GitHubAuthController {
                     // The callback may fire off the main actor — hop back before touching Store.
                     Task { @MainActor in self.store.authState = .authenticating(grant) }
                 }
+                self.store.signInReason = nil
                 self.store.authState = .signedIn
                 self.onSignedIn?()
             } catch {
@@ -69,8 +74,26 @@ final class GitHubAuthController {
     func cancel() {
         pollTask?.cancel()
         pollTask = nil
+        store.signInReason = nil
         if case .signedIn = store.authState { return }
         store.authState = .signedOut
+    }
+
+    /// A confirmed 401 (the stored token is revoked/expired): drop the dead token and immediately
+    /// reopen the device flow, explaining why. Guarded so a burst of 401s only recovers once — the
+    /// synchronous flip out of `.signedIn` (no `await` before it) makes re-entrant calls fail the
+    /// guard. Wired from `GitHubDataController.onUnauthorized`.
+    func handleSessionExpired() {
+        guard case .signedIn = store.authState else { return }
+        let reason = "Your GitHub session expired — sign in again."
+        store.signInReason = reason
+        store.authState = .authenticatingPending
+        let tokenStore = services.tokenStore
+        Task { @MainActor in
+            try? await tokenStore.delete()
+            onSignedOut?()                  // clears live data + the on-disk cache
+            signIn(reason: reason)          // pollTask == nil here, so this proceeds and re-arms polling
+        }
     }
 
     /// Sign out: delete the token, drop to signed-out.

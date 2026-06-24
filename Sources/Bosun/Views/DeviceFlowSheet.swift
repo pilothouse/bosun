@@ -52,7 +52,8 @@ final class DeviceFlowSheet: FlippedView {
         switch store.authState {
         case .authenticating: return 320
         case .authError: return 220
-        default: return 190
+        // The pending state grows to fit the expiry explanation, when a forced sign-in set one.
+        default: return store.signInReason == nil ? 190 : 226
         }
     }
 
@@ -76,9 +77,19 @@ final class DeviceFlowSheet: FlippedView {
     }
 
     private func buildPending(_ card: ClickRow, t: Theme, pad: CGFloat, innerW: CGFloat, h: CGFloat) {
+        var captionY: CGFloat = 74
+        var spinnerY: CGFloat = 104
+        // A forced sign-in (expired/revoked token) explains itself under the title; the rest of the
+        // pending UI slides down to make room. A user-initiated sign-in has no reason and looks as before.
+        if let reason = store.signInReason {
+            let sub = label(reason, sys(12), t.txt3, align: .center, lines: 2)
+            sub.frame = NSRect(x: pad, y: 46, width: innerW, height: 32); card.addSubview(sub)
+            captionY = 86
+            spinnerY = 116
+        }
         let caption = label("Requesting a device code…", sys(12.5), t.txt3, align: .center)
-        caption.frame = NSRect(x: pad, y: 74, width: innerW, height: 16); card.addSubview(caption)
-        addSpinner(to: card, center: (pad + innerW / 2), y: 104)
+        caption.frame = NSRect(x: pad, y: captionY, width: innerW, height: 16); card.addSubview(caption)
+        addSpinner(to: card, center: (pad + innerW / 2), y: spinnerY)
         addCancelButton(card, t: t, pad: pad, innerW: innerW, h: h)
     }
 

@@ -27,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.dataController = data
         auth.onSignedIn = { [weak data] in data?.load() }
         auth.onSignedOut = { [weak data] in data?.clear() }
+        // A revoked/expired token (repeated 401s) signs out and reopens the device-flow sheet.
+        data.onUnauthorized = { [weak auth] in auth?.handleSessionExpired() }
         let root = BosunView(store: store, ghostty: ghostty, connections: services,
                                  auth: auth, data: data)
         self.root = root
