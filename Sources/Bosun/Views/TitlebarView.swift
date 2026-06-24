@@ -3,6 +3,7 @@ import AppKit
 final class TitlebarView: FlippedView {
     let store: Store
     var onToggleSidebar: (() -> Void)?
+    var onTogglePanel: (() -> Void)?
 
     init(store: Store) {
         self.store = store
@@ -98,5 +99,14 @@ final class TitlebarView: FlippedView {
             repo.frame = NSRect(x: x, y: textY, width: fitW(repo), height: 16)
             addSubview(repo)
         }
+
+        // Right group: mirror of the left sidebar toggle for the organizations panel. Anchored to
+        // the right edge so it tracks window resizes; accent tint + flipped tooltip when collapsed.
+        let panelToggle = iconButton("sidebar.right",
+                                     tint: store.repoPanelCollapsed ? t.accent : t.txt3,
+                                     frame: NSRect(x: bounds.width - 40, y: cy - 12, width: 30, height: 24), point: 15)
+        panelToggle.onClick = { [weak self] in self?.onTogglePanel?() }
+        panelToggle.toolTip = store.repoPanelCollapsed ? "Show organizations" : "Hide organizations"
+        addSubview(panelToggle)
     }
 }

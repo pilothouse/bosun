@@ -63,6 +63,8 @@ final class BosunView: NSView {
     /// notify (theme, selection, data) and animate only that transition. Seeded from the store so a
     /// restored collapsed state on launch lays out instantly rather than sliding in.
     private var railShown: Bool
+    /// Twin of `railShown` for the right organizations panel — see `slidePanel()`.
+    private var panelShown: Bool
 
     override var isFlipped: Bool { true }
 
@@ -78,6 +80,7 @@ final class BosunView: NSView {
         self.center = CenterColumnView(store: store, ghostty: ghostty)
         self.repoPanel = RepoPanelView(store: store)
         self.railShown = store.railCollapsed
+        self.panelShown = store.repoPanelCollapsed
         super.init(frame: NSRect(x: 0, y: 0, width: 1340, height: 880))
         wantsLayer = true
 
@@ -90,6 +93,7 @@ final class BosunView: NSView {
         addSubview(titlebar)
 
         titlebar.onToggleSidebar = { [weak self] in self?.store.railCollapsed.toggle() }
+        titlebar.onTogglePanel = { [weak self] in self?.store.repoPanelCollapsed.toggle() }
 
         rail.onAdd = { [weak self] in self?.openSheet(editingId: nil) }
         rail.onEdit = { [weak self] id in self?.openSheet(editingId: id) }
@@ -176,6 +180,22 @@ final class BosunView: NSView {
         }
     }
 
+    /// Mirror of `slideRail()` for the right organizations panel: commit the final layout (the center
+    /// column reflows once to its new width), then translate only the panel between its docked
+    /// position (x = w - width) and its off-screen position (x = w).
+    private func slidePanel() {
+        let from = repoPanel.frame
+        layoutSubtreeIfNeeded()
+        let to = repoPanel.frame
+        guard from != to else { return }
+        repoPanel.frame = from
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            repoPanel.animator().frame = to
+        }
+    }
+
     private func onChange() {
         applyTheme()
         // Slide only the rail when the sidebar is toggled. Gated on the actual collapse flip so
@@ -183,6 +203,10 @@ final class BosunView: NSView {
         if store.railCollapsed != railShown {
             railShown = store.railCollapsed
             slideRail()
+        }
+        if store.repoPanelCollapsed != panelShown {
+            panelShown = store.repoPanelCollapsed
+            slidePanel()
         }
         // Settings sheet show/hide.
         if store.settingsOpen, settings == nil {
@@ -288,8 +312,13 @@ final class BosunView: NSView {
         let railWidth: CGFloat = 266
         let railSpace: CGFloat = store.railCollapsed ? 0 : railWidth
         rail.frame = NSRect(x: store.railCollapsed ? -railWidth : 0, y: rowY, width: railWidth, height: rowH)
-        repoPanel.frame = NSRect(x: w - 312, y: rowY, width: 312, height: rowH)
-        center.frame = NSRect(x: railSpace, y: rowY, width: max(0, w - railSpace - 312), height: rowH)
+        // The repo panel mirrors the rail: fixed 312pt width, parked off-screen to the right (x = w)
+        // when collapsed so a toggle is a pure horizontal slide. `panelSpace` is the gap it leaves for
+        // the center column: 0 when collapsed (center reclaims the room), 312 when docked.
+        let panelWidth: CGFloat = 312
+        let panelSpace: CGFloat = store.repoPanelCollapsed ? 0 : panelWidth
+        repoPanel.frame = NSRect(x: store.repoPanelCollapsed ? w : w - panelWidth, y: rowY, width: panelWidth, height: rowH)
+        center.frame = NSRect(x: railSpace, y: rowY, width: max(0, w - railSpace - panelSpace), height: rowH)
         settings?.frame = bounds
         newConn?.frame = bounds
         manageOrgs?.frame = bounds

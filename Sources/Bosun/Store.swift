@@ -40,6 +40,9 @@ final class Store {
     var theme: Theme { Theme.named(themeKey) }
 
     var railCollapsed = false { didSet { if oldValue != railCollapsed { notify() } } }
+    /// Whether the right organizations panel is collapsed. Session-only (mirrors `railCollapsed`):
+    /// a `notify()` so the toggle slides without persisting, matching the left-rail behavior.
+    var repoPanelCollapsed = false { didSet { if oldValue != repoPanelCollapsed { notify() } } }
     /// Whether the PR detail's `ACTIONS` (CI checks) section is collapsed. Global and persisted
     /// (the `groupBy` precedent), so a change repaints the open PR and survives relaunch, shared
     /// across every PR.
