@@ -15,6 +15,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:        # manual "Run workflow" button (also builds the .dmg, see `package` job)
 
 # Permissions required by octocov-action:
 #   contents: read        — checkout + read the test step's duration from the Actions API
@@ -82,3 +83,68 @@ jobs:
         uses: k1LoW/octocov-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build the full app and ship a ready-to-run Bosun.dmg as a workflow artifact, so a pre-v1
+  # build can be downloaded and run on another Mac. Runs only AFTER `test` passes (needs: test),
+  # and only on master pushes + manual dispatch — never on PRs (keeps PR CI fast and avoids the
+  # heavy libghostty build on every pull request).
+  #
+  # Unlike `test`, this job DOES build the libghostty-linked `Bosun` executable, so it needs
+  # Vendor/libghostty.a (gitignored, ~141 MB). That archive is built from source by
+  # scripts/build-libghostty.sh and cached: a cache hit skips the whole heavy path (zig + the
+  # macOS 15.5 SDK + the ghostty clone + the Metal Toolchain), because the only other build input,
+  # Sources/CGhostty/include/ghostty.h, is committed. The cache key hashes the build script, so a
+  # change to it (or to the ghostty tag it pins) busts the cache and rebuilds.
+  package:
+    name: Package .dmg
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-release-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-release-
+            ${{ runner.os }}-spm-
+
+      - name: Cache libghostty
+        id: ghostty
+        uses: actions/cache@v4
+        with:
+          path: Vendor/libghostty.a
+          key: ${{ runner.os }}-libghostty-${{ hashFiles('scripts/build-libghostty.sh') }}
+
+      # Only on a cache miss: ghostty compiles Metal shaders at build time, so the Metal Toolchain
+      # (a separately-downloaded Xcode component) must be present before build-libghostty.sh runs.
+      - name: Download Metal Toolchain
+        if: steps.ghostty.outputs.cache-hit != 'true'
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Build libghostty
+        if: steps.ghostty.outputs.cache-hit != 'true'
+        run: bash scripts/build-libghostty.sh
+
+      - name: Build Bosun (release)
+        # --disable-sandbox: the SwiftLint build-tool plugin on the inner layers needs to run
+        # unsandboxed (same as the test job). --product Bosun builds the app executable, which
+        # links Vendor/libghostty.a restored/built above.
+        run: swift build -c release --disable-sandbox --product Bosun
+
+      - name: Package .app + .dmg
+        env:
+          CONFIG: release
+          VERSION: 0.0.0-${{ github.sha }}
+          BUILD: ${{ github.run_number }}
+        run: bash scripts/package-app.sh
+
+      - name: Upload Bosun.dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bosun-dmg
+          path: dist/Bosun.dmg
+          if-no-files-found: error

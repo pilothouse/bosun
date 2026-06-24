@@ -48,3 +48,21 @@ present, exiting non-zero with the exact fix if anything is missing.
 Pinned versions: zig 0.15.2, ghostty v1.3.1, macOS 15.5 SDK (the macOS-26/zig workarounds and why
 each is pinned are documented at the top of `scripts/build-libghostty.sh`). The script is
 idempotent; everything it creates under `Vendor/` is kept out of git.
+
+## Run a build without building (pre-v1)
+
+Until v1 there's no release, but every successful CI run on `master` produces a ready-to-run
+`Bosun.dmg`. To get it: open the repo's **Actions** tab → the latest **CI** run → the **Bosun-dmg**
+artifact (you'll need to be signed in to GitHub). Unzip it, open the `.dmg`, and drag **Bosun** to
+Applications.
+
+The build is **ad-hoc signed, not notarized**, so on first launch Gatekeeper says it "cannot be
+opened". Clear it once — right-click the app → **Open**, or:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Bosun.app
+```
+
+It's a single-architecture build for the CI runner's arch (Apple Silicon / arm64). You can produce
+the same bundle locally from a release build with `bash scripts/package-app.sh` (writes
+`dist/Bosun.dmg`).
