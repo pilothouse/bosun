@@ -67,6 +67,14 @@ final class TerminalContainerView: FlippedView {
     private var lastTabClickId: UUID?
     private var lastTabClickAt: TimeInterval = 0
 
+    /// Horizontal-scroll state for the tab strip (#21). The strip is rebuilt every `layout()`, so the
+    /// scroll view is too; `tabScroll` is the live one (weak — it's owned by the bar) read at the top
+    /// of the next `layout()` to carry the user's manual scroll offset across a plain repaint.
+    /// `lastFocusedTabId` is the tab we last auto-scrolled into view, so we only reveal the active tab
+    /// when it actually changes (not on every relabel) — the same shape as `RepoPanelView.focusedItemId`.
+    private weak var tabScroll: NSScrollView?
+    private var lastFocusedTabId: UUID?
+
     var onRelayout: (() -> Void)?
 
     private let handle = DragHandle()
@@ -404,6 +412,10 @@ final class TerminalContainerView: FlippedView {
         let w = bounds.width, h = bounds.height
         layer?.backgroundColor = t.termBg.cgColor
 
+        // Carry the strip's horizontal scroll offset across this rebuild. Read before the cleanup
+        // below removes the old bar (and its scroll view) — mirrors `RepoPanelView`'s `priorListOffset`.
+        let priorTabOffset = tabScroll?.contentView.bounds.origin
+
         // Keep the handle + every session view; rebuild only the chrome (strip, status, grip).
         let keep = Set(views.values.map { ObjectIdentifier($0.view) }).union([ObjectIdentifier(handle)])
         subviews.filter { !keep.contains(ObjectIdentifier($0)) }.forEach { $0.removeFromSuperview() }
@@ -418,7 +430,7 @@ final class TerminalContainerView: FlippedView {
         handle.addSubview(grip)
 
         let barH: CGFloat = 32
-        layoutTabBar(w: w, y: 7, barH: barH)
+        layoutTabBar(w: w, y: 7, barH: barH, priorOffset: priorTabOffset)
 
         // Active surface fills the rest; inactive sessions stay attached but hidden (so their
         // libghostty surfaces keep their Metal layers instead of being torn down on every switch).
@@ -431,7 +443,7 @@ final class TerminalContainerView: FlippedView {
         }
     }
 
-    private func layoutTabBar(w: CGFloat, y: CGFloat, barH: CGFloat) {
+    private func layoutTabBar(w: CGFloat, y: CGFloat, barH: CGFloat, priorOffset: NSPoint?) {
         let t = store.theme
         let bar = FlippedView(frame: NSRect(x: 0, y: y, width: w, height: barH))
         bar.wantsLayer = true
@@ -440,28 +452,69 @@ final class TerminalContainerView: FlippedView {
         let botB = BoxView(bg: t.line2); botB.frame = NSRect(x: 0, y: barH - 1, width: w, height: 1); bar.addSubview(botB)
 
         if available {
+            // Tabs + the `+` button live in a scrolling document so they stay reachable when they
+            // overflow the window width (#21). The doc is inset to clear the pinned resize chevron.
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: w - 36, height: barH))
+            scroll.drawsBackground = false
+            scroll.hasHorizontalScroller = true
+            scroll.hasVerticalScroller = false   // a horizontal-only strip; never reserve vertical space
+            scroll.autohidesScrollers = true     // only show the bar when the tabs actually overflow
+            // Legacy (not overlay) so the slim indicator stays *persistently* visible while overflowing,
+            // and renders identically regardless of the system "Show scroll bars" setting — overlay would
+            // fade out when idle and, under a mouse, the system can still present a fat legacy bar. The
+            // default legacy scroller is ~15pt and would swamp the 32pt strip, so ThinScroller pins it to
+            // ~7pt (the bar's bottom border is drawn on `bar`, not here, so it's unaffected). (#21 follow-up)
+            scroll.scrollerStyle = .legacy
+            scroll.horizontalScrollElasticity = .allowed
+            scroll.verticalScrollElasticity = .none
+            scroll.horizontalScroller = ThinScroller()
+
+            let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w - 36, height: barH))
             var x: CGFloat = 0
+            var activeRect: NSRect?
             for session in orderedSessions {
                 let tw = tabWidth(for: session.title)
-                bar.addSubview(tabView(session, width: tw, barH: barH, x: x))
+                doc.addSubview(tabView(session, width: tw, barH: barH, x: x))
+                if session.id == tabs.activeID { activeRect = NSRect(x: x, y: 0, width: tw, height: barH) }
                 x += tw
             }
-            // New local tab.
+            // New local tab. Trailing slack keeps the `+` off the right edge of the document.
             let plus = ClickRow(bg: nil)
             plus.hoverColor = t.hover
             plus.frame = NSRect(x: x + 4, y: 5, width: 22, height: barH - 10)
             plus.onClick = { [weak self] in self?.openLocalTab() }
             let pl = label("+", sys(15), t.txt4, align: .center)
             pl.frame = plus.bounds; plus.addSubview(pl)
-            bar.addSubview(plus)
+            doc.addSubview(plus)
+
+            // Document height must equal the clip height exactly — a taller flipped doc anchors to the
+            // top and can spawn a stray vertical scroller. Width spans the tabs + the `+` button extent.
+            doc.frame = NSRect(x: 0, y: 0, width: x + 4 + 22 + 4, height: barH)
+            scroll.documentView = doc
+            bar.addSubview(scroll)
+            tabScroll = scroll
+
+            // Restore the user's manual scroll across a plain repaint (e.g. an OSC title relabel), then
+            // bring the active tab into view only when it actually changed — so manual scrolling sticks.
+            if let off = priorOffset {
+                let maxX = max(0, doc.frame.width - scroll.contentView.bounds.width)
+                scroll.contentView.scroll(to: NSPoint(x: min(off.x, maxX), y: 0))
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+            if let active = tabs.activeID, let rect = activeRect, active != lastFocusedTabId {
+                lastFocusedTabId = active
+                DispatchQueue.main.async { [weak doc] in doc?.scrollToVisible(rect.insetBy(dx: -24, dy: 0)) }
+            } else if tabs.activeID == nil {
+                lastFocusedTabId = nil
+            }
         } else {
             let nm = label("terminal unavailable", sys(11.5), t.txt3)
             nm.frame = NSRect(x: 14, y: 8, width: w - 28, height: 16); bar.addSubview(nm)
         }
 
-        // Resize chevron at the far right. There's no duplicate status text here anymore — each
-        // tab already carries its own title, and the old right-aligned status label sat on top of
-        // the rightmost tab's × button, making that tab impossible to close.
+        // Resize chevron pinned at the far right, OUTSIDE the scroll view so it's never scrolled off.
+        // There's no duplicate status text here anymore — each tab already carries its own title, and
+        // the old right-aligned status label sat on top of the rightmost tab's × button.
         let chevron = label(store.terminalHeight > 500 ? "⌄" : "⌃", sys(12), t.txt3, align: .center)
         let chevBtn = ClickRow(bg: nil)
         chevBtn.frame = NSRect(x: w - 28, y: 6, width: 20, height: 20)

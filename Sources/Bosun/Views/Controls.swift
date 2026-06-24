@@ -103,6 +103,21 @@ final class ClickRow: FlippedView {
     override func resetCursorRects() { if let cursor { addCursorRect(bounds, cursor: cursor) } }
 }
 
+/// A deliberately slim scroller for cramped strips (the 32pt terminal tab bar). NSScrollView renders
+/// the ~15pt legacy scroller whenever the system "Show scroll bars" setting resolves to *Always* — or
+/// to *Automatic* with a mouse attached — which swamps such a short bar even though the strip asks for
+/// `.overlay`. We override only the class width (for BOTH styles, so it stays slim however the setting
+/// resolves) and let AppKit draw its standard knob/track at that width — so the indicator is still
+/// visible and draggable, just thin. `isCompatibleWithOverlayScrollers` keeps overlay fade working.
+final class ThinScroller: NSScroller {
+    static let thickness: CGFloat = 7
+
+    override class var isCompatibleWithOverlayScrollers: Bool { true }
+
+    override class func scrollerWidth(for controlSize: NSControl.ControlSize,
+                                      scrollerStyle: NSScroller.Style) -> CGFloat { thickness }
+}
+
 /// A solid colored dot / rounded square.
 final class Dot: NSView {
     init(_ color: NSColor, _ diameter: CGFloat, radius: CGFloat? = nil) {
