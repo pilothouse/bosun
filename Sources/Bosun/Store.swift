@@ -139,7 +139,9 @@ final class Store {
     /// it snapshots them here on every tab change and restores them at launch. Persisted, but not
     /// part of `notify` — the dock manages its own views, so a write here must not rebuild the UI.
     var terminalTabs: [Domain.TerminalTabState] = []
-    var activeTerminalTabIndex: Int = 0
+    /// The active tab keyed by its saved `TerminalTabState.id` (not a positional index), so restore
+    /// survives an earlier tab being dropped. `nil` until the dock first snapshots.
+    var activeTerminalTabId: String?
 
     /// Persistence seam for UI preferences (loaded at launch, saved on change).
     private let preferences: PreferencesStore
@@ -229,7 +231,7 @@ final class Store {
             prStates: prStates.map(\.rawValue).sorted(),
             issueStates: issueStates.map(\.rawValue).sorted(),
             openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
-            activeTabIndex: activeTerminalTabIndex,
+            activeTabId: activeTerminalTabId,
             prChecksCollapsed: prChecksCollapsed)
         Task { await preferences.save(snapshot) }
     }
@@ -251,7 +253,7 @@ final class Store {
         prStates = Store.states(from: p.prStates, default: [.open])
         issueStates = Store.states(from: p.issueStates, default: [.open]).subtracting([.merged])
         terminalTabs = p.openTabs ?? []
-        activeTerminalTabIndex = p.activeTabIndex ?? 0
+        activeTerminalTabId = p.activeTabId
         prChecksCollapsed = p.prChecksCollapsed
         isLoading = false
         onWindowAlpha?(windowAlpha)

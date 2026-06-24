@@ -227,19 +227,25 @@ final class TerminalContainerView: FlippedView {
     private func snapshotTabs() {
         guard available else { return }
         store.terminalTabs = orderedSessions.map { session in
+            let id = session.id.uuidString
             switch session.origin {
-            case .local: return TerminalTabState(kind: .local, title: session.title)
-            case .connection(let id): return TerminalTabState(kind: .connection(id: id), title: session.title)
+            case .local: return TerminalTabState(id: id, kind: .local, title: session.title,
+                                                 locked: session.lockTitle)
+            case .connection(let connId): return TerminalTabState(id: id, kind: .connection(id: connId),
+                                                                  title: session.title, locked: session.lockTitle)
             }
         }
-        store.activeTerminalTabIndex = tabs.activeIndex ?? 0
+        store.activeTerminalTabId = tabs.activeID.map { $0.uuidString }
         store.persist()
     }
 
     /// Reopen the saved tabs at launch (called once connections are loaded). Local shells are
     /// re-seeded; connection tabs are re-resolved by id and reconnected (re-running their SSH /
-    /// folder command). A tab whose connection was deleted is skipped, and an all-unresolved or
-    /// never-saved set falls back to a single local shell so the dock is never empty.
+    /// folder command). Each tab's saved name is restored — a renamed local tab also restores its
+    /// title lock so the shell can't overwrite it (#30); connection tabs stay locked (#29). The tab
+    /// that was active is re-selected by its saved id, so a dropped earlier tab doesn't shift it. A
+    /// tab whose connection was deleted is skipped, and an all-unresolved or never-saved set falls
+    /// back to a single local shell so the dock is never empty.
     func restoreTabs(connections: [Domain.Connection]) {
         guard available else { return }
         let states = store.terminalTabs
@@ -250,23 +256,30 @@ final class TerminalContainerView: FlippedView {
         views.removeAll()
         tabs = TerminalTabs<UUID>()
 
+        let savedActiveId = store.activeTerminalTabId
+        var activeSessionId: UUID?
         for state in states {
+            let session: TerminalSession?
             switch state.kind {
             case .local:
-                register(makeLocalSession())
+                session = makeLocalSession()
             case .connection(let id):
-                guard let conn = connections.first(where: { $0.id.uuidString == id }),
-                      let session = makeConnectionSession(conn) else { continue }
-                register(session)
+                session = connections.first(where: { $0.id.uuidString == id }).flatMap(makeConnectionSession)
             }
+            guard let session else { continue }   // connection was deleted
+            if !state.title.isEmpty { session.title = state.title }   // restore a renamed tab's name
+            if case .local = state.kind { session.lockTitle = state.locked }   // connection tabs stay locked
+            register(session)
+            if state.id == savedActiveId { activeSessionId = session.id }
         }
         if tabs.isEmpty { register(makeLocalSession()) }   // every saved connection was deleted
 
-        let index = min(max(0, store.activeTerminalTabIndex), tabs.ids.count - 1)
-        if tabs.ids.indices.contains(index) { tabs.select(tabs.ids[index]) }
+        // Re-select the tab that was active; if it was dropped, fall back to the first surviving tab.
+        if let activeSessionId { tabs.select(activeSessionId) }
+        else if let first = tabs.ids.first { tabs.select(first) }
         refresh()
         focusActive()
-        snapshotTabs()   // re-persist, dropping any tabs that couldn't be resolved
+        snapshotTabs()   // re-persist with fresh session ids, dropping any tabs that couldn't be resolved
     }
 
     private func add(_ session: TerminalSession) {

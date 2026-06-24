@@ -38,4 +38,33 @@ final class TerminalTabStateTests: XCTestCase {
 
         XCTAssertEqual(decoded, tabs)
     }
+
+    func testIdAndLockRoundTripThroughCodable() throws {
+        let original = TerminalTabState(id: "941E6AA4-CC93-4887-B6B9-503CAA9639E5",
+                                        kind: .local, title: "deploy", locked: true)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(TerminalTabState.self, from: data)
+
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.id, "941E6AA4-CC93-4887-B6B9-503CAA9639E5")
+        XCTAssertTrue(decoded.locked)
+    }
+
+    /// A payload saved by an older build (before `id`/`locked`) must still decode — those fields
+    /// default to `""` / `false` rather than throwing.
+    func testMissingIdAndLockDecodeToDefaults() throws {
+        let data = try JSONEncoder().encode(TerminalTabState(id: "x", kind: .local, title: "zsh", locked: true))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object.removeValue(forKey: "id")
+        object.removeValue(forKey: "locked")
+        let stripped = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(TerminalTabState.self, from: stripped)
+
+        XCTAssertEqual(decoded.id, "")
+        XCTAssertFalse(decoded.locked)
+        XCTAssertEqual(decoded.title, "zsh")
+        XCTAssertEqual(decoded.kind, .local)
+    }
 }

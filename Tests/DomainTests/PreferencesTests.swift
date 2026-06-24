@@ -178,21 +178,21 @@ final class PreferencesTests: XCTestCase {
 
     func testOpenTabsDefaultToNil() {
         XCTAssertNil(Preferences.default.openTabs, "nil means 'seed a single local shell'")
-        XCTAssertNil(Preferences.default.activeTabIndex)
+        XCTAssertNil(Preferences.default.activeTabId)
     }
 
     func testOpenTabsRoundTripThroughCodable() throws {
         let tabs = [
-            TerminalTabState(kind: .connection(id: "forge"), title: "Forge - API"),
-            TerminalTabState(kind: .local, title: "zsh"),
+            TerminalTabState(id: "tab-1", kind: .connection(id: "forge"), title: "Forge - API"),
+            TerminalTabState(id: "tab-2", kind: .local, title: "zsh"),
         ]
-        let original = Preferences(openTabs: tabs, activeTabIndex: 1)
+        let original = Preferences(openTabs: tabs, activeTabId: "tab-2")
 
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(Preferences.self, from: data)
 
         XCTAssertEqual(decoded.openTabs, tabs)
-        XCTAssertEqual(decoded.activeTabIndex, 1)
+        XCTAssertEqual(decoded.activeTabId, "tab-2")
         XCTAssertEqual(decoded, original)
     }
 
@@ -202,7 +202,7 @@ final class PreferencesTests: XCTestCase {
         let decoded = try JSONDecoder().decode(Preferences.self, from: json)
 
         XCTAssertNil(decoded.openTabs)
-        XCTAssertNil(decoded.activeTabIndex)
+        XCTAssertNil(decoded.activeTabId)
     }
 
     func testPRChecksCollapsedDefaultsToFalse() {

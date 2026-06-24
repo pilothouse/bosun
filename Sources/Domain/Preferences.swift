@@ -35,9 +35,11 @@ public struct Preferences: Sendable, Equatable, Codable {
     public var prStates: [String]?
     public var issueStates: [String]?
     /// The open terminal tabs and which one was active, reopened on relaunch. `nil` means never
-    /// saved — seed a single local shell (today's behaviour). See `TerminalTabState`.
+    /// saved — seed a single local shell (today's behaviour). The active tab is keyed by its saved
+    /// `TerminalTabState.id` (not a positional index) so restore picks the right tab even when an
+    /// earlier tab is dropped (a deleted connection). See `TerminalTabState`.
     public var openTabs: [TerminalTabState]?
-    public var activeTabIndex: Int?
+    public var activeTabId: String?
     /// Whether the PR detail pane's `ACTIONS` (CI checks) section is collapsed. Global — one
     /// app-wide preference shared across every PR, not per-PR. `false` (expanded) by default.
     public var prChecksCollapsed: Bool
@@ -59,7 +61,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         prStates: [String]? = nil,
         issueStates: [String]? = nil,
         openTabs: [TerminalTabState]? = nil,
-        activeTabIndex: Int? = nil,
+        activeTabId: String? = nil,
         prChecksCollapsed: Bool = false
     ) {
         self.themeKey = themeKey
@@ -75,7 +77,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.prStates = prStates
         self.issueStates = issueStates
         self.openTabs = openTabs
-        self.activeTabIndex = activeTabIndex
+        self.activeTabId = activeTabId
         self.prChecksCollapsed = prChecksCollapsed
     }
 
@@ -101,7 +103,7 @@ public struct Preferences: Sendable, Equatable, Codable {
             prStates: try container.decodeIfPresent([String].self, forKey: .prStates) ?? fallback.prStates,
             issueStates: try container.decodeIfPresent([String].self, forKey: .issueStates) ?? fallback.issueStates,
             openTabs: try container.decodeIfPresent([TerminalTabState].self, forKey: .openTabs) ?? fallback.openTabs,
-            activeTabIndex: try container.decodeIfPresent(Int.self, forKey: .activeTabIndex) ?? fallback.activeTabIndex,
+            activeTabId: try container.decodeIfPresent(String.self, forKey: .activeTabId) ?? fallback.activeTabId,
             prChecksCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prChecksCollapsed) ?? fallback.prChecksCollapsed
         )
     }
