@@ -44,6 +44,9 @@ final class Store {
     /// (the restored item's kind can still flip the tab — see `GitHubDataController.reconcileSelection`).
     var tab: Tab = .prs { didSet { if oldValue != tab { changed() } } }
     var groupBy: GroupBy = .none { didSet { if oldValue != groupBy { changed() } } }
+    /// How each org's repos are ordered in the panel (by name, or busiest-first by open issue+PR
+    /// count). Global, persisted; a change re-sorts every org's repos instantly via `visibleOrgs`.
+    var repoOrdering: RepoOrderingMode = .byName { didSet { if oldValue != repoOrdering { changed() } } }
     /// The lifecycle states the PR and issue lists are filtered to (and fetched for). Default
     /// open-only — the cheap fast path. Persisted; a change re-filters the list instantly and
     /// triggers a re-fetch in the matching scope (see `GitHubDataController.reloadCurrentItems`).
@@ -164,13 +167,19 @@ final class Store {
     /// Whether the active tab's list bounded its closed/merged history, for the panel's footer note.
     var listTruncated: Bool { tab == .prs ? prsTruncated : issuesTruncated }
 
-    /// The orgs shown in the panel, in the user's chosen order. Derived from the fetched `orgs`
-    /// and the persisted `followedOrgs` choice via the pure `OrgFollowing` rule, so the panel and
-    /// the manage sheet agree on what's visible.
+    /// The orgs shown in the panel, in the user's chosen order, each with its repos sorted by the
+    /// chosen `repoOrdering`. Derived from the fetched `orgs` and the persisted `followedOrgs`
+    /// choice via the pure `OrgFollowing` rule, so the panel and the manage sheet agree on what's
+    /// visible — and so the repo sort applies wherever repos are read (the panel render and the
+    /// auto-select in `GitHubDataController`), via this one accessor.
     var visibleOrgs: [Org] {
         let order = OrgFollowing.visible(available: orgs.map(\.id), followed: followedOrgs)
         let byId = Dictionary(orgs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return order.compactMap { byId[$0] }
+        let mode = repoOrdering
+        return order.compactMap { byId[$0] }.map { org in
+            Org(id: org.id, name: org.name, color: org.color, avatarURL: org.avatarURL,
+                repos: RepoOrdering.order(org.repos, by: mode, name: \.name, open: \.open))
+        }
     }
 
     /// `owner/name` of the selected repo for the titlebar breadcrumb and panel header.
@@ -201,6 +210,7 @@ final class Store {
             selectedRepoKey: selectedRepoKey,
             selectedTab: tab.rawValue,
             groupBy: groupBy.storageKey,
+            repoOrdering: repoOrdering.rawValue,
             prStates: prStates.map(\.rawValue).sorted(),
             issueStates: issueStates.map(\.rawValue).sorted(),
             openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
@@ -221,6 +231,7 @@ final class Store {
         selectedRepoKey = p.selectedRepoKey
         tab = Tab(rawValue: p.selectedTab ?? "") ?? .prs
         groupBy = GroupBy(storageKey: p.groupBy)
+        repoOrdering = RepoOrderingMode(rawValue: p.repoOrdering ?? "") ?? .default
         prStates = Store.states(from: p.prStates, default: [.open])
         issueStates = Store.states(from: p.issueStates, default: [.open]).subtracting([.merged])
         terminalTabs = p.openTabs ?? []

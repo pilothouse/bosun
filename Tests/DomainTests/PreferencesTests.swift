@@ -153,6 +153,29 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNil(decoded.groupBy)
     }
 
+    func testRepoOrderingDefaultsToNil() {
+        XCTAssertNil(Preferences.default.repoOrdering, "nil means 'order repos by name'")
+    }
+
+    func testRepoOrderingRoundTripsThroughCodable() throws {
+        let original = Preferences(repoOrdering: "byOpenCount")
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.repoOrdering, "byOpenCount")
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutRepoOrderingFallsBackToNil() throws {
+        // A payload written by a build before repo ordering existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertNil(decoded.repoOrdering)
+    }
+
     func testOpenTabsDefaultToNil() {
         XCTAssertNil(Preferences.default.openTabs, "nil means 'seed a single local shell'")
         XCTAssertNil(Preferences.default.activeTabIndex)

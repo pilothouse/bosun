@@ -21,6 +21,9 @@ final class ManageOrgsSheet: FlippedView {
     private var dragGrabDY: CGFloat = 0
     private var listTopInDoc: CGFloat = 0
     private var didFocus = false
+    /// Whether the "Order:" repo-ordering dropdown is open. Local to the sheet (a modal), so the
+    /// panel's window-level dismissal machinery isn't involved — a click elsewhere on the card closes it.
+    private var orderMenuOpen = false
 
     init(store: Store) {
         self.store = store
@@ -68,7 +71,8 @@ final class ManageOrgsSheet: FlippedView {
         let unfollowed = orgs.filter { !followedSet.contains($0.id) }
 
         let cardW: CGFloat = 380
-        let headerH: CGFloat = 64, footerH: CGFloat = 56
+        // The header holds the title, subtitle, and the repo-ordering dropdown row.
+        let headerH: CGFloat = 104, footerH: CGFloat = 56
         // Each org gets a row; the "not shown" caption gets a half-row when both sections exist.
         let captionH: CGFloat = (!followed.isEmpty && !unfollowed.isEmpty) ? 24 : 0
         let contentH = CGFloat(orgs.count) * rowH + captionH + 12
@@ -105,6 +109,28 @@ final class ManageOrgsSheet: FlippedView {
                         sys(11, .regular), t.txt4, lines: 1)
         sub.frame = NSRect(x: pad, y: 41, width: innerW, height: 14); card.addSubview(sub)
 
+        // Repo-ordering dropdown: same shape as the panel's View-options button.
+        let orderCap = label("Order:", sys(11.5), t.txt3)
+        orderCap.frame = NSRect(x: pad, y: 70, width: 44, height: 16); card.addSubview(orderCap)
+        let ddX = pad + 50, ddW: CGFloat = 150
+        let dd = ClickRow(bg: t.card, radius: 8)
+        dd.hoverColor = t.hover
+        dd.frame = NSRect(x: ddX, y: 65, width: ddW, height: 30)
+        dd.layer?.borderWidth = 1; dd.layer?.borderColor = t.cardbr.cgColor
+        let ddl = label(Self.orderLabel(store.repoOrdering), sys(12, .semibold), t.txt)
+        ddl.frame = NSRect(x: 12, y: 7, width: ddW - 12 - 22, height: 16); dd.addSubview(ddl)
+        let ddc = label("▾", sys(10), t.txt4, align: .right)
+        ddc.frame = NSRect(x: ddW - 22, y: 7, width: 14, height: 16); dd.addSubview(ddc)
+        dd.onClick = { [weak self] in self?.orderMenuOpen.toggle(); self?.needsLayout = true }
+        card.addSubview(dd)
+
+        // A click anywhere else on the card dismisses an open order menu (menu rows/button intercept
+        // their own clicks; the card otherwise just swallows clicks so they don't reach the backdrop).
+        card.onClick = { [weak self] in
+            guard let self, self.orderMenuOpen else { return }
+            self.orderMenuOpen = false; self.needsLayout = true
+        }
+
         if store.orgs.isEmpty {
             let empty = label("No organizations on this account.", sys(12), t.txt3, align: .center)
             empty.frame = NSRect(x: pad, y: headerH + listH / 2 - 8, width: innerW, height: 16)
@@ -125,6 +151,46 @@ final class ManageOrgsSheet: FlippedView {
             self?.onClose?()
         }
         card.addSubview(reset); card.addSubview(done)
+
+        // Order menu overlay — added last so it floats above the list. Mirrors the panel's
+        // View-options dropdown (RepoPanelView): a ✓ on the active mode, label, row per case.
+        if orderMenuOpen {
+            let modes = RepoOrderingMode.allCases
+            let menu = BoxView(bg: t.panel, radius: 10, border: t.line2)
+            menu.frame = NSRect(x: ddX, y: 65 + 34, width: ddW, height: CGFloat(modes.count) * 36 + 10)
+            menu.layer?.shadowColor = NSColor.black.cgColor
+            menu.layer?.shadowOpacity = 0.45
+            menu.layer?.shadowRadius = 16
+            menu.layer?.shadowOffset = CGSize(width: 0, height: -6)
+            menu.layer?.masksToBounds = false
+            var my: CGFloat = 5
+            for mode in modes {
+                let on = store.repoOrdering == mode
+                let row = ClickRow(bg: on ? t.accentbg : nil, radius: 7)
+                row.hoverColor = t.hover
+                row.frame = NSRect(x: 5, y: my, width: ddW - 10, height: 34)
+                let chk = label(on ? "✓" : "", sys(11), t.accent)
+                chk.frame = NSRect(x: 10, y: 9, width: 14, height: 16); row.addSubview(chk)
+                let ml = label(Self.orderLabel(mode), sys(12.5), t.txt)
+                ml.frame = NSRect(x: 30, y: 9, width: ddW - 40, height: 16); row.addSubview(ml)
+                row.onClick = { [weak self] in
+                    self?.store.repoOrdering = mode
+                    self?.orderMenuOpen = false
+                    self?.needsLayout = true
+                }
+                menu.addSubview(row); my += 36
+            }
+            card.addSubview(menu)
+        }
+    }
+
+    /// The dropdown/menu label for an ordering mode. The Domain enum's raw values are storage keys,
+    /// so the UI text lives here.
+    private static func orderLabel(_ mode: RepoOrderingMode) -> String {
+        switch mode {
+        case .byName: "Name"
+        case .byOpenCount: "Activity"
+        }
     }
 
     private func buildList(in card: ClickRow, t: Theme, x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat,
