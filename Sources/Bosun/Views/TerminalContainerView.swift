@@ -29,12 +29,16 @@ final class TerminalSession {
     var dot: NSColor
     /// Where this tab came from, used to persist + reopen it. See `TerminalContainerView.snapshotTabs`.
     let origin: TabOrigin
+    /// When set, the server/OSC title is ignored so the tab keeps `title` (issue #29). True for
+    /// named-connection tabs; `var` so a user-renamed local tab can lock too (#30).
+    var lockTitle: Bool
 
-    init(view: NSView, title: String, dot: NSColor, origin: TabOrigin) {
+    init(view: NSView, title: String, dot: NSColor, origin: TabOrigin, lockTitle: Bool = false) {
         self.view = view
         self.title = title
         self.dot = dot
         self.origin = origin
+        self.lockTitle = lockTitle
     }
 
     var surfaceView: GhosttySurfaceView? { view as? GhosttySurfaceView }
@@ -143,7 +147,8 @@ final class TerminalContainerView: FlippedView {
         }
         let surface = GhosttySurfaceView(app: app, command: command, workingDirectory: workingDirectory)
         return wire(TerminalSession(view: surface, title: conn.name, dot: Status.green,
-                                    origin: .connection(conn.id.uuidString)), surface: surface)
+                                    origin: .connection(conn.id.uuidString), lockTitle: true),
+                    surface: surface)
     }
 
     /// Jump to another tab (native ⌘1…9 / next / previous / last).
@@ -263,10 +268,10 @@ final class TerminalContainerView: FlippedView {
     }
 
     private func updateTitle(id: UUID, _ title: String) {
-        guard let session = views[id] else { return }
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, session.title != trimmed else { return }
-        session.title = trimmed
+        guard let session = views[id],
+              let resolved = TerminalTitlePolicy.resolved(incoming: title, current: session.title,
+                                                          locked: session.lockTitle) else { return }
+        session.title = resolved
         needsLayout = true   // relabel the tab strip; no surface churn
     }
 
