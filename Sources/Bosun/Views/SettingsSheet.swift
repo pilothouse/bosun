@@ -26,7 +26,7 @@ final class SettingsSheet: FlippedView {
     override func mouseDown(with event: NSEvent) { onClose?() }
     override func cancelOperation(_ sender: Any?) { onClose?() }
     // Take key focus (there's no text field to hold it) so Esc reaches `cancelOperation`.
-    // WorkbenchView restores terminal focus when the sheet closes.
+    // BosunView restores terminal focus when the sheet closes.
     override var acceptsFirstResponder: Bool { true }
 
     override func layout() {

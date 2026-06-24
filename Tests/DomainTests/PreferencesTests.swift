@@ -32,6 +32,18 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(decoded, original)
     }
 
+    func testStatusFilterSelectionsRoundTrip() throws {
+        let original = Preferences(prStates: ["open", "merged"], issueStates: ["open", "closed"])
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.prStates, ["open", "merged"])
+        XCTAssertEqual(decoded.issueStates, ["open", "closed"])
+        XCTAssertNil(Preferences.default.prStates, "never customized means open-only by default")
+        XCTAssertNil(Preferences.default.issueStates)
+    }
+
     func testDecodingPayloadMissingKeysFallsBackToDefaults() throws {
         // A payload written by an older build that only knew about the theme.
         let json = Data(#"{"themeKey":"carbon"}"#.utf8)

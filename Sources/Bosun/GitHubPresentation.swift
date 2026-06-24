@@ -66,6 +66,7 @@ extension Item {
             num: "#\(it.number)",
             title: it.title,
             kind: it.kind == .pullRequest ? .pr : .issue,
+            state: it.state,
             glyph: status.glyph,
             gcolor: status.color,
             statusLabel: status.label,

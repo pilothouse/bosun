@@ -55,8 +55,11 @@ final class GitHubAPIClientTests: XCTestCase {
 
     func testIssuesListMapsFieldsAndParsesTasksFromBody() async throws {
         respond { (self.ok($0), try fixture("issues")) }
-        let items = try await makeClient().items(owner: "acme-corp", repo: "api-gateway", kind: .issue)
+        let result = try await makeClient().items(owner: "acme-corp", repo: "api-gateway",
+                                                  kind: .issue, states: [.open])
+        let items = result.items
 
+        XCTAssertFalse(result.reachedHistoryCap, "the open-only fast path is unbounded")
         XCTAssertEqual(items.count, 2)
         let first = items[0]
         XCTAssertEqual(first.kind, .issue)

@@ -33,7 +33,7 @@ final class ManageOrgsSheet: FlippedView {
     override func mouseDown(with event: NSEvent) { onClose?() }
     override func cancelOperation(_ sender: Any?) { onClose?() }
     // Take key focus (there's no text field to hold it, unlike NewConnectionSheet) so Esc reaches
-    // `cancelOperation`. WorkbenchView restores terminal focus when the sheet closes.
+    // `cancelOperation`. BosunView restores terminal focus when the sheet closes.
     override var acceptsFirstResponder: Bool { true }
 
     // MARK: Followed-set helpers

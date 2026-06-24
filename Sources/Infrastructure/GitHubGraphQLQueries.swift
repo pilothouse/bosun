@@ -50,11 +50,11 @@ enum GitHubGraphQLQueries {
     }
     """
 
-    /// Open issues in a repo, newest first. Paged via `$cursor`.
+    /// Issues in a repo in the requested `$states` (open by default), newest first. Paged via `$cursor`.
     static let issues = """
-    query($owner: String!, $repo: String!, $cursor: String) {
+    query($owner: String!, $repo: String!, $cursor: String, $states: [IssueState!]) {
       repository(owner: $owner, name: $repo) {
-        issues(first: 50, after: $cursor, states: OPEN,
+        issues(first: 50, after: $cursor, states: $states,
                orderBy: {field: CREATED_AT, direction: DESC}) {
           pageInfo { hasNextPage endCursor }
           nodes {
@@ -72,11 +72,12 @@ enum GitHubGraphQLQueries {
     }
     """
 
-    /// Open pull requests in a repo, newest first, with the PR-only fields. Paged via `$cursor`.
+    /// Pull requests in a repo in the requested `$states` (open by default), newest first, with the
+    /// PR-only fields. Paged via `$cursor`.
     static let pullRequests = """
-    query($owner: String!, $repo: String!, $cursor: String) {
+    query($owner: String!, $repo: String!, $cursor: String, $states: [PullRequestState!]) {
       repository(owner: $owner, name: $repo) {
-        pullRequests(first: 50, after: $cursor, states: OPEN,
+        pullRequests(first: 50, after: $cursor, states: $states,
                      orderBy: {field: CREATED_AT, direction: DESC}) {
           pageInfo { hasNextPage endCursor }
           nodes {

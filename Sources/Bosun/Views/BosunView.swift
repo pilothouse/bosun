@@ -45,7 +45,7 @@ final class CenterColumnView: FlippedView {
 }
 
 /// Root content view: titlebar + three columns + settings overlay.
-final class WorkbenchView: NSView {
+final class BosunView: NSView {
     let store: Store
     let ghostty: GhosttyApp
     private let connections: ConnectionServices
@@ -100,6 +100,7 @@ final class WorkbenchView: NSView {
         repoPanel.onSelectRepo = { [weak self] owner, name in self?.data.selectRepo(owner: owner, name: name) }
         repoPanel.onSelectItem = { [weak self] number in self?.data.selectItem(number: number) }
         repoPanel.onManageOrgs = { [weak self] in self?.store.manageOrgsOpen = true }
+        repoPanel.onChangeFilter = { [weak self] in self?.data.reloadCurrentItems() }
         center.detail.onSubmitComment = { [weak self] body, done in self?.data.submitComment(body: body, completion: done) }
 
         store.observe { [weak self] in self?.onChange() }

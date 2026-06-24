@@ -26,6 +26,11 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// open item's kind can still override the restored tab so the item stays visible.
     public var selectedTab: String?
     public var groupBy: String?
+    /// The lifecycle states the PR and issue lists are filtered to, as `GitHubItemState` raw values
+    /// (`"open"`/`"closed"`/`"merged"`). `nil` means never customized — default to open-only, the
+    /// cheap fast path. See `GitHubItemStates` for how these drive both the fetch and the display.
+    public var prStates: [String]?
+    public var issueStates: [String]?
     /// The open terminal tabs and which one was active, reopened on relaunch. `nil` means never
     /// saved — seed a single local shell (today's behaviour). See `TerminalTabState`.
     public var openTabs: [TerminalTabState]?
@@ -44,6 +49,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         selectedRepoKey: String? = nil,
         selectedTab: String? = nil,
         groupBy: String? = nil,
+        prStates: [String]? = nil,
+        issueStates: [String]? = nil,
         openTabs: [TerminalTabState]? = nil,
         activeTabIndex: Int? = nil
     ) {
@@ -56,6 +63,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.selectedRepoKey = selectedRepoKey
         self.selectedTab = selectedTab
         self.groupBy = groupBy
+        self.prStates = prStates
+        self.issueStates = issueStates
         self.openTabs = openTabs
         self.activeTabIndex = activeTabIndex
     }
@@ -78,6 +87,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             selectedRepoKey: try container.decodeIfPresent(String.self, forKey: .selectedRepoKey) ?? fallback.selectedRepoKey,
             selectedTab: try container.decodeIfPresent(String.self, forKey: .selectedTab) ?? fallback.selectedTab,
             groupBy: try container.decodeIfPresent(String.self, forKey: .groupBy) ?? fallback.groupBy,
+            prStates: try container.decodeIfPresent([String].self, forKey: .prStates) ?? fallback.prStates,
+            issueStates: try container.decodeIfPresent([String].self, forKey: .issueStates) ?? fallback.issueStates,
             openTabs: try container.decodeIfPresent([TerminalTabState].self, forKey: .openTabs) ?? fallback.openTabs,
             activeTabIndex: try container.decodeIfPresent(Int.self, forKey: .activeTabIndex) ?? fallback.activeTabIndex
         )

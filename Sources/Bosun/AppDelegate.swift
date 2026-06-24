@@ -31,11 +31,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                  auth: auth, data: data)
         self.root = root
 
-        let win = NSWindow(
+        let win = DismissingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1340, height: 880),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
+        // Close an open View/Status dropdown on a click anywhere outside it (the menu and its toggle
+        // buttons publish their no-dismiss regions in `store.menuDismissRects`). The plain overlay
+        // menus can't dismiss themselves, and app-level NSEvent monitors don't see clicks here.
+        win.onMouseDown = { [weak store] pointInWindow in
+            guard let store, store.viewMenuOpen || store.statusMenuOpen else { return }
+            if !store.menuDismissRects.contains(where: { $0.contains(pointInWindow) }) {
+                store.viewMenuOpen = false
+                store.statusMenuOpen = false
+            }
+        }
         win.titlebarAppearsTransparent = true
         win.titleVisibility = .hidden
         win.title = "Bosun"

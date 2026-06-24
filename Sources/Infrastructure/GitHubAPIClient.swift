@@ -67,14 +67,20 @@ public actor GitHubAPIClient: GitHubAPI {
         return repos
     }
 
-    public func items(owner: String, repo: String, kind: GitHubItemKind) async throws -> [GitHubItem] {
+    public func items(owner: String, repo: String, kind: GitHubItemKind,
+                      states: Set<GitHubItemState>) async throws -> GitHubItemList {
         let nameWithOwner = "\(owner)/\(repo)"
+        let requested = GitHubItemStates.requested(for: kind, selected: states)
+        let tokens = requested.map(GitHubItemStates.graphQLToken).sorted()  // stable variable content
+        let bounded = GitHubItemStates.bounded(requested)
         var cursor: String?
         var items: [GitHubItem] = []
+        var reachedCap = false
         repeat {
             let vars: [String: GraphQLValue] = [
                 "owner": .string(owner), "repo": .string(repo),
                 "cursor": cursor.map(GraphQLValue.string) ?? .null,
+                "states": .stringArray(tokens),
             ]
             let page: ItemConnection
             switch kind {
@@ -88,9 +94,16 @@ public actor GitHubAPIClient: GitHubAPI {
                 page = try payload.repository.orThrowNotFound().pullRequests
             }
             items += page.nodes.map { $0.toDomain(kind: kind, repoNameWithOwner: nameWithOwner) }
-            cursor = page.pageInfo.next
+            let next = page.pageInfo.next
+            // Bound closed/merged history: stop once we have the newest `historyCap`, recording
+            // whether more pages remained so the caller can surface the cap.
+            if bounded && items.count >= GitHubItemStates.historyCap {
+                reachedCap = next != nil
+                break
+            }
+            cursor = next
         } while cursor != nil
-        return items
+        return GitHubItemList(items: items, reachedHistoryCap: reachedCap)
     }
 
     public func itemDetail(owner: String, repo: String, number: Int) async throws -> GitHubItem {
@@ -237,10 +250,13 @@ public actor GitHubAPIClient: GitHubAPI {
 
 // MARK: - GraphQL request/response envelopes
 
-/// A JSON value for GraphQL variables — just the scalars these queries pass.
+/// A JSON value for GraphQL variables — the scalars these queries pass, plus a string array for
+/// enum-list filters (e.g. `states: [OPEN, CLOSED]`, sent as `["OPEN","CLOSED"]` which GitHub
+/// coerces to the enum-typed variable).
 private enum GraphQLValue: Encodable {
     case string(String)
     case int(Int)
+    case stringArray([String])
     case null
 
     func encode(to encoder: Encoder) throws {
@@ -248,6 +264,7 @@ private enum GraphQLValue: Encodable {
         switch self {
         case let .string(value): try container.encode(value)
         case let .int(value): try container.encode(value)
+        case let .stringArray(value): try container.encode(value)
         case .null: try container.encodeNil()
         }
     }

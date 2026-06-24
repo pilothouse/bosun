@@ -1,4 +1,5 @@
 import AppKit
+import Domain
 
 final class RepoPanelView: FlippedView {
     let store: Store
@@ -8,6 +9,9 @@ final class RepoPanelView: FlippedView {
     var onSelectItem: ((Int) -> Void)?
     /// Open the "manage organizations" sheet (follow/unfollow + reorder).
     var onManageOrgs: (() -> Void)?
+    /// The status filter changed — ask the data controller to re-fetch the current repo in the new
+    /// scope. Wired to the data controller.
+    var onChangeFilter: (() -> Void)?
 
     /// The item the list was last auto-scrolled to, so we focus the open item once when the
     /// selection changes (e.g. restored on launch) without fighting the user's manual scrolling.
@@ -205,7 +209,7 @@ final class RepoPanelView: FlippedView {
         let prSel = store.tab == .prs
         let prTab = ClickRow(bg: prSel ? t.accentbg2 : t.card, radius: 7)
         prTab.frame = NSRect(x: 14, y: y, width: tabW, height: 28)
-        let prL = label("PRs · \(store.prs.count)", sys(11.5, .semibold), prSel ? t.accent : t.txt3, align: .center)
+        let prL = label("PRs · \(store.visiblePRs.count)", sys(11.5, .semibold), prSel ? t.accent : t.txt3, align: .center)
         prL.frame = NSRect(x: 0, y: 6, width: tabW, height: 16); prTab.addSubview(prL)
         prTab.onClick = { [weak self] in self?.store.tab = .prs }
         addSubview(prTab)
@@ -213,22 +217,45 @@ final class RepoPanelView: FlippedView {
         let isSel = store.tab == .issues
         let isTab = ClickRow(bg: isSel ? t.accentbg2 : t.card, radius: 7)
         isTab.frame = NSRect(x: 14 + tabW + 5, y: y, width: tabW, height: 28)
-        let isL = label("Issues · \(store.issues.count)", sys(11.5, .semibold), isSel ? t.accent : t.txt3, align: .center)
+        let isL = label("Issues · \(store.visibleIssues.count)", sys(11.5, .semibold), isSel ? t.accent : t.txt3, align: .center)
         isL.frame = NSRect(x: 0, y: 6, width: tabW, height: 16); isTab.addSubview(isL)
         isTab.onClick = { [weak self] in self?.store.tab = .issues }
         addSubview(isTab)
         y += 38
 
-        // 3. Group-by dropdown.
-        let dd = ClickRow(bg: t.card, radius: 8)
-        dd.frame = NSRect(x: 12, y: y, width: w - 24, height: 32)
-        dd.layer?.borderWidth = 1; dd.layer?.borderColor = t.cardbr.cgColor
-        let ic = label("≣", sys(12), t.txt3); ic.frame = NSRect(x: 10, y: 8, width: 16, height: 16); dd.addSubview(ic)
-        let ddl = label("View: \(store.groupBy.rawValue)", sys(12, .semibold), t.txt)
-        ddl.frame = NSRect(x: 30, y: 8, width: w - 24 - 60, height: 16); dd.addSubview(ddl)
-        let car = label("▾", sys(10), t.txt4, align: .right); car.frame = NSRect(x: w - 24 - 24, y: 8, width: 14, height: 16); dd.addSubview(car)
-        dd.onClick = { [weak self] in self?.store.viewMenuOpen.toggle() }
-        addSubview(dd)
+        // 3. View-options row: the group-by dropdown (left) and the status filter (right) share it.
+        let gap: CGFloat = 6
+        let halfW = (w - 24 - gap) / 2
+        let statusX = 12 + halfW + gap
+        addSubview(dropdownButton(x: 12, y: y, width: halfW, t: t, icon: "≣",
+                                  text: "View: \(store.groupBy.rawValue)") { [weak self] in
+            guard let self else { return }
+            self.store.statusMenuOpen = false
+            self.store.viewMenuOpen.toggle()
+        })
+        addSubview(dropdownButton(x: statusX, y: y, width: halfW, t: t, icon: "⚑",
+                                  text: statusSummary()) { [weak self] in
+            guard let self else { return }
+            self.store.viewMenuOpen = false
+            self.store.statusMenuOpen.toggle()
+        })
+        // Publish the regions where a click must NOT dismiss the dropdown — the two toggle buttons
+        // and whichever menu is open — in window coords, for the window's `sendEvent` to consult.
+        if store.viewMenuOpen || store.statusMenuOpen {
+            var rects = [NSRect(x: 12, y: y, width: halfW, height: 32),
+                         NSRect(x: statusX, y: y, width: halfW, height: 32)]
+            if store.viewMenuOpen {
+                rects.append(NSRect(x: 12, y: y + 36, width: w - 24,
+                                    height: CGFloat(Store.GroupBy.allCases.count) * 36 + 10))
+            }
+            if store.statusMenuOpen {
+                rects.append(NSRect(x: statusX, y: y + 36, width: halfW,
+                                    height: CGFloat(statusOptions.count) * 36 + 10))
+            }
+            store.menuDismissRects = rects.map { convert($0, to: nil) }
+        } else {
+            store.menuDismissRects = []
+        }
         let listTop = y + 42
 
         // 4. List body.
@@ -268,6 +295,13 @@ final class RepoPanelView: FlippedView {
                 }
             }
         }
+        // When the closed/merged history was bounded, say so rather than implying the list is complete.
+        if store.listTruncated && !(store.isLoadingItems && items.isEmpty) {
+            let note = label("Showing newest \(GitHubItemStates.historyCap) — older closed items not loaded.",
+                             sys(10.5), t.txt4, lines: 2)
+            note.frame = NSRect(x: 14, y: ly + 4, width: w - 28, height: 30); doc.addSubview(note)
+            ly += 38
+        }
         doc.frame.size.height = max(ly, listScroll.frame.height)
         listScroll.documentView = doc
         addSubview(listScroll)
@@ -304,5 +338,84 @@ final class RepoPanelView: FlippedView {
             }
             addSubview(menu)
         }
+
+        // Status filter overlay — a multi-check menu of the active tab's states (Open/Closed, plus
+        // Merged for PRs). Toggling keeps the menu open so several states can be flipped at once.
+        if store.statusMenuOpen {
+            let options = statusOptions
+            let selected = store.tab == .prs ? store.prStates : store.issueStates
+            let menu = BoxView(bg: t.panel, radius: 10, border: t.line2)
+            let mh = CGFloat(options.count) * 36 + 10
+            menu.frame = NSRect(x: statusX, y: y + 36, width: halfW, height: mh)
+            menu.layer?.shadowColor = NSColor.black.cgColor
+            menu.layer?.shadowOpacity = 0.45
+            menu.layer?.shadowRadius = 16
+            menu.layer?.shadowOffset = CGSize(width: 0, height: -6)
+            menu.layer?.masksToBounds = false
+            var my: CGFloat = 5
+            for state in options {
+                let on = selected.contains(state)
+                let row = ClickRow(bg: on ? t.accentbg : nil, radius: 7)
+                row.hoverColor = t.hover
+                row.frame = NSRect(x: 5, y: my, width: halfW - 10, height: 34)
+                let chk = label(on ? "✓" : "", sys(11), t.accent); chk.frame = NSRect(x: 10, y: 9, width: 14, height: 16); row.addSubview(chk)
+                let gl = label(Self.stateName(state), sys(12.5), t.txt); gl.frame = NSRect(x: 30, y: 9, width: halfW - 40, height: 16); row.addSubview(gl)
+                row.onClick = { [weak self] in self?.toggleStatus(state) }
+                menu.addSubview(row); my += 36
+            }
+            addSubview(menu)
+        }
+    }
+
+    /// The lifecycle states the status filter offers for the active tab — issues have no `merged`.
+    private var statusOptions: [GitHubItemState] {
+        store.tab == .prs ? [.open, .closed, .merged] : [.open, .closed]
+    }
+
+    /// A compact label for the status button: the first selected state plus a `+N` for the rest,
+    /// in the menu's canonical order (e.g. "Open +1").
+    private func statusSummary() -> String {
+        let selected = store.tab == .prs ? store.prStates : store.issueStates
+        let ordered = statusOptions.filter(selected.contains)
+        guard let first = ordered.first else { return "None" }
+        return ordered.count > 1 ? "\(Self.stateName(first)) +\(ordered.count - 1)" : Self.stateName(first)
+    }
+
+    private static func stateName(_ state: GitHubItemState) -> String {
+        switch state {
+        case .open: "Open"
+        case .closed: "Closed"
+        case .merged: "Merged"
+        }
+    }
+
+    /// Flip one state in the active tab's selection, then re-fetch in the new scope. Never empties
+    /// the set — unchecking the last remaining state is a no-op, so the list can't go blank.
+    private func toggleStatus(_ state: GitHubItemState) {
+        let isPR = store.tab == .prs
+        var set = isPR ? store.prStates : store.issueStates
+        if set.contains(state) {
+            guard set.count > 1 else { return }
+            set.remove(state)
+        } else {
+            set.insert(state)
+        }
+        if isPR { store.prStates = set } else { store.issueStates = set }
+        onChangeFilter?()
+    }
+
+    /// A bordered dropdown button shared by the View and Status controls: an icon, a label, and a
+    /// caret. `onClick` opens its menu.
+    private func dropdownButton(x: CGFloat, y: CGFloat, width: CGFloat, t: Theme,
+                                icon: String, text: String, onClick: @escaping () -> Void) -> ClickRow {
+        let dd = ClickRow(bg: t.card, radius: 8)
+        dd.frame = NSRect(x: x, y: y, width: width, height: 32)
+        dd.layer?.borderWidth = 1; dd.layer?.borderColor = t.cardbr.cgColor
+        let ic = label(icon, sys(12), t.txt3); ic.frame = NSRect(x: 10, y: 8, width: 16, height: 16); dd.addSubview(ic)
+        let l = label(text, sys(12, .semibold), t.txt)   // lines: 1 → already truncates with a tail
+        l.frame = NSRect(x: 30, y: 8, width: width - 30 - 22, height: 16); dd.addSubview(l)
+        let car = label("▾", sys(10), t.txt4, align: .right); car.frame = NSRect(x: width - 22, y: 8, width: 14, height: 16); dd.addSubview(car)
+        dd.onClick = onClick
+        return dd
     }
 }

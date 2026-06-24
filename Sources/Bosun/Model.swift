@@ -57,6 +57,9 @@ struct CurrentUser { let initials: String; let color: NSColor; let avatarURL: UR
 struct Item {
     let id, num, title: String
     let kind: ItemKind
+    /// The Domain lifecycle state, carried so the panel's status filter can include/exclude this
+    /// item without re-deriving it from the status label.
+    var state: GitHubItemState = .open
     let glyph: String
     let gcolor: NSColor
     let statusLabel: String

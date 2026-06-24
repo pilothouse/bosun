@@ -141,6 +141,15 @@ final class GitHubDataController {
         loadItems(owner: owner, name: name)
     }
 
+    /// Re-run the current repo's item fetch after the status filter changed — the new selection is
+    /// both the display filter and the fetch scope, so widening it pulls in the newly-shown states
+    /// (and narrowing it prunes them from the cache). The display already updated instantly off the
+    /// cache; this reconciles the cache with the new scope. A no-op before a repo is selected.
+    func reloadCurrentItems() {
+        guard let repo = currentRepo else { return }
+        loadItems(owner: repo.owner, name: repo.name)
+    }
+
     /// Select a list item: show its lead content immediately (the store already has it) and
     /// fetch the hydrated detail (body tasks, comments, PR checks) to upgrade it.
     func selectItem(number: Int) {
@@ -191,6 +200,8 @@ final class GitHubDataController {
         store.isLoadingOrgs = false
         store.isLoadingItems = false
         store.isLoadingDetail = false
+        store.prsTruncated = false
+        store.issuesTruncated = false
         // Drop the on-disk cache too, so the next user to sign in never sees this account's data.
         Task { await cache.clear() }
     }
@@ -223,17 +234,23 @@ final class GitHubDataController {
             }
 
             do {
-                async let prs = api.items(owner: owner, repo: name, kind: .pullRequest)
-                async let issues = api.items(owner: owner, repo: name, kind: .issue)
-                let (prItems, issueItems) = try await (prs, issues)
+                // Fetch each list in the user's selected states. Open-only is the cheap default;
+                // a broader selection bounds closed/merged history and reports the cap.
+                async let prs = api.items(owner: owner, repo: name, kind: .pullRequest,
+                                          states: store.prStates)
+                async let issues = api.items(owner: owner, repo: name, kind: .issue,
+                                             states: store.issueStates)
+                let (prResult, issueResult) = try await (prs, issues)
                 // Ignore a response that landed after the user switched repos.
                 guard isCurrent() else { return }
-                let prDelta = GitHubDelta.apply(incoming: prItems, to: cachedPRs)
-                let issueDelta = GitHubDelta.apply(incoming: issueItems, to: cachedIssues)
+                let prDelta = GitHubDelta.apply(incoming: prResult.items, to: cachedPRs)
+                let issueDelta = GitHubDelta.apply(incoming: issueResult.items, to: cachedIssues)
                 await cache.saveItems(prDelta.merged, repoKey: repoKey, kind: .pullRequest)
                 await cache.saveItems(issueDelta.merged, repoKey: repoKey, kind: .issue)
                 guard isCurrent() else { return }
                 store.isLoadingItems = false
+                store.prsTruncated = prResult.reachedHistoryCap
+                store.issuesTruncated = issueResult.reachedHistoryCap
                 if !hadCache || !prDelta.isUnchanged { store.prs = prDelta.merged.map(Item.init(domain:)) }
                 if !hadCache || !issueDelta.isUnchanged { store.issues = issueDelta.merged.map(Item.init(domain:)) }
                 if !hadCache || !prDelta.isUnchanged || !issueDelta.isUnchanged {

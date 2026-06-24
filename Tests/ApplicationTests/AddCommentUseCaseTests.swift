@@ -26,7 +26,8 @@ final class AddCommentUseCaseTests: XCTestCase {
         func currentUser() throws -> GitHubUser { throw Unused() }
         func organizations() throws -> [GitHubOrg] { throw Unused() }
         func viewerRepositories() throws -> [GitHubRepo] { throw Unused() }
-        func items(owner: String, repo: String, kind: GitHubItemKind) throws -> [GitHubItem] { throw Unused() }
+        func items(owner: String, repo: String, kind: GitHubItemKind,
+                   states: Set<GitHubItemState>) throws -> GitHubItemList { throw Unused() }
         func itemDetail(owner: String, repo: String, number: Int) throws -> GitHubItem { throw Unused() }
     }
 

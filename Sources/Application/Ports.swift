@@ -82,8 +82,11 @@ public protocol GitHubAPI: Sendable {
     /// The viewer's own (user-owned) repositories with their open-work counts — the personal repos
     /// that live under the user, not an organization. Lets a no-org account still see live data.
     func viewerRepositories() async throws -> [GitHubRepo]
-    /// Open issues or pull requests in a repo (lead fields only — no comments/checks).
-    func items(owner: String, repo: String, kind: GitHubItemKind) async throws -> [GitHubItem]
+    /// Issues or pull requests in a repo (lead fields only — no comments/checks), restricted to
+    /// `states`. Open-only is the cheap default and fetches the full set; a broader selection bounds
+    /// closed/merged history (see `GitHubItemList.reachedHistoryCap`).
+    func items(owner: String, repo: String, kind: GitHubItemKind,
+               states: Set<GitHubItemState>) async throws -> GitHubItemList
     /// One item fully hydrated: body-derived tasks, comments, and (for PRs) check runs.
     func itemDetail(owner: String, repo: String, number: Int) async throws -> GitHubItem
     /// Post a comment on an issue/PR and return it as GitHub stored it. The one write on this

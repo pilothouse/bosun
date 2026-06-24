@@ -2,7 +2,7 @@ import AppKit
 import Application
 import Domain
 
-/// Shared UI state for the Workbench. Views register an `observe` closure that
+/// Shared UI state for Bosun. Views register an `observe` closure that
 /// fires on any data/theme change (used to re-apply content + colors).
 final class Store {
     enum Tab: String { case prs, issues }   // rawValue is the stable persistence key
@@ -44,7 +44,17 @@ final class Store {
     /// (the restored item's kind can still flip the tab — see `GitHubDataController.reconcileSelection`).
     var tab: Tab = .prs { didSet { if oldValue != tab { changed() } } }
     var groupBy: GroupBy = .none { didSet { if oldValue != groupBy { changed() } } }
+    /// The lifecycle states the PR and issue lists are filtered to (and fetched for). Default
+    /// open-only — the cheap fast path. Persisted; a change re-filters the list instantly and
+    /// triggers a re-fetch in the matching scope (see `GitHubDataController.reloadCurrentItems`).
+    var prStates: Set<GitHubItemState> = [.open] { didSet { if oldValue != prStates { changed() } } }
+    var issueStates: Set<GitHubItemState> = [.open] { didSet { if oldValue != issueStates { changed() } } }
     var viewMenuOpen = false { didSet { if oldValue != viewMenuOpen { notify() } } }
+    var statusMenuOpen = false { didSet { if oldValue != statusMenuOpen { notify() } } }
+    /// Window-coordinate rects of an open dropdown's menu and its toggle buttons — the regions where
+    /// a click must NOT dismiss the menu. Published by `RepoPanelView` each rebuild and read by the
+    /// window's `sendEvent` to dismiss the dropdown on a click anywhere else. Not persisted.
+    var menuDismissRects: [CGRect] = []
     var settingsOpen = false { didSet { if oldValue != settingsOpen { notify() } } }
     var newConnectionOpen = false { didSet { if oldValue != newConnectionOpen { notify() } } }
     var manageOrgsOpen = false { didSet { if oldValue != manageOrgsOpen { notify() } } }
@@ -79,6 +89,10 @@ final class Store {
     var isLoadingOrgs = false { didSet { if oldValue != isLoadingOrgs { notify() } } }
     var isLoadingItems = false { didSet { if oldValue != isLoadingItems { notify() } } }
     var isLoadingDetail = false { didSet { if oldValue != isLoadingDetail { notify() } } }
+    /// Whether the last PR/issue fetch bounded its closed/merged history (older items not loaded),
+    /// so the panel can surface the cap. Transient, not persisted — recomputed on every fetch.
+    var prsTruncated = false { didSet { if oldValue != prsTruncated { notify() } } }
+    var issuesTruncated = false { didSet { if oldValue != issuesTruncated { notify() } } }
 
     /// Window opacity. It drives the window directly (via `onWindowAlpha`) rather than a content
     /// rebuild, so it is deliberately not part of `notify` — otherwise dragging the opacity
@@ -140,7 +154,15 @@ final class Store {
         return (prs + issues).first { $0.id == selectedItemId }
     }
 
-    var listItems: [Item] { tab == .prs ? prs : issues }
+    /// The fetched lists narrowed to the user's selected states (the instant display filter). The
+    /// fetch scope tracks the same selection, so this only differs transiently — while a re-fetch
+    /// for a just-changed selection is still in flight against the previously-cached rows.
+    var visiblePRs: [Item] { prs.filter { prStates.contains($0.state) } }
+    var visibleIssues: [Item] { issues.filter { issueStates.contains($0.state) } }
+    var listItems: [Item] { tab == .prs ? visiblePRs : visibleIssues }
+
+    /// Whether the active tab's list bounded its closed/merged history, for the panel's footer note.
+    var listTruncated: Bool { tab == .prs ? prsTruncated : issuesTruncated }
 
     /// The orgs shown in the panel, in the user's chosen order. Derived from the fetched `orgs`
     /// and the persisted `followedOrgs` choice via the pure `OrgFollowing` rule, so the panel and
@@ -179,6 +201,8 @@ final class Store {
             selectedRepoKey: selectedRepoKey,
             selectedTab: tab.rawValue,
             groupBy: groupBy.storageKey,
+            prStates: prStates.map(\.rawValue).sorted(),
+            issueStates: issueStates.map(\.rawValue).sorted(),
             openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
             activeTabIndex: activeTerminalTabIndex)
         Task { await preferences.save(snapshot) }
@@ -197,6 +221,8 @@ final class Store {
         selectedRepoKey = p.selectedRepoKey
         tab = Tab(rawValue: p.selectedTab ?? "") ?? .prs
         groupBy = GroupBy(storageKey: p.groupBy)
+        prStates = Store.states(from: p.prStates, default: [.open])
+        issueStates = Store.states(from: p.issueStates, default: [.open]).subtracting([.merged])
         terminalTabs = p.openTabs ?? []
         activeTerminalTabIndex = p.activeTabIndex ?? 0
         isLoading = false
@@ -206,4 +232,14 @@ final class Store {
 
     /// Force a content refresh (e.g., after the terminal view is attached).
     func refresh() { notify() }
+
+    /// Decode a persisted status selection (raw `GitHubItemState` values), dropping anything
+    /// unrecognized and falling back to `default` when nothing valid remains — a stored selection
+    /// must never leave a tab filtered to an empty set (a blank list).
+    private static func states(from raw: [String]?, default fallback: Set<GitHubItemState>)
+        -> Set<GitHubItemState> {
+        guard let raw else { return fallback }
+        let parsed = Set(raw.compactMap(GitHubItemState.init(rawValue:)))
+        return parsed.isEmpty ? fallback : parsed
+    }
 }
