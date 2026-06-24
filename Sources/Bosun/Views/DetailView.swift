@@ -98,7 +98,7 @@ final class DetailView: FlippedView {
         guard avail > 80 else { scroll.documentView = nil; return }
 
         let padX: CGFloat = 26
-        let cw = min(avail - padX * 2, 720)
+        let cw = avail - padX * 2
         let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: avail, height: 10))
         var y: CGFloat = 20
 
