@@ -58,6 +58,15 @@ final class TerminalContainerView: FlippedView {
     /// id → session (the surface view + label). Kept in sync with `tabs.ids`.
     private var views: [UUID: TerminalSession] = [:]
 
+    /// Inline-rename state (#30). Lives on the container, not the tab row, because the strip is
+    /// rebuilt on every `layout()` — the row that received the first click no longer exists by the
+    /// second. `editingTabId` is the tab currently in edit mode; `editField` is its live editor;
+    /// `lastTabClick*` time a double-click the same way `ConnectionRailView` does.
+    private var editingTabId: UUID?
+    private weak var editField: NSTextField?
+    private var lastTabClickId: UUID?
+    private var lastTabClickAt: TimeInterval = 0
+
     var onRelayout: (() -> Void)?
 
     private let handle = DragHandle()
@@ -312,6 +321,58 @@ final class TerminalContainerView: FlippedView {
         snapshotTabs()
     }
 
+    // MARK: Inline rename (#30)
+
+    /// A single click selects the tab; a second click on the same tab within the system
+    /// double-click interval renames it. Timed here on the container (which survives the strip
+    /// rebuild) rather than via the row's `clickCount`, the same reason as `ConnectionRailView`.
+    private func handleTabClick(id: UUID) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if lastTabClickId == id, now - lastTabClickAt <= NSEvent.doubleClickInterval {
+            lastTabClickId = nil
+            beginRename(id: id)
+        } else {
+            lastTabClickId = id
+            lastTabClickAt = now
+            selectSession(id: id)
+        }
+    }
+
+    /// Enter edit mode on a tab: rebuild the strip so `tabView` swaps that tab's label for an
+    /// editable field (focused + select-all happens once it's in the view tree).
+    private func beginRename(id: UUID) {
+        guard views[id] != nil else { return }
+        lastTabClickId = nil
+        editingTabId = id
+        needsLayout = true
+    }
+
+    /// Commit the edited name: lock the tab so the shell/server can't overwrite it, persist, and
+    /// rebuild. Idempotent — clears edit state first, so the end-editing notification that follows
+    /// the rebuild is a no-op (no double-commit between Return/Esc and focus-loss).
+    private func commitRename() {
+        guard let id = editingTabId, let session = views[id] else { return }
+        let draft = editField?.stringValue ?? ""
+        editingTabId = nil
+        editField = nil
+        if let title = TerminalTitlePolicy.renamed(to: draft) {
+            session.title = title
+            session.lockTitle = true
+            snapshotTabs()
+        }
+        refresh()
+        focusActive()
+    }
+
+    /// Abandon the edit (Esc): keep the old title, leave the lock untouched, rebuild.
+    private func cancelRename() {
+        guard editingTabId != nil else { return }
+        editingTabId = nil
+        editField = nil
+        refresh()
+        focusActive()
+    }
+
     private func focusActive() {
         guard let view = activeSurfaceView else { return }
         window?.makeFirstResponder(view)
@@ -414,13 +475,18 @@ final class TerminalContainerView: FlippedView {
         let tab = ClickRow(bg: active ? t.termBg : nil)
         tab.hoverColor = active ? nil : t.hover
         tab.frame = NSRect(x: x, y: 0, width: tw, height: barH)
-        tab.onClick = { [weak self] in self?.selectSession(id: session.id) }
+        tab.onClick = { [weak self] in self?.handleTabClick(id: session.id) }
 
         let underline = BoxView(bg: active ? Status.green : .clear)
         underline.frame = NSRect(x: 0, y: barH - 2, width: tw, height: 2); tab.addSubview(underline)
         let d = Dot(session.dot, 7); d.frame.origin = NSPoint(x: 13, y: (barH - 7) / 2); tab.addSubview(d)
-        let nm = label(session.title, sys(11.5, active ? .semibold : .regular), active ? t.txt : t.txt3)
-        nm.frame = NSRect(x: 28, y: 8, width: tw - 28 - 24, height: 16); tab.addSubview(nm)
+        let nameFrame = NSRect(x: 28, y: 8, width: tw - 28 - 24, height: 16)
+        if session.id == editingTabId {
+            tab.addSubview(renameEditor(session.title, frame: nameFrame, t: t))
+        } else {
+            let nm = label(session.title, sys(11.5, active ? .semibold : .regular), active ? t.txt : t.txt3)
+            nm.frame = nameFrame; tab.addSubview(nm)
+        }
 
         // Per-tab close (×). Sits above the tab, so its click closes without also selecting.
         let close = ClickRow(radius: 4)
@@ -433,5 +499,58 @@ final class TerminalContainerView: FlippedView {
 
         let sep = BoxView(bg: t.line); sep.frame = NSRect(x: tw - 1, y: 0, width: 1, height: barH); tab.addSubview(sep)
         return tab
+    }
+
+    /// The editable field shown in place of a tab's label while it's being renamed (#30). Borderless
+    /// and on the terminal bg so it reads like the active label it replaces; styled like that label
+    /// (semibold, primary text). Focus + select-all is deferred to the next runloop turn, once the
+    /// field is in the view tree (the strip is built mid-`layout`).
+    private func renameEditor(_ value: String, frame: NSRect, t: Theme) -> NSTextField {
+        let tf = NSTextField(string: value)
+        tf.font = sys(11.5, .semibold)
+        tf.textColor = t.txt
+        tf.isBordered = false
+        tf.isBezeled = false
+        tf.drawsBackground = true
+        tf.backgroundColor = t.termBg
+        tf.focusRingType = .none
+        tf.usesSingleLineMode = true
+        tf.lineBreakMode = .byTruncatingTail
+        tf.cell?.isScrollable = true
+        tf.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+        tf.delegate = self
+        tf.frame = frame
+        editField = tf
+        DispatchQueue.main.async { [weak tf] in
+            guard let tf, let window = tf.window else { return }
+            window.makeFirstResponder(tf)
+            tf.currentEditor()?.selectAll(nil)
+        }
+        return tf
+    }
+}
+
+extension TerminalContainerView: NSTextFieldDelegate {
+    /// Return commits the rename, Esc abandons it. Returning `true` consumes the key so AppKit
+    /// doesn't also beep or insert a newline into the (now-gone) editor.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard control === editField else { return false }
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            commitRename()
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            cancelRename()
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Clicking away (focus loss) commits whatever was typed. Guarded by `editingTabId` so the
+    /// strip rebuild that follows a Return/Esc commit — which also ends editing — doesn't re-fire.
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard editingTabId != nil, (obj.object as? NSTextField) === editField else { return }
+        commitRename()
     }
 }

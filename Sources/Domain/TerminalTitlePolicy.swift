@@ -12,4 +12,13 @@ public enum TerminalTitlePolicy {
         guard !trimmed.isEmpty, trimmed != current else { return nil }
         return trimmed
     }
+
+    /// The label a user-entered rename should commit, or `nil` to keep the current label.
+    /// Empty/whitespace input is ignored (keep the old name). Unlike `resolved`, an
+    /// unchanged-but-non-empty draft still commits — the operator opted in by editing, so a
+    /// deliberate rename always locks the tab even when the text didn't change (#30).
+    public static func renamed(to draft: String) -> String? {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }

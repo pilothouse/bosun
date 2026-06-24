@@ -36,4 +36,21 @@ final class TerminalTitlePolicyTests: XCTestCase {
     func testLockedEmptyTitleIsIgnored() {
         XCTAssertNil(TerminalTitlePolicy.resolved(incoming: "", current: "Forge - API", locked: true))
     }
+
+    // MARK: User-initiated rename (#30)
+
+    func testRenameTrimsWhitespace() {
+        XCTAssertEqual(TerminalTitlePolicy.renamed(to: "  dev  \n"), "dev")
+    }
+
+    func testEmptyOrWhitespaceRenameIsIgnored() {
+        XCTAssertNil(TerminalTitlePolicy.renamed(to: ""))
+        XCTAssertNil(TerminalTitlePolicy.renamed(to: "   \n\t"))
+    }
+
+    func testUnchangedNonEmptyRenameStillCommits() {
+        // Unlike a server title, a deliberate rename of an unchanged name still commits so the
+        // tab locks (the operator opted in by editing).
+        XCTAssertEqual(TerminalTitlePolicy.renamed(to: "zsh"), "zsh")
+    }
 }
