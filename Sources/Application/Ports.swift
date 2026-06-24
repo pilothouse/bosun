@@ -89,6 +89,11 @@ public protocol GitHubAPI: Sendable {
                states: Set<GitHubItemState>) async throws -> GitHubItemList
     /// One item fully hydrated: body-derived tasks, comments, and (for PRs) check runs.
     func itemDetail(owner: String, repo: String, number: Int) async throws -> GitHubItem
+    /// Numbers of same-repo issues that block this one — GitHub's native issue dependencies
+    /// (REST `GET /repos/{owner}/{repo}/issues/{number}/dependencies/blocked_by`). One call per
+    /// issue, so callers fetch lazily (only for the active "By blocked-by" grouping). Cross-repo
+    /// blockers and any when the feature is unavailable are dropped, yielding an empty list.
+    func issueDependencies(owner: String, repo: String, number: Int) async throws -> [Int]
     /// Post a comment on an issue/PR and return it as GitHub stored it. The one write on this
     /// otherwise read-only port (REST `POST /repos/{owner}/{repo}/issues/{number}/comments`).
     func addComment(owner: String, repo: String, number: Int, body: String) async throws -> GitHubComment

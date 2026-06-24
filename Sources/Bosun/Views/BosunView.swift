@@ -101,6 +101,7 @@ final class BosunView: NSView {
         repoPanel.onSelectItem = { [weak self] number in self?.data.selectItem(number: number) }
         repoPanel.onManageOrgs = { [weak self] in self?.store.manageOrgsOpen = true }
         repoPanel.onChangeFilter = { [weak self] in self?.data.reloadCurrentItems() }
+        repoPanel.onChangeGroup = { [weak self] in self?.data.loadBlockedByIfNeeded() }
         center.detail.onSubmitComment = { [weak self] body, done in self?.data.submitComment(body: body, completion: done) }
 
         store.observe { [weak self] in self?.onChange() }

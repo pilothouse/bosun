@@ -12,10 +12,22 @@ final class RepoPanelView: FlippedView {
     /// The status filter changed — ask the data controller to re-fetch the current repo in the new
     /// scope. Wired to the data controller.
     var onChangeFilter: (() -> Void)?
+    /// The grouping ("View") changed — lets the data controller lazily fetch blocked-by data the
+    /// first time the user enters "By blocked-by". Wired to the data controller.
+    var onChangeGroup: (() -> Void)?
 
     /// The item the list was last auto-scrolled to, so we focus the open item once when the
     /// selection changes (e.g. restored on launch) without fighting the user's manual scrolling.
     private var focusedItemId: String?
+
+    /// The list's scroll view, retained so its offset can be preserved across rebuilds: opening an
+    /// item hydrates its detail, which repaints the whole panel — without this the list would jump
+    /// back to the top on every such repaint (and on every background refresh).
+    private weak var listScroll: NSScrollView?
+    /// Identity of the list currently shown (repo + tab + grouping + status filter). When it changes
+    /// the list is a different list, so the scroll resets to the top; otherwise the prior offset is
+    /// restored across the repaint.
+    private var listIdentity = ""
 
     init(store: Store) {
         self.store = store
@@ -32,6 +44,12 @@ final class RepoPanelView: FlippedView {
     private func selectItem(_ it: Item) {
         store.selectedItemId = it.id
         if let number = Int(it.id) { onSelectItem?(number) }
+    }
+
+    /// Collapse or expand a grouped row's subtree (the store change triggers a rebuild).
+    private func toggleCollapse(_ id: String) {
+        if store.collapsedItems.contains(id) { store.collapsedItems.remove(id) }
+        else { store.collapsedItems.insert(id) }
     }
 
     /// What the orgs region shows before any live data loads: a sign-in prompt when signed out,
@@ -153,13 +171,26 @@ final class RepoPanelView: FlippedView {
         return card
     }
 
-    private func groupedRow(_ it: Item, indent: CGFloat, width w: CGFloat, t: Theme) -> ClickRow {
+    private func groupedRow(_ it: Item, indent: CGFloat, hasChildren: Bool,
+                            width w: CGFloat, t: Theme) -> ClickRow {
         let selected = store.selectedItemId == it.id
         let row = ClickRow(bg: selected ? t.accentbg : nil, radius: 6)
         row.hoverColor = t.hover
         row.frame = NSRect(x: 8, y: 0, width: w - 16, height: 27)
         row.onClick = { [weak self] in self?.selectItem(it) }
         let cw = w - 16
+        // A disclosure caret sits in the indent gutter (left of the glyph) for rows with children;
+        // it's a nested ClickRow so clicking it toggles collapse instead of selecting the row.
+        if hasChildren {
+            let collapsed = store.collapsedItems.contains(it.id)
+            let caret = ClickRow(bg: nil, radius: 4)
+            caret.hoverColor = t.hover
+            caret.frame = NSRect(x: indent, y: 3, width: 14, height: 21)
+            caret.onClick = { [weak self] in self?.toggleCollapse(it.id) }
+            let cl = label(collapsed ? "▸" : "▾", sys(9), t.txt4, align: .center)
+            cl.frame = NSRect(x: 0, y: 5, width: 14, height: 12); caret.addSubview(cl)
+            row.addSubview(caret)
+        }
         let g = label(it.glyph, sys(11), it.gcolor, align: .center)
         g.frame = NSRect(x: indent + 14, y: 6, width: 14, height: 14); row.addSubview(g)
         let num = label(it.num, mono(11), t.txt3)
@@ -176,6 +207,9 @@ final class RepoPanelView: FlippedView {
     // MARK: layout
 
     private func rebuild() {
+        // Capture the list's scroll position before tearing the panel down, so a plain repaint
+        // (e.g. opening an item, which hydrates its detail) can restore it instead of jumping to top.
+        let priorListOffset = listScroll?.contentView.bounds.origin
         subviews.forEach { $0.removeFromSuperview() }
         let t = store.theme
         layer?.backgroundColor = t.panel.cgColor
@@ -280,19 +314,23 @@ final class RepoPanelView: FlippedView {
                 ly += 58
             }
         } else {
-            // Grouped tree: parents first, then children indented.
-            let parents = items.filter { $0.parent == nil }
-            for p in parents {
-                let r = groupedRow(p, indent: 0, width: w, t: t)
-                r.frame.origin.y = ly; doc.addSubview(r)
-                if p.id == store.selectedItemId { selectedRect = r.frame }
+            // Grouped tree: nest by the active mode's relationship — sub-issue parent ("By parent")
+            // or first blocker ("By blocked-by") — honoring collapse. The pure `GitHubItemTree`
+            // rule keeps roots/siblings in list order, treats an item whose related item isn't in
+            // view as a root, and guards cycles.
+            let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let parentOf: [String: String] = items.reduce(into: [:]) { map, it in
+                if let key = store.groupBy == .blocked ? it.blocked : it.parent { map[it.id] = key }
+            }
+            let rows = GitHubItemTree.rows(order: items.map(\.id), parentOf: parentOf,
+                                           collapsed: store.collapsedItems)
+            for r in rows {
+                guard let it = byId[r.id] else { continue }
+                let gr = groupedRow(it, indent: CGFloat(r.depth) * 18, hasChildren: r.hasChildren,
+                                    width: w, t: t)
+                gr.frame.origin.y = ly; doc.addSubview(gr)
+                if it.id == store.selectedItemId { selectedRect = gr.frame }
                 ly += 29
-                for child in items where child.parent == p.id {
-                    let cr = groupedRow(child, indent: 18, width: w, t: t)
-                    cr.frame.origin.y = ly; doc.addSubview(cr)
-                    if child.id == store.selectedItemId { selectedRect = cr.frame }
-                    ly += 29
-                }
             }
         }
         // When the closed/merged history was bounded, say so rather than implying the list is complete.
@@ -305,6 +343,22 @@ final class RepoPanelView: FlippedView {
         doc.frame.size.height = max(ly, listScroll.frame.height)
         listScroll.documentView = doc
         addSubview(listScroll)
+        self.listScroll = listScroll
+
+        // Preserve the user's place across a plain repaint; reset to the top only when the list
+        // itself changed (repo/tab/grouping/status-filter switch). The selection-focus below can
+        // still override this to bring a newly-opened item into view.
+        let identity = [store.selectedRepoKey ?? "", store.tab.rawValue, store.groupBy.storageKey,
+                        store.prStates.map(\.rawValue).sorted().joined(separator: ","),
+                        store.issueStates.map(\.rawValue).sorted().joined(separator: ",")]
+            .joined(separator: "|")
+        if identity == listIdentity, let off = priorListOffset {
+            // Clamp to the new content height in case the list shrank, so we never land in empty space.
+            let maxY = max(0, doc.frame.height - listScroll.contentView.bounds.height)
+            listScroll.contentView.scroll(to: NSPoint(x: off.x, y: min(off.y, maxY)))
+            listScroll.reflectScrolledClipView(listScroll.contentView)
+        }
+        listIdentity = identity
 
         // Focus the open item: scroll it into view once when the selection changes (e.g. restored on
         // launch, or switched to its tab), but never on a plain repaint — so manual scrolling sticks.
@@ -333,7 +387,11 @@ final class RepoPanelView: FlippedView {
                 row.frame = NSRect(x: 5, y: my, width: w - 24 - 10, height: 34)
                 let chk = label(on ? "✓" : "", sys(11), t.accent); chk.frame = NSRect(x: 10, y: 9, width: 14, height: 16); row.addSubview(chk)
                 let gl = label(g.rawValue, sys(12.5), t.txt); gl.frame = NSRect(x: 30, y: 9, width: 160, height: 16); row.addSubview(gl)
-                row.onClick = { [weak self] in self?.store.groupBy = g; self?.store.viewMenuOpen = false }
+                row.onClick = { [weak self] in
+                    self?.store.groupBy = g
+                    self?.store.viewMenuOpen = false
+                    self?.onChangeGroup?()   // lazily load blocked-by data on first entering that mode
+                }
                 menu.addSubview(row); my += 36
             }
             addSubview(menu)

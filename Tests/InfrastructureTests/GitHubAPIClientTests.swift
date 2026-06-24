@@ -78,6 +78,43 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(items[1].author.login, "ghost")
     }
 
+    func testIssuesListCarriesSubIssueParentNumber() async throws {
+        respond { (self.ok($0), try fixture("issues")) }
+        let items = try await makeClient().items(owner: "acme-corp", repo: "api-gateway",
+                                                 kind: .issue, states: [.open]).items
+        XCTAssertEqual(items[0].parentNumber, 440, "the sub-issue parent rides the list fetch")
+        XCTAssertNil(items[1].parentNumber, "an issue with no parent stays nil")
+    }
+
+    func testListQueryOptsIntoTheSubIssuesFeature() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), try fixture("issues"))
+        }
+        _ = try await makeClient().items(owner: "acme-corp", repo: "api-gateway",
+                                         kind: .issue, states: [.open])
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "GraphQL-Features"), "sub_issues",
+                       "GraphQL list requests must opt into sub_issues so `parent` resolves")
+    }
+
+    // MARK: Issue dependencies (blocked-by)
+
+    func testIssueDependenciesReturnsSameRepoBlockerNumbers() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), try fixture("dependencies-blocked-by"))
+        }
+        let blockers = try await makeClient().issueDependencies(
+            owner: "acme-corp", repo: "api-gateway", number: 482)
+
+        XCTAssertEqual(blockers, [440], "cross-repo blockers are dropped; only same-repo numbers remain")
+        XCTAssertEqual(captured.value?.url?.path,
+                       "/repos/acme-corp/api-gateway/issues/482/dependencies/blocked_by")
+    }
+
     // MARK: Detail = GraphQL core + REST comments
 
     func testItemDetailComposesChecksAndComments() async throws {

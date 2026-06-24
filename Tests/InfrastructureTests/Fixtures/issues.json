@@ -12,7 +12,8 @@
             "createdAt": "2026-06-01T12:00:00Z",
             "state": "OPEN",
             "author": { "login": "maya", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
-            "labels": { "nodes": [ { "name": "bug" }, { "name": "p1" } ] }
+            "labels": { "nodes": [ { "name": "bug" }, { "name": "p1" } ] },
+            "parent": { "number": 440 }
           },
           {
             "id": "I_2",

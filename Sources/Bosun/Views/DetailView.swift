@@ -116,15 +116,23 @@ final class DetailView: FlippedView {
 
         func add(_ v: NSView, x: CGFloat = padX) { v.frame.origin = NSPoint(x: x, y: y); doc.addSubview(v) }
 
-        // Type row.
+        // Type row. The kind badge (PR/ISSUE/EPIC) carries the item's *state* color (open green,
+        // closed/merged, …) on its text and border — the standalone status label is gone. Its
+        // top-right slot now hosts the hydration spinner, so loading never shifts the body down.
         let typeLabel: String = it.epic ? "EPIC" : (it.kind == .pr ? "PR" : "ISSUE")
-        let typeColor: NSColor = it.epic ? Status.purple : (it.kind == .pr ? t.accent : t.txt3)
-        let tb = badge(typeLabel, fg: typeColor, border: typeColor, mono: false)
+        let tb = badge(typeLabel, fg: it.statusColor, border: it.statusColor, mono: false)
         tb.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(tb)
         let repoNum = label("\(it.repo) \(it.num)", mono(12), t.txt3)
         repoNum.frame = NSRect(x: padX + tb.frame.width + 10, y: y + 2, width: 280, height: 16); doc.addSubview(repoNum)
-        let stat = label(it.statusLabel, mono(11, .semibold).asMono, it.statusColor, align: .right)
-        stat.frame = NSRect(x: padX + cw - 160, y: y + 2, width: 160, height: 16); doc.addSubview(stat)
+        // Hydration indicator in the freed-up top-right slot: the lead item renders instantly; this
+        // signals the full body/tasks/comments/checks are still loading and vanishes in place when
+        // they land — no vertical shift either way.
+        if store.isLoadingDetail && store.selectedItemDetail == nil {
+            let spinner = makeSpinner(size: 14)
+            spinner.frame.origin = NSPoint(x: padX + cw - 16, y: y + 2); doc.addSubview(spinner)
+            let loading = label("Loading details…", sys(11.5), t.txt4, align: .right)
+            loading.frame = NSRect(x: padX + cw - 160, y: y + 2, width: 138, height: 16); doc.addSubview(loading)
+        }
         y += 30
 
         // Title.
@@ -151,16 +159,6 @@ final class DetailView: FlippedView {
             let bb = badge("⊘ \(blocked)", fg: Status.red, bg: .hexA(0xf85149, 0.12)); bb.frame.origin = NSPoint(x: rx, y: y); doc.addSubview(bb)
         }
         y += 30
-
-        // Hydration spinner: the lead item renders immediately; signal that the full body, tasks,
-        // comments and checks are still being fetched (only on first load, before any detail lands).
-        if store.isLoadingDetail && store.selectedItemDetail == nil {
-            let spinner = makeSpinner(size: 14)
-            spinner.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(spinner)
-            let loading = label("Loading details…", sys(11.5), t.txt4)
-            loading.frame = NSRect(x: padX + 22, y: y, width: 200, height: 16); doc.addSubview(loading)
-            y += 26
-        }
 
         // Body card.
         let bodyText = markdownView(it.body, baseFont: sys(13.5), width: cw - 34)
@@ -327,8 +325,6 @@ extension DetailView: NSTextFieldDelegate {
         composerDraft = field.stringValue
     }
 }
-
-private extension NSFont { var asMono: NSFont { self } }
 
 extension NSColor {
     /// Best-effort RGB hex (used to re-tint check icons).

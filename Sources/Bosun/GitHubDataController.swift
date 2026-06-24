@@ -29,6 +29,10 @@ final class GitHubDataController {
     /// late responses for a previous repo can be ignored.
     private var currentRepo: (owner: String, name: String)?
 
+    /// Repos (`owner/name`) whose blocked-by relationships have already been merged this session, so
+    /// re-entering the "By blocked-by" grouping doesn't refetch. Cleared per repo on each item load.
+    private var blockedByLoaded: Set<String> = []
+
     init(api: GitHubAPI, cache: GitHubCacheStore, store: Store, addComment: AddCommentUseCase) {
         self.api = api
         self.cache = cache
@@ -138,7 +142,65 @@ final class GitHubDataController {
     func selectRepo(owner: String, name: String) {
         currentRepo = (owner, name)
         store.selectedRepoKey = "\(owner)/\(name)"
+        store.collapsedItems = []   // a collapsed number from the old repo would hide an unrelated item
         loadItems(owner: owner, name: name)
+    }
+
+    /// Lazily fetch GitHub issue dependencies and mark blocked items — but only while the user is in
+    /// the "By blocked-by" grouping, since it costs one REST call per item. Idempotent per repo for
+    /// the session (the flag is cleared on each item load, so a refresh re-fetches). Wired to the
+    /// View's group-mode change and re-run after items land so entering a repo already in that mode
+    /// populates. A no-op in any other grouping.
+    func loadBlockedByIfNeeded() {
+        guard store.groupBy == .blocked, let repo = currentRepo else { return }
+        let repoKey = "\(repo.owner)/\(repo.name)"
+        guard !blockedByLoaded.contains(repoKey) else { return }
+        blockedByLoaded.insert(repoKey)
+        let api = self.api
+        let (owner, name) = (repo.owner, repo.name)
+        Task { @MainActor in
+            @MainActor func isCurrent() -> Bool { currentRepo?.owner == owner && currentRepo?.name == name }
+            let numbers = (store.issues + store.prs).compactMap { Int($0.id) }
+            guard !numbers.isEmpty else { return }
+            let blockers = await Self.fetchBlockers(api: api, owner: owner, name: name, numbers: numbers)
+            guard isCurrent() else { return }
+            store.prs = store.prs.map { Self.applyBlocked(blockers, to: $0) }
+            store.issues = store.issues.map { Self.applyBlocked(blockers, to: $0) }
+        }
+    }
+
+    /// Fetch each item's blockers concurrently, bounded so a big repo doesn't open dozens of
+    /// sockets at once. A per-item failure (e.g. the feature isn't enabled) counts as no blockers.
+    private static func fetchBlockers(api: GitHubAPI, owner: String, name: String,
+                                      numbers: [Int]) async -> [Int: [Int]] {
+        let maxConcurrent = 8
+        var iterator = numbers.makeIterator()
+        return await withTaskGroup(of: (Int, [Int]).self) { group in
+            func addNext() {
+                guard let number = iterator.next() else { return }
+                group.addTask {
+                    let deps = (try? await api.issueDependencies(
+                        owner: owner, repo: name, number: number)) ?? []
+                    return (number, deps)
+                }
+            }
+            for _ in 0..<maxConcurrent { addNext() }
+            var result: [Int: [Int]] = [:]
+            for await (number, deps) in group {
+                result[number] = deps
+                addNext()
+            }
+            return result
+        }
+    }
+
+    /// Set the item's first blocker (so the grouped list nests it and shows the ⊘ badge), or leave
+    /// it untouched when it has none.
+    private static func applyBlocked(_ blockers: [Int: [Int]], to item: Item) -> Item {
+        guard let number = Int(item.id), let first = blockers[number]?.first else { return item }
+        var copy = item
+        copy.blocked = String(first)
+        return copy
     }
 
     /// Re-run the current repo's item fetch after the status filter changed — the new selection is
@@ -190,6 +252,8 @@ final class GitHubDataController {
     func clear() {
         loadTask?.cancel(); itemsTask?.cancel(); detailTask?.cancel()
         currentRepo = nil
+        blockedByLoaded = []
+        store.collapsedItems = []
         store.currentUser = nil
         store.orgs = []
         store.expandedOrgs = []
@@ -216,6 +280,7 @@ final class GitHubDataController {
         detailTask?.cancel()
         store.dataError = nil
         let repoKey = "\(owner)/\(name)"
+        blockedByLoaded.remove(repoKey)   // a fresh load re-fetches blockers if "By blocked-by" is on
         itemsTask = Task { @MainActor in
             // Only the task whose repo is still the current one owns the spinner and the store: a
             // stale/cancelled response for a superseded repo must not stomp the newer fetch.
@@ -256,6 +321,7 @@ final class GitHubDataController {
                 if !hadCache || !prDelta.isUnchanged || !issueDelta.isUnchanged {
                     reconcileSelection(owner: owner, name: name)
                 }
+                loadBlockedByIfNeeded()   // populate the ⊘ tree when this repo opens already in that mode
             } catch {
                 handle(error)
                 if isCurrent() { store.isLoadingItems = false }

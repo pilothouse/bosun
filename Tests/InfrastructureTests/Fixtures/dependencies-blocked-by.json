@@ -1,0 +1,10 @@
+[
+  {
+    "number": 440,
+    "repository": { "full_name": "acme-corp/api-gateway" }
+  },
+  {
+    "number": 12,
+    "repository": { "full_name": "other-org/some-lib" }
+  }
+]

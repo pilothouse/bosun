@@ -66,6 +66,10 @@ final class Store {
     var selectedConnId = "" { didSet { if oldValue != selectedConnId { changed() } } }
     var selectedItemId = "" { didSet { if oldValue != selectedItemId { changed() } } }
     var expandedOrgs: Set<String> = [] { didSet { notify() } }
+    /// Item ids (issue/PR numbers as strings) whose subtree is collapsed in the grouped list. A
+    /// session-only UI toggle — not persisted, and reset when the repo changes (a stale number
+    /// would otherwise hide an unrelated item in the next repo). See `RepoPanelView` grouped render.
+    var collapsedItems: Set<String> = [] { didSet { notify() } }
     /// The orgs the user follows in the panel, as an ordered list of `Org.id`s. `nil` means the
     /// list was never customized — show every org GitHub returns (see `visibleOrgs`). Persisted.
     var followedOrgs: [String]? { didSet { if oldValue != followedOrgs { changed() } } }

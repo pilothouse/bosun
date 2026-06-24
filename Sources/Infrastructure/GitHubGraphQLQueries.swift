@@ -66,6 +66,7 @@ enum GitHubGraphQLQueries {
             state
             author { login avatarUrl }
             labels(first: 20) { nodes { name } }
+            parent { number }
           }
         }
       }
@@ -110,6 +111,7 @@ enum GitHubGraphQLQueries {
             id number title body createdAt state
             author { login avatarUrl }
             labels(first: 20) { nodes { name } }
+            parent { number }
           }
           ... on PullRequest {
             id number title body createdAt state

@@ -192,9 +192,14 @@ func badge(_ text: String, fg: NSColor, bg: NSColor? = nil, border: NSColor? = n
     let b = BoxView(bg: bg, radius: 5, border: border)
     let f = monospaced ? mono(10.5) : sys(10.5, .semibold)
     let l = label(text, f, fg)
-    b.addSubview(l)
+    // A plain NSTextField top-aligns its text, so a fixed-height frame leaves slack at the bottom and
+    // the word sits high. Collapse the label to its exact line height (sizeToFit) and center that in
+    // the box, so ISSUE / PR / EPIC sit vertically centered inside the bordered chip.
+    l.sizeToFit()
     let w = fitW(text, f)
-    l.frame = NSRect(x: 7, y: 2, width: w, height: 15)
-    b.frame.size = NSSize(width: w + 14, height: 19)
+    let h: CGFloat = 19
+    l.frame = NSRect(x: 7, y: ((h - l.frame.height) / 2).rounded(), width: w, height: l.frame.height)
+    b.addSubview(l)
+    b.frame.size = NSSize(width: w + 14, height: h)
     return b
 }

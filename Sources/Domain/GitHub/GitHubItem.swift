@@ -36,13 +36,17 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
     public let comments: [GitHubComment]
     public let checks: [GitHubCheck]
     public let tasks: [GitHubTask]
+    /// The number of this item's sub-issue parent in the same repo, or nil when it isn't a
+    /// sub-issue. Carried from the list fetch (GitHub's GraphQL `parent`) so the panel can group
+    /// "By parent". Optional so an older cache missing the key still decodes (to nil).
+    public let parentNumber: Int?
 
     public init(id: String, number: Int, kind: GitHubItemKind, title: String,
                 state: GitHubItemState, author: GitHubActor, createdAt: Date, body: String,
                 repositoryNameWithOwner: String, labels: [String] = [], isDraft: Bool = false,
                 branch: String? = nil, additions: Int? = nil, deletions: Int? = nil,
                 comments: [GitHubComment] = [], checks: [GitHubCheck] = [],
-                tasks: [GitHubTask] = []) {
+                tasks: [GitHubTask] = [], parentNumber: Int? = nil) {
         self.id = id
         self.number = number
         self.kind = kind
@@ -60,5 +64,6 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
         self.comments = comments
         self.checks = checks
         self.tasks = tasks
+        self.parentNumber = parentNumber
     }
 }

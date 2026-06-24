@@ -119,6 +119,18 @@ public actor GitHubAPIClient: GitHubAPI {
                              comments: comments.map { $0.toDomain() }, checks: node.rollupChecks)
     }
 
+    public func issueDependencies(owner: String, repo: String, number: Int) async throws -> [Int] {
+        // REST list of the issues this one is "blocked by". Keep only same-repo blockers — a
+        // cross-repo blocker can't appear in this repo's list, and its number could collide with a
+        // local one — and return their numbers to match against the list the panel renders.
+        let nameWithOwner = "\(owner)/\(repo)"
+        let blockers: [DependencyIssueDTO] = try await getPaged(
+            path: "/repos/\(owner)/\(repo)/issues/\(number)/dependencies/blocked_by")
+        return blockers
+            .filter { $0.repository == nil || $0.repository?.fullName == nameWithOwner }
+            .map(\.number)
+    }
+
     public func addComment(owner: String, repo: String, number: Int, body: String) async throws -> GitHubComment {
         // The one write: REST `POST .../comments` returns the single created comment (201), which
         // decodes through the same `CommentDTO` the detail fetch uses.
@@ -164,7 +176,10 @@ public actor GitHubAPIClient: GitHubAPI {
 
     private func graphQL<T: Decodable>(query: String, variables: [String: GraphQLValue]) async throws -> T {
         let body = try JSONEncoder().encode(GraphQLRequest(query: query, variables: variables))
-        let request = try await authorizedRequest(url: graphQLURL, method: "POST", body: body)
+        var request = try await authorizedRequest(url: graphQLURL, method: "POST", body: body)
+        // Opt into the sub-issues schema so `Issue.parent` resolves. Harmless once the field is GA;
+        // required while it's still behind the preview flag. Additive — other queries ignore it.
+        request.setValue("sub_issues", forHTTPHeaderField: "GraphQL-Features")
         let (data, _) = try await perform(request)
         let envelope: GraphQLResponse<T> = try decode(data)
         if let errors = envelope.errors, !errors.isEmpty {
@@ -306,6 +321,18 @@ private struct CommentBody: Encodable {
     let body: String
 }
 
+/// One blocker from the issue-dependencies REST list — a plain issue object. Only its number and
+/// (to drop cross-repo blockers) its repository's `full_name` matter here.
+private struct DependencyIssueDTO: Decodable {
+    let number: Int
+    let repository: RepoRef?
+
+    struct RepoRef: Decodable {
+        let fullName: String
+        enum CodingKeys: String, CodingKey { case fullName = "full_name" }
+    }
+}
+
 private struct UserDTO: Decodable {
     let login: String
     let name: String?
@@ -434,10 +461,14 @@ private struct ItemNode: Decodable {
     let headRefName: String?
     let typeName: String?
     let commits: CommitConnection?
+    let parent: ParentRef?
+
+    /// The sub-issue parent, when this issue is one — only its `number` is needed to group locally.
+    struct ParentRef: Decodable { let number: Int }
 
     enum CodingKeys: String, CodingKey {
         case id, number, title, body, createdAt, state, author, labels
-        case isDraft, additions, deletions, headRefName, commits
+        case isDraft, additions, deletions, headRefName, commits, parent
         case typeName = "__typename"
     }
 
@@ -455,7 +486,8 @@ private struct ItemNode: Decodable {
             createdAt: createdAt, body: body, repositoryNameWithOwner: repoNameWithOwner,
             labels: labels?.nodes.map(\.name) ?? [], isDraft: isDraft ?? false,
             branch: headRefName, additions: additions, deletions: deletions,
-            comments: comments, checks: checks, tasks: GitHubTask.parse(markdownBody: body))
+            comments: comments, checks: checks, tasks: GitHubTask.parse(markdownBody: body),
+            parentNumber: parent?.number)
     }
 }
 

@@ -88,8 +88,11 @@ extension Item {
             branch: it.branch,
             add: it.additions,
             del: it.deletions,
-            blocked: nil,         // GitHub has no native "blocked-by" relation to derive from
-            parent: nil,          // …nor a parent/sub-issue link the list fetch exposes
+            // Blocked-by is enriched lazily by the controller (one REST call per issue), only when
+            // the "By blocked-by" grouping is active — so it starts nil and is filled in later.
+            blocked: nil,
+            // The sub-issue parent rides the list fetch; key it by number to match this `id`.
+            parent: it.parentNumber.map(String.init),
             epic: isEpic,
             repo: it.repositoryNameWithOwner
         )
