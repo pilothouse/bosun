@@ -4,6 +4,8 @@ final class TitlebarView: FlippedView {
     let store: Store
     var onToggleSidebar: (() -> Void)?
     var onTogglePanel: (() -> Void)?
+    /// Reload all live data (orgs/repos + the selected repo's items). Wired to the data controller.
+    var onRefresh: (() -> Void)?
 
     init(store: Store) {
         self.store = store
@@ -108,5 +110,21 @@ final class TitlebarView: FlippedView {
         panelToggle.onClick = { [weak self] in self?.onTogglePanel?() }
         panelToggle.toolTip = store.repoPanelCollapsed ? "Show organizations" : "Hide organizations"
         addSubview(panelToggle)
+
+        // Global "refresh all", one icon-stride to the left of the organizations toggle. Swaps to a
+        // spinner while a refresh is in flight (clicks debounced by the controller's `isRefreshing`).
+        let refreshFrame = NSRect(x: bounds.width - 80, y: cy - 12, width: 30, height: 24)
+        if store.isRefreshing {
+            let row = ClickRow(radius: 6)
+            row.frame = refreshFrame
+            let spinner = makeSpinner(size: 14)
+            spinner.frame = NSRect(x: 8, y: 5, width: 14, height: 14); row.addSubview(spinner)
+            addSubview(row)
+        } else {
+            let refresh = iconButton("arrow.clockwise", tint: t.txt3, frame: refreshFrame, point: 15)
+            refresh.onClick = { [weak self] in self?.onRefresh?() }
+            refresh.toolTip = "Refresh all"
+            addSubview(refresh)
+        }
     }
 }

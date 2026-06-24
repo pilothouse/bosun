@@ -212,6 +212,26 @@ final class GitHubDataController {
         loadItems(owner: repo.owner, name: repo.name)
     }
 
+    /// User-initiated global refresh: reload the orgs/repos panel and the current repo's PRs/issues at
+    /// once. Tracked by `store.isRefreshing` so the orgs panel shows a spinner and ignores repeat
+    /// clicks until both fetches settle. Each sub-load stays hydrate-then-delta, so unchanged data
+    /// leaves the views untouched.
+    func refresh() {
+        guard !store.isRefreshing else { return }   // debounce: one global refresh at a time
+        store.isRefreshing = true
+        load()                 // sets loadTask
+        reloadCurrentItems()   // sets itemsTask (a no-op leaving it nil when no repo is selected)
+        // Safe to read the handles now: this runs on @MainActor and hasn't awaited, so the freshly
+        // created @MainActor sub-tasks can't have started or cleared themselves yet.
+        let orgsLoad = loadTask
+        let itemsLoad = itemsTask
+        Task { @MainActor in
+            await orgsLoad?.value     // a cancelled Task<Void, Never> still completes here
+            await itemsLoad?.value
+            store.isRefreshing = false
+        }
+    }
+
     /// Select a list item: show its lead content immediately (the store already has it) and
     /// fetch the hydrated detail (body tasks, comments, PR checks) to upgrade it.
     func selectItem(number: Int) {
@@ -264,6 +284,7 @@ final class GitHubDataController {
         store.isLoadingOrgs = false
         store.isLoadingItems = false
         store.isLoadingDetail = false
+        store.isRefreshing = false
         store.prsTruncated = false
         store.issuesTruncated = false
         // Drop the on-disk cache too, so the next user to sign in never sees this account's data.

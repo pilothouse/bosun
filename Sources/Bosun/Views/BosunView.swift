@@ -94,6 +94,7 @@ final class BosunView: NSView {
 
         titlebar.onToggleSidebar = { [weak self] in self?.store.railCollapsed.toggle() }
         titlebar.onTogglePanel = { [weak self] in self?.store.repoPanelCollapsed.toggle() }
+        titlebar.onRefresh = { [weak self] in self?.data.refresh() }
 
         rail.onAdd = { [weak self] in self?.openSheet(editingId: nil) }
         rail.onEdit = { [weak self] id in self?.openSheet(editingId: id) }

@@ -103,6 +103,10 @@ final class Store {
     var isLoadingOrgs = false { didSet { if oldValue != isLoadingOrgs { notify() } } }
     var isLoadingItems = false { didSet { if oldValue != isLoadingItems { notify() } } }
     var isLoadingDetail = false { didSet { if oldValue != isLoadingDetail { notify() } } }
+    /// A user-initiated global refresh is in flight. Unlike the flags above (which only gate the
+    /// cold-start spinner and stay false on a warm refresh over existing data), this stays true for
+    /// the whole refresh so the orgs-panel button can show a spinner and ignore repeat clicks.
+    var isRefreshing = false { didSet { if oldValue != isRefreshing { notify() } } }
     /// Whether the last PR/issue fetch bounded its closed/merged history (older items not loaded),
     /// so the panel can surface the cap. Transient, not persisted — recomputed on every fetch.
     var prsTruncated = false { didSet { if oldValue != prsTruncated { notify() } } }
