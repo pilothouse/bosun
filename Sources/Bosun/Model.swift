@@ -83,4 +83,6 @@ struct Item {
     var parent: String? = nil
     var epic = false
     var repo = ""
+    /// The item's GitHub web URL (issue or PR), used by the detail view's copy-link affordance.
+    var url = ""
 }

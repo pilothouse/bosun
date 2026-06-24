@@ -94,7 +94,10 @@ extension Item {
             // The sub-issue parent rides the list fetch; key it by number to match this `id`.
             parent: it.parentNumber.map(String.init),
             epic: isEpic,
-            repo: it.repositoryNameWithOwner
+            repo: it.repositoryNameWithOwner,
+            // Web URL for the copy-link affordance; the kind picks `pull` vs `issues`.
+            url: "https://github.com/\(it.repositoryNameWithOwner)/" +
+                 "\(it.kind == .pullRequest ? "pull" : "issues")/\(it.number)"
         )
     }
 

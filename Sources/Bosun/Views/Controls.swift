@@ -69,6 +69,8 @@ final class BoxView: FlippedView {
 final class ClickRow: FlippedView {
     var onClick: (() -> Void)?
     var hoverColor: NSColor?
+    /// When set, the row shows this cursor on hover (e.g. a pointing hand for link-like rows).
+    var cursor: NSCursor?
     private var baseColor: CGColor?
     private var tracking: NSTrackingArea?
 
@@ -98,6 +100,7 @@ final class ClickRow: FlippedView {
     override func mouseEntered(with event: NSEvent) { if let h = hoverColor { layer?.backgroundColor = h.cgColor } }
     override func mouseExited(with event: NSEvent) { layer?.backgroundColor = baseColor }
     override func mouseDown(with event: NSEvent) { onClick?() }
+    override func resetCursorRects() { if let cursor { addCursorRect(bounds, cursor: cursor) } }
 }
 
 /// A solid colored dot / rounded square.

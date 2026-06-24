@@ -15,6 +15,10 @@ final class DetailView: FlippedView {
     /// different item start at the top.
     private var lastScrollItemId = ""
 
+    /// Briefly true after the user copies the item's URL, so the id row flashes "Copied ✓" in place
+    /// of the copy glyph. Lives on the view (not the rebuilt subviews) so it survives `rebuild()`.
+    private var justCopiedURL = false
+
     /// Called when the user submits a comment. The view hands over the text and a completion the
     /// controller runs on the main actor: `(true, nil)` clears the composer; `(false, message)`
     /// keeps the draft so the user can retry and surfaces `message`.
@@ -139,8 +143,44 @@ final class DetailView: FlippedView {
         let typeLabel: String = it.epic ? "EPIC" : (it.kind == .pr ? "PR" : "ISSUE")
         let tb = badge(typeLabel, fg: it.statusColor, border: it.statusColor, mono: false)
         tb.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(tb)
-        let repoNum = label("\(it.repo) \(it.num)", mono(12), t.txt3)
-        repoNum.frame = NSRect(x: padX + tb.frame.width + 10, y: y + 2, width: 280, height: 16); doc.addSubview(repoNum)
+        // Repo name (plain), then the issue/PR id as an anchor link that opens the item on github.com
+        // in the default browser, then a copy-link glyph that copies the web URL instead.
+        let rnX = padX + tb.frame.width + 10
+        let repoLabel = label(it.repo, mono(12), t.txt3)
+        let repoW = fitW(repoLabel)
+        repoLabel.frame = NSRect(x: rnX, y: y + 2, width: repoW, height: 16); doc.addSubview(repoLabel)
+
+        let numLink = ClickRow(radius: 4)
+        numLink.hoverColor = t.hover
+        numLink.cursor = .pointingHand
+        let numW = fitW(it.num, mono(12))
+        numLink.frame = NSRect(x: rnX + repoW + 5, y: y, width: numW + 6, height: 20)
+        let numLbl = label(it.num, mono(12), t.accent)
+        numLbl.frame = NSRect(x: 3, y: 2, width: numW, height: 16); numLink.addSubview(numLbl)
+        if !it.url.isEmpty { numLink.onClick = { [weak self] in self?.openItemURL(it.url) } }
+        doc.addSubview(numLink)
+
+        // Copy-link affordance: a small clickable glyph that copies the item's web URL and flashes
+        // "Copied ✓" in place. Sized to its content so it hugs the id, well left of the top-right
+        // hydration slot below.
+        if !it.url.isEmpty {
+            let copy = ClickRow(radius: 5)
+            copy.hoverColor = t.hover
+            copy.cursor = .pointingHand
+            copy.onClick = { [weak self] in self?.copyItemURL(it.url) }
+            let cx = numLink.frame.maxX + 4
+            if justCopiedURL {
+                let done = label("Copied ✓", mono(11), t.accent)
+                let w = fitW(done)
+                copy.frame = NSRect(x: cx, y: y, width: w + 8, height: 20)
+                done.frame = NSRect(x: 4, y: 3, width: w, height: 14); copy.addSubview(done)
+            } else {
+                copy.frame = NSRect(x: cx, y: y, width: 20, height: 20)
+                let glyph = label("⧉", mono(13), t.txt4, align: .center)
+                glyph.frame = NSRect(x: 0, y: 2, width: 20, height: 16); copy.addSubview(glyph)
+            }
+            doc.addSubview(copy)
+        }
         // Hydration indicator in the freed-up top-right slot: the lead item renders instantly; this
         // signals the full body/tasks/comments/checks are still loading and vanishes in place when
         // they land — no vertical shift either way.
@@ -359,6 +399,28 @@ final class DetailView: FlippedView {
     }
 
     @objc private func composerReturn() { submitComposer() }
+
+    /// Open the selected item's GitHub page in the default browser. Wired to the `#num` anchor link
+    /// in the id row.
+    private func openItemURL(_ url: String) {
+        guard let u = URL(string: url) else { return }
+        NSWorkspace.shared.open(u)
+    }
+
+    /// Copy the selected item's web URL to the clipboard and flash a transient "Copied ✓" in the id
+    /// row. Mirrors `DeviceFlowSheet.copyCode`: set the flag, relayout to show it, and revert shortly
+    /// after unless another copy has moved the state on.
+    private func copyItemURL(_ url: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url, forType: .string)
+        justCopiedURL = true
+        needsLayout = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, self.justCopiedURL else { return }
+            self.justCopiedURL = false
+            self.needsLayout = true
+        }
+    }
 }
 
 extension DetailView: NSTextFieldDelegate {
