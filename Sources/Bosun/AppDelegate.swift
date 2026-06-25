@@ -141,6 +141,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         root.store.settingsOpen = true
     }
 
+    /// Standard macOS about panel. Version + build come from the bundle's Info.plist (stamped by
+    /// scripts/package-app.sh from the release tag); a bare `swift build` executable has no Info.plist,
+    /// so `AppVersion` resolves those nil values to a "dev" marker rather than a misleading "0.0.0 (0)".
+    /// The icon is passed explicitly: the panel reads a bundle icon file (absent in a bare executable)
+    /// and does NOT fall back to `NSApp.applicationIconImage`, so without this it shows a generic icon.
+    @objc private func openAbout() {
+        let info = AppVersion.info(
+            shortVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+            build: Bundle.main.infoDictionary?["CFBundleVersion"] as? String)
+        // The panel renders "Version <applicationVersion> (<version>)", defaulting each field to the
+        // Info.plist's CFBundleShortVersionString / CFBundleVersion. Override BOTH explicitly: feeding
+        // the combined string into one field would double-print the build, and an empty `.version`
+        // suppresses the parenthetical so a placeholder build ("0", dropped by AppVersion) shows none.
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [
+            .applicationName: "Bosun",
+            .applicationVersion: info.shortVersion,
+            .version: info.build ?? "",
+            .credits: aboutCredits(),
+        ]
+        if let icon = NSApp.applicationIconImage { options[.applicationIcon] = icon }
+        NSApp.orderFrontStandardAboutPanel(options: options)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Credits for the about panel: a link to the repo and attribution for the vendored terminal.
+    /// `.link` attributes are clickable — the panel opens them in the default browser, so no handler
+    /// is needed (cf. `NSWorkspace.shared.open` used elsewhere for manual link taps).
+    private func aboutCredits() -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.paragraphSpacing = 6
+        let base: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: paragraph,
+        ]
+        func linked(_ text: String, _ url: String) -> NSAttributedString {
+            let s = NSMutableAttributedString(string: text, attributes: base)
+            s.addAttribute(.link, value: url, range: NSRange(location: 0, length: s.length))
+            return s
+        }
+        let credits = NSMutableAttributedString()
+        credits.append(linked("github.com/Jeckerson/bosun", "https://github.com/Jeckerson/bosun"))
+        credits.append(NSAttributedString(string: "\n\nTerminal powered by ", attributes: base))
+        credits.append(linked("ghostty / libghostty", "https://github.com/ghostty-org/ghostty"))
+        return credits
+    }
+
     @objc private func focusSearch() {
         root.focusConnectionSearch()
     }
@@ -177,6 +225,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
+        let aboutItem = NSMenuItem(title: "About Bosun", action: #selector(openAbout), keyEquivalent: "")
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+        appMenu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         appMenu.addItem(settingsItem)
