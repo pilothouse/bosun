@@ -18,7 +18,7 @@ with Metal.
 
 The code is layered with Clean Architecture, and the boundaries are enforced by the build
 itself — the compiler (SPM target graph) plus SwiftLint. Dependencies point inward:
-`Bosun → Infrastructure → Application → Domain`. See [`CLAUDE.md`](CLAUDE.md) for the rules.
+`Bosun → Infrastructure → Application → Domain`.
 
 * `Sources/Domain/`: entities and pure rules (e.g. `DispatchPolicy`). Depends on nothing.
 * `Sources/Application/`: use cases and the ports (protocols) they talk through.
