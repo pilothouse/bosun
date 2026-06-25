@@ -241,7 +241,16 @@ final class GhosttySurfaceView: NSView {
         // from keycode+mods; passing text too would double-send. Otherwise pass
         // the literal typed text so printable input (incl. shifted/option) works.
         let hasCtrlCmd = e.modifierFlags.contains(.control) || e.modifierFlags.contains(.command)
-        let text = (hasCtrlCmd ? "" : (e.characters ?? ""))
+        var text = (hasCtrlCmd ? "" : (e.characters ?? ""))
+        // AppKit reports arrows, function keys, Home/End, page up/down, delete-forward, etc. as
+        // Unicode private-use-area codepoints (0xF700–0xF8FF, the `NSUpArrowFunctionKey` family), not
+        // real text. Forwarding those as `key.text` makes libghostty write the raw PUA bytes to the
+        // pty instead of encoding the proper escape sequence (e.g. ESC [ A for Up) from the keycode —
+        // which is why arrow keys and navigation didn't work in apps like neovim. Drop the text for
+        // them so libghostty derives the sequence from keycode+mods.
+        if let scalar = text.unicodeScalars.first, (0xF700...0xF8FF).contains(scalar.value) {
+            text = ""
+        }
 
         if text.isEmpty {
             key.text = nil
