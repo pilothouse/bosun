@@ -23,7 +23,9 @@ final class PreferencesTests: XCTestCase {
             terminalHeight: 512,
             selectedConnId: "db-primary",
             selectedItemId: "991",
-            windowAlpha: 0.75
+            windowAlpha: 0.75,
+            sortField: "title",
+            sortAscending: true
         )
 
         let data = try JSONEncoder().encode(original)
@@ -222,6 +224,32 @@ final class PreferencesTests: XCTestCase {
         let decoded = try JSONDecoder().decode(Preferences.self, from: json)
 
         XCTAssertNil(decoded.repoOrdering)
+    }
+
+    func testSortDefaultsToDateDescending() {
+        XCTAssertNil(Preferences.default.sortField, "nil means 'sort by date'")
+        XCTAssertFalse(Preferences.default.sortAscending, "default is descending — newest first")
+    }
+
+    func testSortRoundTripsThroughCodable() throws {
+        let original = Preferences(sortField: "number", sortAscending: true)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.sortField, "number")
+        XCTAssertTrue(decoded.sortAscending)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutSortFallsBackToDefaults() throws {
+        // A payload written by a build before list sorting existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertNil(decoded.sortField)
+        XCTAssertFalse(decoded.sortAscending)
     }
 
     func testOpenTabsDefaultToNil() {

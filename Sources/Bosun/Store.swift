@@ -54,6 +54,11 @@ final class Store {
     /// (the restored item's kind can still flip the tab — see `GitHubDataController.reconcileSelection`).
     var tab: Tab = .prs { didSet { if oldValue != tab { changed() } } }
     var groupBy: GroupBy = .none { didSet { if oldValue != groupBy { changed() } } }
+    /// How the issue/PR list is sorted (field + direction). Global and persisted (the `groupBy`
+    /// precedent), so a change re-sorts the list instantly and survives relaunch. Default is
+    /// date-descending — newest first. Applied in `listItems` via the pure `ItemSorting` rule.
+    var sortField: ItemSortField = .default { didSet { if oldValue != sortField { changed() } } }
+    var sortAscending = false { didSet { if oldValue != sortAscending { changed() } } }
     /// How each org's repos are ordered in the panel (by name, or busiest-first by open issue+PR
     /// count). Global, persisted; a change re-sorts every org's repos instantly via `visibleOrgs`.
     var repoOrdering: RepoOrderingMode = .byName { didSet { if oldValue != repoOrdering { changed() } } }
@@ -186,7 +191,14 @@ final class Store {
     /// for a just-changed selection is still in flight against the previously-cached rows.
     var visiblePRs: [Item] { prs.filter { prStates.contains($0.state) } }
     var visibleIssues: [Item] { issues.filter { issueStates.contains($0.state) } }
-    var listItems: [Item] { tab == .prs ? visiblePRs : visibleIssues }
+    /// The active tab's visible items, in the user's chosen sort order. Sorting here is the single
+    /// seam: the flat list iterates this directly and the grouped tree feeds it as the row order
+    /// (`GitHubItemTree` keeps roots/siblings in list order), so one sort reorders both views.
+    var listItems: [Item] {
+        let base = tab == .prs ? visiblePRs : visibleIssues
+        return ItemSorting.sort(base, by: sortField, ascending: sortAscending,
+                                date: \.createdAt, number: \.number, title: \.title)
+    }
 
     /// Whether the active tab's list bounded its closed/merged history, for the panel's footer note.
     var listTruncated: Bool { tab == .prs ? prsTruncated : issuesTruncated }
@@ -238,6 +250,8 @@ final class Store {
             selectedTab: tab.rawValue,
             groupBy: groupBy.storageKey,
             repoOrdering: repoOrdering.rawValue,
+            sortField: sortField.rawValue,
+            sortAscending: sortAscending,
             prStates: prStates.map(\.rawValue).sorted(),
             issueStates: issueStates.map(\.rawValue).sorted(),
             openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
@@ -261,6 +275,8 @@ final class Store {
         tab = Tab(rawValue: p.selectedTab ?? "") ?? .prs
         groupBy = GroupBy(storageKey: p.groupBy)
         repoOrdering = RepoOrderingMode(rawValue: p.repoOrdering ?? "") ?? .default
+        sortField = ItemSortField(rawValue: p.sortField ?? "") ?? .default
+        sortAscending = p.sortAscending
         prStates = Store.states(from: p.prStates, default: [.open])
         issueStates = Store.states(from: p.issueStates, default: [.open]).subtracting([.merged])
         terminalTabs = p.openTabs ?? []

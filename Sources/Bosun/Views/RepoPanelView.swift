@@ -257,33 +257,40 @@ final class RepoPanelView: FlippedView {
         addSubview(isTab)
         y += 38
 
-        // 3. View-options row: the group-by dropdown (left) and the status filter (right) share it.
+        // 3. Controls row: the View (grouping) icon button, the inline sort control, and the status
+        // filter share one row. View is shrunk to icon-only to free room for the sort control between.
         let gap: CGFloat = 6
-        let halfW = (w - 24 - gap) / 2
-        let statusX = 12 + halfW + gap
-        addSubview(dropdownButton(x: 12, y: y, width: halfW, t: t, icon: "≣",
-                                  text: "View: \(store.groupBy.rawValue)") { [weak self] in
+        let viewW: CGFloat = 50
+        let statusW: CGFloat = 92
+        let sortX = 12 + viewW + gap
+        let statusX = w - 12 - statusW
+        let sortW = statusX - gap - sortX
+        addSubview(dropdownButton(x: 12, y: y, width: viewW, t: t, icon: "≣", text: "") { [weak self] in
             guard let self else { return }
             self.store.statusMenuOpen = false
             self.store.viewMenuOpen.toggle()
         })
-        addSubview(dropdownButton(x: statusX, y: y, width: halfW, t: t, icon: "⚑",
+        addSubview(sortControl(x: sortX, y: y, width: sortW, t: t))
+        addSubview(dropdownButton(x: statusX, y: y, width: statusW, t: t, icon: "⚑",
                                   text: statusSummary()) { [weak self] in
             guard let self else { return }
             self.store.viewMenuOpen = false
             self.store.statusMenuOpen.toggle()
         })
-        // Publish the regions where a click must NOT dismiss the dropdown — the two toggle buttons
-        // and whichever menu is open — in window coords, for the window's `sendEvent` to consult.
+        // Publish the regions where a click must NOT dismiss an open dropdown — the View/Status
+        // toggle buttons and whichever menu is open — in window coords, for the window's `sendEvent`
+        // to consult. The sort control opens no menu, so it's deliberately not listed: a tap there
+        // both dismisses an open menu and applies the sort.
         if store.viewMenuOpen || store.statusMenuOpen {
-            var rects = [NSRect(x: 12, y: y, width: halfW, height: 32),
-                         NSRect(x: statusX, y: y, width: halfW, height: 32)]
+            var rects = [NSRect(x: 12, y: y, width: viewW, height: 32),
+                         NSRect(x: statusX, y: y, width: statusW, height: 32)]
             if store.viewMenuOpen {
+                // The View menu stays full-width below the row — the grouping labels need the room.
                 rects.append(NSRect(x: 12, y: y + 36, width: w - 24,
                                     height: CGFloat(Store.GroupBy.allCases.count) * 36 + 10))
             }
             if store.statusMenuOpen {
-                rects.append(NSRect(x: statusX, y: y + 36, width: halfW,
+                rects.append(NSRect(x: statusX, y: y + 36, width: statusW,
                                     height: CGFloat(statusOptions.count) * 36 + 10))
             }
             store.menuDismissRects = rects.map { convert($0, to: nil) }
@@ -349,6 +356,7 @@ final class RepoPanelView: FlippedView {
         // itself changed (repo/tab/grouping/status-filter switch). The selection-focus below can
         // still override this to bring a newly-opened item into view.
         let identity = [store.selectedRepoKey ?? "", store.tab.rawValue, store.groupBy.storageKey,
+                        store.sortField.rawValue + (store.sortAscending ? "↑" : "↓"),
                         store.prStates.map(\.rawValue).sorted().joined(separator: ","),
                         store.issueStates.map(\.rawValue).sorted().joined(separator: ",")]
             .joined(separator: "|")
@@ -404,7 +412,7 @@ final class RepoPanelView: FlippedView {
             let selected = store.tab == .prs ? store.prStates : store.issueStates
             let menu = BoxView(bg: t.panel, radius: 10, border: t.line2)
             let mh = CGFloat(options.count) * 36 + 10
-            menu.frame = NSRect(x: statusX, y: y + 36, width: halfW, height: mh)
+            menu.frame = NSRect(x: statusX, y: y + 36, width: statusW, height: mh)
             menu.layer?.shadowColor = NSColor.black.cgColor
             menu.layer?.shadowOpacity = 0.45
             menu.layer?.shadowRadius = 16
@@ -415,9 +423,9 @@ final class RepoPanelView: FlippedView {
                 let on = selected.contains(state)
                 let row = ClickRow(bg: on ? t.accentbg : nil, radius: 7)
                 row.hoverColor = t.hover
-                row.frame = NSRect(x: 5, y: my, width: halfW - 10, height: 34)
+                row.frame = NSRect(x: 5, y: my, width: statusW - 10, height: 34)
                 let chk = label(on ? "✓" : "", sys(11), t.accent); chk.frame = NSRect(x: 10, y: 9, width: 14, height: 16); row.addSubview(chk)
-                let gl = label(Self.stateName(state), sys(12.5), t.txt); gl.frame = NSRect(x: 30, y: 9, width: halfW - 40, height: 16); row.addSubview(gl)
+                let gl = label(Self.stateName(state), sys(12.5), t.txt); gl.frame = NSRect(x: 30, y: 9, width: statusW - 40, height: 16); row.addSubview(gl)
                 row.onClick = { [weak self] in self?.toggleStatus(state) }
                 menu.addSubview(row); my += 36
             }
@@ -469,11 +477,48 @@ final class RepoPanelView: FlippedView {
         let dd = ClickRow(bg: t.card, radius: 8)
         dd.frame = NSRect(x: x, y: y, width: width, height: 32)
         dd.layer?.borderWidth = 1; dd.layer?.borderColor = t.cardbr.cgColor
-        let ic = label(icon, sys(12), t.txt3); ic.frame = NSRect(x: 10, y: 8, width: 16, height: 16); dd.addSubview(ic)
-        let l = label(text, sys(12, .semibold), t.txt)   // lines: 1 → already truncates with a tail
-        l.frame = NSRect(x: 30, y: 8, width: width - 30 - 22, height: 16); dd.addSubview(l)
         let car = label("▾", sys(10), t.txt4, align: .right); car.frame = NSRect(x: width - 22, y: 8, width: 14, height: 16); dd.addSubview(car)
+        if text.isEmpty {
+            // Icon-only (the compact "View" control): icon + caret, no label, so it fits a narrow width.
+            let ic = label(icon, sys(12), t.txt3, align: .center); ic.frame = NSRect(x: 8, y: 8, width: 18, height: 16); dd.addSubview(ic)
+        } else {
+            let ic = label(icon, sys(12), t.txt3); ic.frame = NSRect(x: 10, y: 8, width: 16, height: 16); dd.addSubview(ic)
+            let l = label(text, sys(12, .semibold), t.txt)   // lines: 1 → already truncates with a tail
+            l.frame = NSRect(x: 30, y: 8, width: width - 30 - 22, height: 16); dd.addSubview(l)
+        }
         dd.onClick = onClick
         return dd
+    }
+
+    /// The inline sort control: three field cells (date / number / title) and an asc/desc chevron in
+    /// one bordered box mirroring `dropdownButton`'s chrome. The active field is tinted with the
+    /// accent. Unlike View/Status it opens no menu — tapping a field sets `sortField`, tapping the
+    /// chevron toggles `sortAscending`, both directly (so it needs no entry in `menuDismissRects`).
+    private func sortControl(x: CGFloat, y: CGFloat, width: CGFloat, t: Theme) -> ClickRow {
+        let box = ClickRow(bg: t.card, radius: 8)   // container chrome only; its own onClick stays nil
+        box.frame = NSRect(x: x, y: y, width: width, height: 32)
+        box.layer?.borderWidth = 1; box.layer?.borderColor = t.cardbr.cgColor
+
+        let fields: [(ItemSortField, String)] = [(.date, "◷"), (.number, "#"), (.title, "Az")]
+        let chevW: CGFloat = 22
+        let cellW = (width - chevW) / CGFloat(fields.count)
+        for (i, f) in fields.enumerated() {
+            let on = store.sortField == f.0
+            let cell = ClickRow(bg: on ? t.accentbg : nil, radius: 6)
+            cell.hoverColor = t.hover
+            cell.frame = NSRect(x: cellW * CGFloat(i) + 2, y: 4, width: cellW - 3, height: 24)
+            let gl = label(f.1, sys(12, on ? .semibold : .regular), on ? t.accent : t.txt3, align: .center)
+            gl.frame = NSRect(x: 0, y: 4, width: cellW - 3, height: 16); cell.addSubview(gl)
+            cell.onClick = { [weak self] in self?.store.sortField = f.0 }
+            box.addSubview(cell)
+        }
+        let chev = ClickRow(bg: nil, radius: 6)
+        chev.hoverColor = t.hover
+        chev.frame = NSRect(x: width - chevW + 1, y: 4, width: chevW - 3, height: 24)
+        let cl = label(store.sortAscending ? "▲" : "▼", sys(9), t.txt3, align: .center)
+        cl.frame = NSRect(x: 0, y: 6, width: chevW - 3, height: 12); chev.addSubview(cl)
+        chev.onClick = { [weak self] in self?.store.sortAscending.toggle() }
+        box.addSubview(chev)
+        return box
     }
 }

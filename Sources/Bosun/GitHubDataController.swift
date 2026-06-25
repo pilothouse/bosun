@@ -224,7 +224,9 @@ final class GitHubDataController {
     /// cache; this reconciles the cache with the new scope. A no-op before a repo is selected.
     func reloadCurrentItems() {
         guard let repo = currentRepo else { return }
-        loadItems(owner: repo.owner, name: repo.name)
+        // A filter change must not move the user off the tab they're on, so preserve it across the
+        // reload (the selection-follows-tab switch in `reconcileSelection` is for launch/restore only).
+        loadItems(owner: repo.owner, name: repo.name, preserveTab: true)
     }
 
     /// User-initiated global refresh: reload the orgs/repos panel and the current repo's PRs/issues at
@@ -313,7 +315,7 @@ final class GitHubDataController {
     /// Hydrate this repo's PRs/issues from the cache (instant, no spinner), then fetch live, diff
     /// against the cache, and update only the lists that changed. The spinner shows only when the
     /// repo has nothing cached.
-    private func loadItems(owner: String, name: String) {
+    private func loadItems(owner: String, name: String, preserveTab: Bool = false) {
         itemsTask?.cancel()
         detailTask?.cancel()
         store.dataError = nil
@@ -331,7 +333,7 @@ final class GitHubDataController {
             if hadCache {
                 store.prs = cachedPRs.map(Item.init(domain:))
                 store.issues = cachedIssues.map(Item.init(domain:))
-                reconcileSelection(owner: owner, name: name)
+                reconcileSelection(owner: owner, name: name, preserveTab: preserveTab)
             } else {
                 store.isLoadingItems = true
             }
@@ -358,11 +360,11 @@ final class GitHubDataController {
                 if !hadCache || !prDelta.isUnchanged { store.prs = prDelta.merged.map(Item.init(domain:)) }
                 if !hadCache || !issueDelta.isUnchanged { store.issues = issueDelta.merged.map(Item.init(domain:)) }
                 if !hadCache || !prDelta.isUnchanged || !issueDelta.isUnchanged {
-                    reconcileSelection(owner: owner, name: name)
+                    reconcileSelection(owner: owner, name: name, preserveTab: preserveTab)
                 }
                 loadBlockedByIfNeeded()   // populate the ⊘ tree when this repo opens already in that mode
             } catch {
-                handleFetchError(error) { [weak self] in self?.loadItems(owner: owner, name: name) }
+                handleFetchError(error) { [weak self] in self?.loadItems(owner: owner, name: name, preserveTab: preserveTab) }
                 if isCurrent() { store.isLoadingItems = false }
             }
             itemsTask = nil
@@ -370,12 +372,16 @@ final class GitHubDataController {
     }
 
     /// Keep the open item valid for the freshly-loaded list: re-hydrate it if it's still present,
-    /// otherwise default to the first item of the active tab (PRs, else issues).
-    private func reconcileSelection(owner: String, name: String) {
+    /// otherwise default to the first item of the active tab (PRs, else issues). `preserveTab` keeps
+    /// the user on the current tab (a status-filter reload) by suppressing the selection-follows-tab
+    /// switch below — otherwise changing a PR filter while an issue is the open item yanks the view to
+    /// the Issues tab.
+    private func reconcileSelection(owner: String, name: String, preserveTab: Bool = false) {
         // Keep the open item visible: if it lives in the other tab — e.g. an issue restored from a
         // previous session while the tab defaulted to PRs — switch to that tab so the list shows it.
-        // Mid-session this is a no-op, since the open item is always in the current tab.
-        if !store.listItems.contains(where: { $0.id == store.selectedItemId }) {
+        // Skipped when preserving the tab, since the open item can legitimately be in the other tab
+        // (the user clicked a tab without selecting an item there).
+        if !preserveTab, !store.listItems.contains(where: { $0.id == store.selectedItemId }) {
             if store.prs.contains(where: { $0.id == store.selectedItemId }) { store.tab = .prs }
             else if store.issues.contains(where: { $0.id == store.selectedItemId }) { store.tab = .issues }
         }

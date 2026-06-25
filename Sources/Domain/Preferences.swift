@@ -29,6 +29,11 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// How repos within an org are ordered in the panel, as an opaque `RepoOrderingMode` key the
     /// App layer maps to its enum. `nil` means never customized — order by name. See `RepoOrdering`.
     public var repoOrdering: String?
+    /// How the issue/PR list is sorted: the field as an opaque `ItemSortField` key the App layer maps
+    /// to its enum (`nil` means never customized — sort by date), and the direction (`false` means
+    /// descending, the newest-first default for date). See `ItemSorting`.
+    public var sortField: String?
+    public var sortAscending: Bool
     /// The lifecycle states the PR and issue lists are filtered to, as `GitHubItemState` raw values
     /// (`"open"`/`"closed"`/`"merged"`). `nil` means never customized — default to open-only, the
     /// cheap fast path. See `GitHubItemStates` for how these drive both the fetch and the display.
@@ -83,6 +88,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         selectedTab: String? = nil,
         groupBy: String? = nil,
         repoOrdering: String? = nil,
+        sortField: String? = nil,
+        sortAscending: Bool = false,
         prStates: [String]? = nil,
         issueStates: [String]? = nil,
         openTabs: [TerminalTabState]? = nil,
@@ -100,6 +107,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.selectedTab = selectedTab
         self.groupBy = groupBy
         self.repoOrdering = repoOrdering
+        self.sortField = sortField
+        self.sortAscending = sortAscending
         self.prStates = prStates
         self.issueStates = issueStates
         self.openTabs = openTabs
@@ -127,6 +136,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             selectedTab: try container.decodeIfPresent(String.self, forKey: .selectedTab) ?? fallback.selectedTab,
             groupBy: try container.decodeIfPresent(String.self, forKey: .groupBy) ?? fallback.groupBy,
             repoOrdering: try container.decodeIfPresent(String.self, forKey: .repoOrdering) ?? fallback.repoOrdering,
+            sortField: try container.decodeIfPresent(String.self, forKey: .sortField) ?? fallback.sortField,
+            sortAscending: try container.decodeIfPresent(Bool.self, forKey: .sortAscending) ?? fallback.sortAscending,
             prStates: try container.decodeIfPresent([String].self, forKey: .prStates) ?? fallback.prStates,
             issueStates: try container.decodeIfPresent([String].self, forKey: .issueStates) ?? fallback.issueStates,
             openTabs: try container.decodeIfPresent([TerminalTabState].self, forKey: .openTabs) ?? fallback.openTabs,

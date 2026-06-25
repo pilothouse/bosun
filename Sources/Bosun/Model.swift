@@ -56,6 +56,9 @@ struct CurrentUser { let initials: String; let color: NSColor; let avatarURL: UR
 /// render straight off these fields. `tasks`/`checks`/`comments` are populated by the detail fetch.
 struct Item {
     let id, num, title: String
+    /// The issue/PR number, the raw value behind the `num` display string ("#123"). Kept so the
+    /// list can sort by number. See `ItemSorting`.
+    let number: Int
     let kind: ItemKind
     /// The Domain lifecycle state, carried so the panel's status filter can include/exclude this
     /// item without re-deriving it from the status label.
@@ -66,6 +69,9 @@ struct Item {
     let statusColor: NSColor
     let dotColor: NSColor
     let age, author: String
+    /// When the item was created, the raw value behind the `age` display string. Kept so the list
+    /// can sort by date. See `ItemSorting`.
+    let createdAt: Date
     let authorColor: NSColor
     let authorInitials: String
     let authorAvatarURL: URL?
