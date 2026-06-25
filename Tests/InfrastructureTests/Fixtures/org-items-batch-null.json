@@ -1,0 +1,23 @@
+{
+  "data": {
+    "r0": {
+      "issues": {
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "id": "I_gw_482",
+            "number": 482,
+            "title": "Rate limiter drops bursts",
+            "body": "Investigate burst handling.",
+            "createdAt": "2026-06-20T08:00:00Z",
+            "state": "OPEN",
+            "parent": null,
+            "author": { "login": "maya", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
+            "labels": { "nodes": [] }
+          }
+        ]
+      }
+    },
+    "r1": null
+  }
+}

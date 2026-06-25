@@ -1,3 +1,4 @@
+import Domain
 import Foundation
 
 /// The GraphQL documents `GitHubAPIClient` sends. Kept apart from the client so the adapter
@@ -139,4 +140,50 @@ enum GitHubGraphQLQueries {
       }
     }
     """
+
+    /// Build the aggregate org view's batched list query: `repoCount` repos aliased into one
+    /// document (`r0…r{n-1}`), each `repository(owner: $o{i}, name: $n{i})` selecting the first
+    /// page of its open issues or PRs. A single shared `$states` filters them all; per-repo
+    /// `$o{i}/$n{i}` keep repo names out of the query text (passed as variables, like the
+    /// single-repo queries). The node fields match the per-repo `issues`/`pullRequests` queries
+    /// exactly, so `ItemNode` decodes each alias node unchanged; `pageInfo` lets the client page
+    /// only the repos whose first page overflowed. Newest-first, like the single-repo path.
+    static func batchItems(repoCount: Int, kind: GitHubItemKind) -> String {
+        let isIssue = kind == .issue
+        let stateType = isIssue ? "IssueState" : "PullRequestState"
+        let field = isIssue ? "issues" : "pullRequests"
+        // PR-only lead fields; issues instead carry the sub-issue parent — mirrors the per-repo
+        // `issues`/`pullRequests` documents so the shared `ItemNode` decoder needs no special case.
+        let prFields = "isDraft\n            additions\n            deletions\n            headRefName"
+        let extraFields = isIssue ? "parent { number }" : prFields
+
+        var varDecls = ["$states: [\(stateType)!]"]
+        for index in 0..<repoCount {
+            varDecls.append("$o\(index): String!")
+            varDecls.append("$n\(index): String!")
+        }
+
+        let aliases = (0..<repoCount).map { index in
+            """
+              r\(index): repository(owner: $o\(index), name: $n\(index)) {
+                \(field)(first: 50, states: $states, orderBy: {field: CREATED_AT, direction: DESC}) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    id
+                    number
+                    title
+                    body
+                    createdAt
+                    state
+                    \(extraFields)
+                    author { login avatarUrl }
+                    labels(first: 20) { nodes { name } }
+                  }
+                }
+              }
+            """
+        }.joined(separator: "\n")
+
+        return "query(\(varDecls.joined(separator: ", "))) {\n\(aliases)\n}"
+    }
 }

@@ -473,13 +473,80 @@ final class GitHubDataController {
         }
     }
 
-    /// Fetch every repo's PRs and issues concurrently (bounded), delta each against its own cache and
-    /// persist, then return the merged sets assembled in `repoKeys` order. An `unauthorized`/
-    /// `rateLimited` failure aborts the whole aggregate so it reaches the 401-recovery path; any other
-    /// per-repo failure falls back to that repo's cached copy so one flaky repo can't blank the view.
+    /// Fetch the org's PRs and issues, preferring one batched GraphQL request that aliases many
+    /// repos (the rate-limit win — `api.batchItems`) and falling back to the per-repo path when a
+    /// batch fails for any reason other than auth/rate-limit (which must abort to reach the
+    /// 401-recovery path). Either way the result is delta-merged, cached, and assembled in
+    /// `repoKeys` order so the per-repo sections line up.
     private func fetchOrgItems(repoKeys: [(owner: String, name: String)],
                                prStates: Set<GitHubItemState>,
                                issueStates: Set<GitHubItemState>)
+        async throws -> (prs: [GitHubItem], issues: [GitHubItem]) {
+        do {
+            return try await fetchOrgItemsBatched(
+                repoKeys: repoKeys, prStates: prStates, issueStates: issueStates)
+        } catch let error as GitHubAPIError {
+            switch error {
+            case .unauthorized, .rateLimited:
+                throw error   // affects every repo — abort & recover, don't mask it with the fallback
+            default:
+                NSLog("[github-data] batched org fetch failed: \(error); falling back to per-repo")
+                return try await fetchOrgItemsPerRepo(
+                    repoKeys: repoKeys, prStates: prStates, issueStates: issueStates)
+            }
+        }
+    }
+
+    /// Aggregate the org with batched GraphQL: one `api.batchItems` request per kind aliases every
+    /// repo (chunked internally), so the whole org costs a handful of round-trips instead of 2×N.
+    /// Repos are grouped by owner (an org's repos share its login; grouping also covers any stray
+    /// owner). Each repo that resolved is delta-merged against its own cache and persisted; a repo
+    /// the batch couldn't reach keeps its cached copy, so one missing repo can't blank the view.
+    private func fetchOrgItemsBatched(repoKeys: [(owner: String, name: String)],
+                                      prStates: Set<GitHubItemState>,
+                                      issueStates: Set<GitHubItemState>)
+        async throws -> (prs: [GitHubItem], issues: [GitHubItem]) {
+        let api = self.api
+        let cache = self.cache
+        var prsByRepo: [String: [GitHubItem]] = [:]
+        var issuesByRepo: [String: [GitHubItem]] = [:]
+        for (owner, keys) in Dictionary(grouping: repoKeys, by: { $0.owner }) {
+            let names = keys.map(\.name)
+            async let prCall = api.batchItems(owner: owner, repos: names, kind: .pullRequest, states: prStates)
+            async let issueCall = api.batchItems(owner: owner, repos: names, kind: .issue, states: issueStates)
+            let (prResult, issueResult) = try await (prCall, issueCall)
+            for repo in prResult { prsByRepo[repo.repositoryNameWithOwner] = repo.items }
+            for repo in issueResult { issuesByRepo[repo.repositoryNameWithOwner] = repo.items }
+        }
+        var prs: [GitHubItem] = []
+        var issues: [GitHubItem] = []
+        for (owner, name) in repoKeys {
+            let key = "\(owner)/\(name)"
+            prs += await mergeAndCache(incoming: prsByRepo[key], repoKey: key, kind: .pullRequest)
+            issues += await mergeAndCache(incoming: issuesByRepo[key], repoKey: key, kind: .issue)
+        }
+        return (prs, issues)
+    }
+
+    /// Delta a repo's freshly-batched items against its cache and persist the result; with no fresh
+    /// items (the repo didn't resolve in the batch) fall back to the cached copy untouched.
+    private func mergeAndCache(incoming: [GitHubItem]?, repoKey: String,
+                               kind: GitHubItemKind) async -> [GitHubItem] {
+        guard let incoming else { return await cache.loadItems(repoKey: repoKey, kind: kind) }
+        let cached = await cache.loadItems(repoKey: repoKey, kind: kind)
+        let merged = GitHubDelta.apply(incoming: incoming, to: cached).merged
+        await cache.saveItems(merged, repoKey: repoKey, kind: kind)
+        return merged
+    }
+
+    /// Fallback: fetch every repo's PRs and issues concurrently (bounded), delta each against its
+    /// own cache and persist, then return the merged sets assembled in `repoKeys` order. An
+    /// `unauthorized`/`rateLimited` failure aborts the whole aggregate so it reaches the
+    /// 401-recovery path; any other per-repo failure falls back to that repo's cached copy so one
+    /// flaky repo can't blank the view.
+    private func fetchOrgItemsPerRepo(repoKeys: [(owner: String, name: String)],
+                                      prStates: Set<GitHubItemState>,
+                                      issueStates: Set<GitHubItemState>)
         async throws -> (prs: [GitHubItem], issues: [GitHubItem]) {
         let api = self.api
         let cache = self.cache

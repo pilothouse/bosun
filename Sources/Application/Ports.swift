@@ -87,6 +87,14 @@ public protocol GitHubAPI: Sendable {
     /// closed/merged history (see `GitHubItemList.reachedHistoryCap`).
     func items(owner: String, repo: String, kind: GitHubItemKind,
                states: Set<GitHubItemState>) async throws -> GitHubItemList
+    /// Open issues or PRs across many of `owner`'s `repos` in as few GraphQL round-trips as
+    /// possible: one request aliases a fixed batch of repos (the rate-limit win over one `items`
+    /// call per repo), paging only the repos whose first page overflowed. Returns one
+    /// `GitHubRepoItems` per repo that resolved — an inaccessible repo is omitted, leaving its
+    /// cache untouched — so it's the aggregate org view's primary fetch, with per-repo `items`
+    /// calls as the fallback. `states` restricts like `items`.
+    func batchItems(owner: String, repos: [String], kind: GitHubItemKind,
+                    states: Set<GitHubItemState>) async throws -> [GitHubRepoItems]
     /// One item fully hydrated: body-derived tasks, comments, and (for PRs) check runs.
     func itemDetail(owner: String, repo: String, number: Int) async throws -> GitHubItem
     /// Numbers of same-repo issues that block this one — GitHub's native issue dependencies

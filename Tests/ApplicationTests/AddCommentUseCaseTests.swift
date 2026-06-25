@@ -28,6 +28,8 @@ final class AddCommentUseCaseTests: XCTestCase {
         func viewerRepositories() throws -> [GitHubRepo] { throw Unused() }
         func items(owner: String, repo: String, kind: GitHubItemKind,
                    states: Set<GitHubItemState>) throws -> GitHubItemList { throw Unused() }
+        func batchItems(owner: String, repos: [String], kind: GitHubItemKind,
+                        states: Set<GitHubItemState>) throws -> [GitHubRepoItems] { throw Unused() }
         func itemDetail(owner: String, repo: String, number: Int) throws -> GitHubItem { throw Unused() }
         func issueDependencies(owner: String, repo: String, number: Int) throws -> [Int] { throw Unused() }
     }

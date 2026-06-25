@@ -1,0 +1,58 @@
+{
+  "data": {
+    "r0": {
+      "issues": {
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "id": "I_gw_482",
+            "number": 482,
+            "title": "Rate limiter drops bursts",
+            "body": "Investigate burst handling.",
+            "createdAt": "2026-06-20T08:00:00Z",
+            "state": "OPEN",
+            "parent": null,
+            "author": { "login": "maya", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
+            "labels": { "nodes": [ { "name": "bug" } ] }
+          }
+        ]
+      }
+    },
+    "r1": {
+      "issues": {
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "id": "I_web_91",
+            "number": 91,
+            "title": "Dark mode contrast",
+            "body": "Improve contrast in dark mode.",
+            "createdAt": "2026-06-19T10:00:00Z",
+            "state": "OPEN",
+            "parent": null,
+            "author": { "login": "raj", "avatarUrl": "https://avatars.githubusercontent.com/u/2?v=4" },
+            "labels": { "nodes": [] }
+          }
+        ]
+      }
+    },
+    "r2": {
+      "issues": {
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "id": "I_bill_7",
+            "number": 7,
+            "title": "Proration rounding",
+            "body": "Rounding error on proration.",
+            "createdAt": "2026-06-18T12:00:00Z",
+            "state": "OPEN",
+            "parent": null,
+            "author": { "login": "lee", "avatarUrl": "https://avatars.githubusercontent.com/u/3?v=4" },
+            "labels": { "nodes": [ { "name": "p2" } ] }
+          }
+        ]
+      }
+    }
+  }
+}

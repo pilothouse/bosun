@@ -175,7 +175,9 @@ public actor GitHubAPIClient: GitHubAPI {
 
     // MARK: - GraphQL transport
 
-    private func graphQL<T: Decodable>(query: String, variables: [String: GraphQLValue]) async throws -> T {
+    // Internal (not private) so the batched-items adapter in `GitHubBatchItems.swift` can reuse the
+    // same authorized GraphQL transport and variable encoding.
+    func graphQL<T: Decodable>(query: String, variables: [String: GraphQLValue]) async throws -> T {
         let body = try JSONEncoder().encode(GraphQLRequest(query: query, variables: variables))
         var request = try await authorizedRequest(url: graphQLURL, method: "POST", body: body)
         // Opt into the sub-issues schema so `Issue.parent` resolves. Harmless once the field is GA;
@@ -269,7 +271,7 @@ public actor GitHubAPIClient: GitHubAPI {
 /// A JSON value for GraphQL variables — the scalars these queries pass, plus a string array for
 /// enum-list filters (e.g. `states: [OPEN, CLOSED]`, sent as `["OPEN","CLOSED"]` which GitHub
 /// coerces to the enum-typed variable).
-private enum GraphQLValue: Encodable {
+enum GraphQLValue: Encodable {
     case string(String)
     case int(Int)
     case stringArray([String])
@@ -300,7 +302,7 @@ private struct GraphQLError: Decodable {
     let message: String
 }
 
-private struct PageInfo: Decodable {
+struct PageInfo: Decodable {
     let hasNextPage: Bool
     let endCursor: String?
     /// The cursor to fetch after, or nil when this was the last page.
@@ -435,7 +437,7 @@ private struct PullsResponse: Decodable {
     struct Repo: Decodable { let pullRequests: ItemConnection }
 }
 
-private struct ItemConnection: Decodable {
+struct ItemConnection: Decodable {
     let pageInfo: PageInfo
     let nodes: [ItemNode]
 }
@@ -447,7 +449,7 @@ private struct ItemDetailResponse: Decodable {
 
 /// One issue/PR node. The list queries fill the lead fields; the detail query also sets
 /// `typeName` and the PR's `commits` rollup. PR-only fields stay nil for issues.
-private struct ItemNode: Decodable {
+struct ItemNode: Decodable {
     let id: String
     let number: Int
     let title: String
@@ -499,7 +501,7 @@ private struct ItemNode: Decodable {
     }
 }
 
-private struct AuthorDTO: Decodable {
+struct AuthorDTO: Decodable {
     let login: String
     let avatarUrl: String?
     func toDomain() -> GitHubActor {
@@ -507,12 +509,12 @@ private struct AuthorDTO: Decodable {
     }
 }
 
-private struct LabelConnection: Decodable {
+struct LabelConnection: Decodable {
     let nodes: [Label]
     struct Label: Decodable { let name: String }
 }
 
-private struct CommitConnection: Decodable {
+struct CommitConnection: Decodable {
     let nodes: [CommitNode]
     struct CommitNode: Decodable { let commit: Commit }
     struct Commit: Decodable { let statusCheckRollup: Rollup? }
@@ -522,7 +524,7 @@ private struct CommitConnection: Decodable {
 
 /// A status-check rollup context — either a modern `CheckRun` or a legacy commit `StatusContext`.
 /// `__typename` discriminates; the irrelevant fields decode as nil.
-private struct ContextNode: Decodable {
+struct ContextNode: Decodable {
     let typeName: String
     let name: String?
     let status: String?

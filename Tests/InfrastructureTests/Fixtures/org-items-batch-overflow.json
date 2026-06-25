@@ -1,0 +1,22 @@
+{
+  "data": {
+    "r0": {
+      "issues": {
+        "pageInfo": { "hasNextPage": true, "endCursor": "Y3Vyc29yOjUw" },
+        "nodes": [
+          {
+            "id": "I_gw_1",
+            "number": 1,
+            "title": "First of many",
+            "body": "Only the first page arrived in the batch.",
+            "createdAt": "2026-06-20T08:00:00Z",
+            "state": "OPEN",
+            "parent": null,
+            "author": { "login": "maya", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
+            "labels": { "nodes": [] }
+          }
+        ]
+      }
+    }
+  }
+}

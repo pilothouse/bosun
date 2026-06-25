@@ -99,6 +99,76 @@ final class GitHubAPIClientTests: XCTestCase {
                        "GraphQL list requests must opt into sub_issues so `parent` resolves")
     }
 
+    // MARK: Batched org items (aggregate org view)
+
+    func testBatchItemsAliasesManyReposIntoOneRequest() async throws {
+        let calls = CallCounter()
+        StubURLProtocol.handler = { request in
+            calls.bump()
+            return (self.ok(request), try fixture("org-items-batch"))
+        }
+        let result = try await makeClient().batchItems(
+            owner: "acme-corp", repos: ["api-gateway", "web-dashboard", "billing"],
+            kind: .issue, states: [.open])
+
+        XCTAssertEqual(calls.count, 1, "three repos resolve in a single aliased GraphQL request")
+        XCTAssertEqual(result.map(\.repositoryNameWithOwner),
+                       ["acme-corp/api-gateway", "acme-corp/web-dashboard", "acme-corp/billing"],
+                       "one entry per repo, in the order asked, owner-qualified")
+        // Each alias's items are grouped under its own repo and carry that repo's name.
+        XCTAssertEqual(result[0].items.map(\.number), [482])
+        XCTAssertEqual(result[0].items.first?.repositoryNameWithOwner, "acme-corp/api-gateway")
+        XCTAssertEqual(result[1].items.map(\.number), [91])
+        XCTAssertEqual(result[2].items.map(\.number), [7])
+        XCTAssertEqual(result[2].items.first?.kind, .issue)
+    }
+
+    func testBatchItemsPagesOnlyTheRepoThatOverflowed() async throws {
+        let calls = CallCounter()
+        StubURLProtocol.handler = { request in
+            let n = calls.bump()
+            // First call is the batch (r0 reports more pages); the follow-up is the full single-repo fetch.
+            return (self.ok(request), try fixture(n == 1 ? "org-items-batch-overflow" : "issues"))
+        }
+        let result = try await makeClient().batchItems(
+            owner: "acme-corp", repos: ["api-gateway"], kind: .issue, states: [.open])
+
+        XCTAssertEqual(calls.count, 2, "an overflowing repo triggers exactly one full-fetch follow-up")
+        // The complete set replaces the partial first page (the `issues` fixture carries 2 items).
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].items.count, 2)
+        XCTAssertEqual(result[0].items.first?.repositoryNameWithOwner, "acme-corp/api-gateway")
+    }
+
+    func testBatchItemsOmitsAnInaccessibleRepo() async throws {
+        respond { (self.ok($0), try fixture("org-items-batch-null")) }
+        let result = try await makeClient().batchItems(
+            owner: "acme-corp", repos: ["api-gateway", "secret-repo"], kind: .issue, states: [.open])
+
+        XCTAssertEqual(result.map(\.repositoryNameWithOwner), ["acme-corp/api-gateway"],
+                       "a null (inaccessible) alias is dropped so its cache stays untouched")
+    }
+
+    func testBatchItemsOptsIntoTheSubIssuesFeature() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), try fixture("org-items-batch"))
+        }
+        _ = try await makeClient().batchItems(
+            owner: "acme-corp", repos: ["api-gateway"], kind: .issue, states: [.open])
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "GraphQL-Features"), "sub_issues",
+                       "the batched issues query must opt into sub_issues like the per-repo list query")
+    }
+
+    func testBatchItemsWithNoReposMakesNoRequest() async throws {
+        let calls = CallCounter()
+        StubURLProtocol.handler = { request in calls.bump(); return (self.ok(request), Data("{}".utf8)) }
+        let result = try await makeClient().batchItems(owner: "acme-corp", repos: [], kind: .issue, states: [.open])
+        XCTAssertTrue(result.isEmpty)
+        XCTAssertEqual(calls.count, 0, "no repos → no network")
+    }
+
     // MARK: Issue dependencies (blocked-by)
 
     func testIssueDependenciesReturnsSameRepoBlockerNumbers() async throws {
@@ -295,6 +365,16 @@ final class GitHubAPIClientTests: XCTestCase {
 /// Captures the request the stub saw, so a test can assert method/URL/body after the call returns.
 private final class RequestBox: @unchecked Sendable {
     var value: URLRequest?
+}
+
+/// Counts how many requests the stub answered — lets a test assert the batched fetch collapses
+/// many repos into one round-trip. The stub handler runs on URLSession's loading thread, so the
+/// count is guarded by a lock.
+private final class CallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    @discardableResult func bump() -> Int { lock.lock(); defer { lock.unlock() }; value += 1; return value }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
 }
 
 /// A canned `GitHubTokenStore` — returns a fixed token (or nil to simulate signed-out).
