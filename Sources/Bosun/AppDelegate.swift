@@ -219,7 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// inset it onto a transparent canvas to match the system footprint (824 of 1024 = Apple's
     /// macOS app-icon grid).
     private func applyDockIcon() {
-        guard let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+        guard let url = Self.bundledResourceURL("AppIcon", withExtension: "png"),
               let mark = NSImage(contentsOf: url) else {
             NSLog("[icon] AppIcon.png missing from bundle resources")
             return
@@ -233,6 +233,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   from: .zero, operation: .sourceOver, fraction: 1.0)
         icon.unlockFocus()
         NSApp.applicationIconImage = icon
+    }
+
+    /// Locate a file inside the SwiftPM resource bundle (`Bosun_Bosun.bundle`) without going through
+    /// the generated `Bundle.module` accessor — which `fatalError`s on first access if it can't find
+    /// the bundle. That accessor only looks at `Bundle.main.bundleURL/Bosun_Bosun.bundle` (the bare
+    /// executable's directory, or — fatally — a `.app`'s *root*, where the bundle is never placed) and
+    /// the absolute build-machine path baked in at compile time. In a packaged `.app` the bundle lives
+    /// in `Contents/Resources/` (the standard, code-signable spot), so on any machine that isn't the
+    /// build machine `Bundle.module` misses both paths and aborts the process at launch — the app
+    /// "bounces once and vanishes" with no window. This lookup checks the real locations and returns
+    /// nil instead of crashing, so a missing resource degrades (no custom dock icon) rather than kills.
+    private static func bundledResourceURL(_ name: String, withExtension ext: String) -> URL? {
+        let bundleName = "Bosun_Bosun.bundle"
+        // `.app`: Contents/Resources/ (resourceURL). Bare `swift run` exe: the binary's own directory
+        // (bundleURL == resourceURL there). Both are where SwiftPM actually stages the bundle.
+        let roots = [Bundle.main.resourceURL, Bundle.main.bundleURL]
+        for root in roots.compactMap({ $0 }) {
+            let bundleURL = root.appendingPathComponent(bundleName)
+            if let bundle = Bundle(url: bundleURL),
+               let url = bundle.url(forResource: name, withExtension: ext) {
+                return url
+            }
+        }
+        // Defensive last resort: the resource sitting loose in the main bundle.
+        return Bundle.main.url(forResource: name, withExtension: ext)
     }
 
     private func installMenu() {

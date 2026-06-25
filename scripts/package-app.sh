@@ -12,10 +12,14 @@
 #     └── Resources/
 #         ├── AppIcon.icns           generated from Sources/Bosun/Resources/AppIcon.png
 #         └── Bosun_Bosun.bundle     SwiftPM resource bundle (carries AppIcon.png). It lives in
-#                                    Resources/ — the first path `Bundle.module` searches is
-#                                    Bundle.main.resourceURL — and that's also where codesign seals
-#                                    it as plain data. It has no Info.plist, so it is NOT a code
+#                                    Resources/ — the standard, code-signable spot, where codesign
+#                                    seals it as plain data. It has no Info.plist, so it is NOT a code
 #                                    bundle; signing it (or using `codesign --deep`) fails on it.
+#                                    NOTE: the app does NOT reach this via `Bundle.module`. The Swift
+#                                    6 generated accessor only probes `Bundle.main.bundleURL/<name>`
+#                                    (the .app *root*, not Resources/) and the absolute build path,
+#                                    so it `fatalError`s at launch on any other machine. AppDelegate
+#                                    loads the bundle by hand from Resources/ instead — keep it here.
 #
 # Then it code-signs the app with the hardened runtime, optionally notarizes + staples it, and
 # rolls a compressed .dmg with a drag-to-/Applications symlink.
