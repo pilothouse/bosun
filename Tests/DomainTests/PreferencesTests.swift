@@ -276,4 +276,28 @@ final class PreferencesTests: XCTestCase {
 
         XCTAssertFalse(decoded.prChecksCollapsed)
     }
+
+    func testSkipEmptyReposDefaultsToFalse() {
+        XCTAssertFalse(Preferences.default.skipEmptyRepos,
+                       "every repo shows until the user opts into hiding the empty ones")
+    }
+
+    func testSkipEmptyReposRoundTripsThroughCodable() throws {
+        let original = Preferences(skipEmptyRepos: true)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertTrue(decoded.skipEmptyRepos)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutSkipEmptyReposFallsBackToFalse() throws {
+        // A payload written by a build before the skip-empty-repos option existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertFalse(decoded.skipEmptyRepos)
+    }
 }

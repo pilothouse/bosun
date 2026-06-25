@@ -43,6 +43,9 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// Whether the PR detail pane's `ACTIONS` (CI checks) section is collapsed. Global — one
     /// app-wide preference shared across every PR, not per-PR. `false` (expanded) by default.
     public var prChecksCollapsed: Bool
+    /// Whether the org panel hides repos with zero open issues+PRs. `false` (show every repo) by
+    /// default — the user opts in to declutter. "Empty" is open-only; see `RepoVisibility`.
+    public var skipEmptyRepos: Bool
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -84,7 +87,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         issueStates: [String]? = nil,
         openTabs: [TerminalTabState]? = nil,
         activeTabId: String? = nil,
-        prChecksCollapsed: Bool = false
+        prChecksCollapsed: Bool = false,
+        skipEmptyRepos: Bool = false
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -101,6 +105,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.openTabs = openTabs
         self.activeTabId = activeTabId
         self.prChecksCollapsed = prChecksCollapsed
+        self.skipEmptyRepos = skipEmptyRepos
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -126,7 +131,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             issueStates: try container.decodeIfPresent([String].self, forKey: .issueStates) ?? fallback.issueStates,
             openTabs: try container.decodeIfPresent([TerminalTabState].self, forKey: .openTabs) ?? fallback.openTabs,
             activeTabId: try container.decodeIfPresent(String.self, forKey: .activeTabId) ?? fallback.activeTabId,
-            prChecksCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prChecksCollapsed) ?? fallback.prChecksCollapsed
+            prChecksCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prChecksCollapsed) ?? fallback.prChecksCollapsed,
+            skipEmptyRepos: try container.decodeIfPresent(Bool.self, forKey: .skipEmptyRepos) ?? fallback.skipEmptyRepos
         )
     }
 

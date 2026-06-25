@@ -46,7 +46,9 @@ final class SettingsSheet: FlippedView {
         let rowsTop: CGFloat = 78
         let footY = rowsTop + CGFloat(themes.count) * themeRowH + 2
         let winY = footY + 40
-        let accY = winY + 90
+        let repoY = winY + 90          // Repositories section: divider + header (the spacing WINDOW used)
+        let repoRowY = repoY + 30      // the skip-empty checkbox row
+        let accY = repoY + 72          // Account section, shifted down to make room for Repositories
         let accRowY = accY + 34
         let btnH: CGFloat = 30
         let btnY = accRowY + 46
@@ -122,6 +124,22 @@ final class SettingsSheet: FlippedView {
                               target: self, action: #selector(opacityChanged(_:)))
         slider.isContinuous = true
         slider.frame = NSRect(x: pad, y: winY + 56, width: innerW, height: 20); card.addSubview(slider)
+
+        // ── Repositories: hide the ones with nothing open. ──
+        let repoDiv = BoxView(bg: t.line2); repoDiv.frame = NSRect(x: pad, y: repoY, width: innerW, height: 1); card.addSubview(repoDiv)
+        let rHdr = label("REPOSITORIES", mono(9.5, .semibold), t.txt4)
+        rHdr.frame = NSRect(x: pad, y: repoY + 12, width: 200, height: 14); card.addSubview(rHdr)
+        // A toggle changes `skipEmptyRepos`, which fires `changed()` → the panel re-filters and this
+        // sheet rebuilds (so the glyph restates) live, exactly like the theme rows above.
+        let skipRow = ClickRow(bg: nil, radius: 9)
+        skipRow.hoverColor = t.hover
+        skipRow.frame = NSRect(x: pad - 9, y: repoRowY, width: rowW, height: 28)
+        skipRow.onClick = { [weak self] in self?.store.skipEmptyRepos.toggle() }
+        let skipCheck = label(store.skipEmptyRepos ? "☑" : "☐", sys(13), store.skipEmptyRepos ? t.accent : t.txt4)
+        skipCheck.frame = NSRect(x: 10, y: 6, width: 16, height: 16); skipRow.addSubview(skipCheck)
+        let skipName = label("Skip repos without issues and PRs", sys(12.5), t.txt)
+        skipName.frame = NSRect(x: 34, y: 6, width: rowW - 60, height: 16); skipRow.addSubview(skipName)
+        card.addSubview(skipRow)
 
         // ── Account: GitHub sign-in. ──
         let accDiv = BoxView(bg: t.line2); accDiv.frame = NSRect(x: pad, y: accY, width: innerW, height: 1); card.addSubview(accDiv)

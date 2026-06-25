@@ -47,6 +47,9 @@ final class Store {
     /// (the `groupBy` precedent), so a change repaints the open PR and survives relaunch, shared
     /// across every PR.
     var prChecksCollapsed = false { didSet { if oldValue != prChecksCollapsed { changed() } } }
+    /// Whether the org panel hides repos with zero open issues+PRs. Global, persisted; a change
+    /// re-filters every org's repos instantly via `visibleOrgs`. Off (show all) by default.
+    var skipEmptyRepos = false { didSet { if oldValue != skipEmptyRepos { changed() } } }
     /// The active item tab and the list grouping ("View"). Persisted, so they're restored on relaunch
     /// (the restored item's kind can still flip the tab — see `GitHubDataController.reconcileSelection`).
     var tab: Tab = .prs { didSet { if oldValue != tab { changed() } } }
@@ -197,9 +200,12 @@ final class Store {
         let order = OrgFollowing.visible(available: orgs.map(\.id), followed: followedOrgs)
         let byId = Dictionary(orgs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let mode = repoOrdering
+        let skip = skipEmptyRepos
         return order.compactMap { byId[$0] }.map { org in
-            Org(id: org.id, name: org.name, color: org.color, avatarURL: org.avatarURL,
-                repos: RepoOrdering.order(org.repos, by: mode, name: \.name, open: \.open))
+            let ordered = RepoOrdering.order(org.repos, by: mode, name: \.name, open: \.open)
+            let shown = RepoVisibility.visible(ordered, skipEmpty: skip, open: \.open)
+            return Org(id: org.id, name: org.name, color: org.color, avatarURL: org.avatarURL,
+                       repos: shown)
         }
     }
 
@@ -236,7 +242,8 @@ final class Store {
             issueStates: issueStates.map(\.rawValue).sorted(),
             openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
             activeTabId: activeTerminalTabId,
-            prChecksCollapsed: prChecksCollapsed)
+            prChecksCollapsed: prChecksCollapsed,
+            skipEmptyRepos: skipEmptyRepos)
         Task { await preferences.save(snapshot) }
     }
 
@@ -259,6 +266,7 @@ final class Store {
         terminalTabs = p.openTabs ?? []
         activeTerminalTabId = p.activeTabId
         prChecksCollapsed = p.prChecksCollapsed
+        skipEmptyRepos = p.skipEmptyRepos
         isLoading = false
         onWindowAlpha?(windowAlpha)
         refresh()
