@@ -41,10 +41,10 @@ final class TitlebarView: FlippedView {
     }
 
     private func iconButton(_ symbol: String, tint: NSColor, frame: NSRect, point: CGFloat = 14) -> ClickRow {
-        let row = ClickRow(radius: 6)
+        let row = ClickRow(radius: z(6))
         row.hoverColor = store.theme.hover
         row.frame = frame
-        let iv = NSImageView(frame: row.bounds.insetBy(dx: frame.width/2 - 9, dy: frame.height/2 - 9))
+        let iv = NSImageView(frame: row.bounds.insetBy(dx: frame.width/2 - z(9), dy: frame.height/2 - z(9)))
         iv.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
         iv.imageScaling = .scaleProportionallyUpOrDown
         iv.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
@@ -60,20 +60,16 @@ final class TitlebarView: FlippedView {
         let h = bounds.height
         layer?.backgroundColor = t.bar.cgColor
 
-        // Align every titlebar icon on the centre line of the macOS traffic lights. Read their
-        // real position from the close button so the controls line up exactly with
-        // close/minimise/zoom regardless of bar height; fall back to the standard 28pt zone centre
-        // before the window/buttons exist.
-        let baseCY: CGFloat
-        if let close = window?.standardWindowButton(.closeButton), let host = close.superview {
-            baseCY = convert(close.frame, from: host).midY
-        } else {
-            baseCY = min(h, 28) / 2
-        }
-        let cy = baseCY
+        // Vertically center every titlebar control on the bar's own centre. The bar height scales
+        // with the UI zoom (BosunView sets it to z(34)), so centring on `h/2` keeps the icons and
+        // breadcrumb centred at every zoom level. We deliberately do NOT anchor to the macOS traffic
+        // lights here: they're OS chrome drawn at a fixed, unscaled position, so anchoring to them
+        // left the controls hugging the top of a zoomed-in bar (and overflowing a zoomed-out one).
+        let cy = h / 2
         // The breadcrumb labels render their glyphs a touch high in the frame, so they read as
-        // tight to the top next to the geometrically-centred icons; nudge just the text down ~2pt.
-        let textY = cy - 8 + 2
+        // tight to the top next to the geometrically-centred icons; nudge just the text down ~2pt
+        // (scaled, so it tracks the larger glyphs at higher zoom).
+        let textY = cy - z(8) + z(2)
 
         let border = BoxView(bg: t.line)
         border.frame = NSRect(x: 0, y: h - 1, width: bounds.width, height: 1)
@@ -83,28 +79,28 @@ final class TitlebarView: FlippedView {
         var x: CGFloat = 78
         let toggle = iconButton("sidebar.left",
                                 tint: store.railCollapsed ? t.accent : t.txt3,
-                                frame: NSRect(x: x, y: cy - 12, width: 30, height: 24), point: 15)
+                                frame: NSRect(x: x, y: cy - z(12), width: z(30), height: z(24)), point: z(15))
         toggle.onClick = { [weak self] in self?.onToggleSidebar?() }
         toggle.toolTip = store.railCollapsed ? "Show sidebar" : "Hide sidebar"
         addSubview(toggle)
-        x += 40
+        x += z(40)
 
         let name = label(store.selectedConn.name, sys(12.5, .semibold), t.txt)
-        name.frame = NSRect(x: x, y: textY, width: fitW(name), height: 16)
+        name.frame = NSRect(x: x, y: textY, width: fitW(name), height: z(16))
         addSubview(name)
-        x += name.frame.width + 7
+        x += name.frame.width + z(7)
 
         // Scope breadcrumb: the selected repo's `owner/name`, or the org name in the aggregate org
         // view. Bound to the live selection, shown only once something is picked.
         let repoTitle = store.scopeTitle
         if !repoTitle.isEmpty {
             let slash = label("/", sys(12.5), t.txt4)
-            slash.frame = NSRect(x: x, y: textY, width: 8, height: 16)
+            slash.frame = NSRect(x: x, y: textY, width: z(8), height: z(16))
             addSubview(slash)
-            x += 13
+            x += z(13)
 
             let repo = label(repoTitle, sys(12.5), t.txt3)
-            repo.frame = NSRect(x: x, y: textY, width: fitW(repo), height: 16)
+            repo.frame = NSRect(x: x, y: textY, width: fitW(repo), height: z(16))
             addSubview(repo)
         }
 
@@ -115,12 +111,12 @@ final class TitlebarView: FlippedView {
 
         // Global "refresh all" at the left of the cluster. Swaps to a spinner while a refresh is in
         // flight (clicks debounced by the controller's `isRefreshing`).
-        let refreshFrame = NSRect(x: bounds.width - 160, y: cy - 12, width: 30, height: 24)
+        let refreshFrame = NSRect(x: bounds.width - z(160), y: cy - z(12), width: z(30), height: z(24))
         if store.isRefreshing {
-            let row = ClickRow(radius: 6)
+            let row = ClickRow(radius: z(6))
             row.frame = refreshFrame
-            let spinner = makeSpinner(size: 14)
-            spinner.frame = NSRect(x: 8, y: 5, width: 14, height: 14); row.addSubview(spinner)
+            let spinner = makeSpinner(size: z(14))
+            spinner.frame = NSRect(x: z(8), y: z(5), width: z(14), height: z(14)); row.addSubview(spinner)
             addSubview(row)
         } else {
             let refresh = iconButton("arrow.clockwise", tint: t.txt3, frame: refreshFrame, point: 15)
@@ -133,7 +129,7 @@ final class TitlebarView: FlippedView {
         // vs side-by-side); accent tint marks the non-default horizontal split.
         let splitToggle = iconButton(horizontal ? "rectangle.split.1x2" : "rectangle.split.2x1",
                                      tint: horizontal ? t.accent : t.txt3,
-                                     frame: NSRect(x: bounds.width - 120, y: cy - 12, width: 30, height: 24), point: 15)
+                                     frame: NSRect(x: bounds.width - z(120), y: cy - z(12), width: z(30), height: z(24)), point: z(15))
         splitToggle.onClick = { [weak self] in self?.onToggleSplitAxis?() }
         splitToggle.toolTip = horizontal ? "Stack detail and terminal" : "Split detail and terminal side by side"
         addSubview(splitToggle)
@@ -142,7 +138,7 @@ final class TitlebarView: FlippedView {
         // side by side). The arrow follows the active axis; accent tint marks the swapped order.
         let swapToggle = iconButton(horizontal ? "arrow.left.arrow.right" : "arrow.up.arrow.down",
                                     tint: store.terminalLeading ? t.accent : t.txt3,
-                                    frame: NSRect(x: bounds.width - 80, y: cy - 12, width: 30, height: 24), point: 14)
+                                    frame: NSRect(x: bounds.width - z(80), y: cy - z(12), width: z(30), height: z(24)), point: z(14))
         swapToggle.onClick = { [weak self] in self?.onSwapSides?() }
         swapToggle.toolTip = "Swap detail and terminal"
         addSubview(swapToggle)
@@ -150,7 +146,7 @@ final class TitlebarView: FlippedView {
         // Organizations-panel collapse, mirror of the left sidebar toggle, pinned to the far right.
         let panelToggle = iconButton("sidebar.right",
                                      tint: store.repoPanelCollapsed ? t.accent : t.txt3,
-                                     frame: NSRect(x: bounds.width - 40, y: cy - 12, width: 30, height: 24), point: 15)
+                                     frame: NSRect(x: bounds.width - z(40), y: cy - z(12), width: z(30), height: z(24)), point: z(15))
         panelToggle.onClick = { [weak self] in self?.onTogglePanel?() }
         panelToggle.toolTip = store.repoPanelCollapsed ? "Show organizations" : "Hide organizations"
         addSubview(panelToggle)

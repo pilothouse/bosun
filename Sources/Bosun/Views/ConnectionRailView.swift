@@ -36,18 +36,18 @@ final class ConnectionRailView: FlippedView {
     override func layout() { super.layout(); rebuild() }
 
     private func sectionHeader(_ title: String, accentStar: Bool, count: String?, width: CGFloat, t: Theme) -> NSView {
-        let v = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: 26))
-        var x: CGFloat = 14
+        let v = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: z(26)))
+        var x: CGFloat = z(14)
         if accentStar {
             let s = label("★", sys(11), t.accent)
-            s.frame = NSRect(x: x, y: 6, width: 14, height: 14); v.addSubview(s); x += 18
+            s.frame = NSRect(x: x, y: z(6), width: z(14), height: z(14)); v.addSubview(s); x += z(18)
         }
         let l = label(title, mono(9.5, .semibold), t.txt4)
-        l.frame = NSRect(x: x, y: 6, width: width - x - 30, height: 14)
+        l.frame = NSRect(x: x, y: z(6), width: width - x - z(30), height: z(14))
         v.addSubview(l)
         if let count {
             let c = label(count, mono(10), t.txt5, align: .right)
-            c.frame = NSRect(x: width - 30, y: 6, width: 16, height: 14); v.addSubview(c)
+            c.frame = NSRect(x: width - z(30), y: z(6), width: z(16), height: z(14)); v.addSubview(c)
         }
         return v
     }
@@ -56,39 +56,39 @@ final class ConnectionRailView: FlippedView {
         let selected = store.selectedConnId == c.id
         let row = ClickRow(bg: selected ? t.accentbg : nil)
         row.hoverColor = t.hover
-        row.frame = NSRect(x: 0, y: 0, width: width, height: 42)
+        row.frame = NSRect(x: 0, y: 0, width: width, height: z(42))
         // Single click selects; a quick second click on the same row opens a console (SSH connects,
         // a folder opens a shell there).
         row.onClick = { [weak self] in self?.handleRowClick(c.id) }
 
         if selected {
             let bar = BoxView(bg: t.accent)
-            bar.frame = NSRect(x: 0, y: 0, width: 2, height: 42)
+            bar.frame = NSRect(x: 0, y: 0, width: z(2), height: z(42))
             row.addSubview(bar)
         }
         let glyph = label(c.glyph, sys(13), t.txt3)
-        glyph.frame = NSRect(x: 14, y: 12, width: 16, height: 16)
+        glyph.frame = NSRect(x: z(14), y: z(12), width: z(16), height: z(16))
         row.addSubview(glyph)
 
         let name = label(c.name, sys(12.5, .semibold), selected ? t.txt : t.txt2)
-        name.frame = NSRect(x: 34, y: 6, width: width - 34 - 40, height: 16)
+        name.frame = NSRect(x: z(34), y: z(6), width: width - z(34) - z(40), height: z(16))
         row.addSubview(name)
 
         let meta = label(c.meta, mono(10), t.txt4)
-        meta.frame = NSRect(x: 34, y: 22, width: width - 34 - 40, height: 13)
+        meta.frame = NSRect(x: z(34), y: z(22), width: width - z(34) - z(40), height: z(13))
         row.addSubview(meta)
 
-        let dot = Dot(c.dot, 7)
-        dot.frame.origin = NSPoint(x: width - 38, y: 18)
+        let dot = Dot(c.dot, z(7))
+        dot.frame.origin = NSPoint(x: width - z(38), y: z(18))
         row.addSubview(dot)
 
         // Clickable star toggles favorite (independent of the row's select-on-click).
-        let starHit = ClickRow(radius: 5)
-        starHit.frame = NSRect(x: width - 30, y: 8, width: 24, height: 26)
+        let starHit = ClickRow(radius: z(5))
+        starHit.frame = NSRect(x: width - z(30), y: z(8), width: z(24), height: z(26))
         starHit.hoverColor = t.hover
         starHit.onClick = { [weak self] in self?.onToggleFavorite?(c.id) }
         let star = label(c.isFavorite ? "★" : "☆", sys(12), c.isFavorite ? t.accent : t.txt5, align: .center)
-        star.frame = NSRect(x: 0, y: 6, width: 24, height: 14)
+        star.frame = NSRect(x: 0, y: z(6), width: z(24), height: z(14))
         starHit.addSubview(star)
         row.addSubview(starHit)
 
@@ -137,21 +137,21 @@ final class ConnectionRailView: FlippedView {
     /// the closure on click (the no-connections prompt opens the New-connection sheet); without it
     /// the card is inert (the no-matches notice). Height hugs the wrapped text so there's no slack.
     private func emptyHint(_ text: String, width: CGFloat, t: Theme, tap: (() -> Void)? = nil) -> ClickRow {
-        let rowW = width - 28
-        let pad: CGFloat = 11
-        let textW = rowW - 24
+        let rowW = width - z(28)
+        let pad: CGFloat = z(11)
+        let textW = rowW - z(24)
         let l = label(text, sys(11.5), t.txt4, lines: 0)
         l.preferredMaxLayoutWidth = textW
         let textH = ceil(l.fittingSize.height)
-        l.frame = NSRect(x: 12, y: pad, width: textW, height: textH)
-        let row = ClickRow(bg: t.card, radius: 8)
+        l.frame = NSRect(x: z(12), y: pad, width: textW, height: textH)
+        let row = ClickRow(bg: t.card, radius: z(8))
         if let tap {
             row.hoverColor = t.hover
             row.onClick = tap
         }
-        row.frame = NSRect(x: 14, y: 0, width: rowW, height: textH + pad * 2)
+        row.frame = NSRect(x: z(14), y: 0, width: rowW, height: textH + pad * 2)
         row.layer?.borderColor = t.line2.cgColor
-        row.layer?.borderWidth = 1
+        row.layer?.borderWidth = z(1)
         row.addSubview(l)
         return row
     }
@@ -165,15 +165,15 @@ final class ConnectionRailView: FlippedView {
 
         // Right border.
         let border = BoxView(bg: t.line)
-        border.frame = NSRect(x: w - 1, y: 0, width: 1, height: bounds.height)
+        border.frame = NSRect(x: w - z(1), y: 0, width: z(1), height: bounds.height)
         addSubview(border)
 
         // Search header: an editable field that filters the list live as the user types (⌘K
         // focuses it). Styled borderless like the detail composer so it blends into the card.
-        let search = BoxView(bg: t.card, radius: 8, border: t.cardbr)
-        search.frame = NSRect(x: 14, y: 12, width: w - 28, height: 34)
+        let search = BoxView(bg: t.card, radius: z(8), border: t.cardbr)
+        search.frame = NSRect(x: z(14), y: z(12), width: w - z(28), height: z(34))
         let mag = label("⌕", sys(13), t.txt4)
-        mag.frame = NSRect(x: 10, y: 8, width: 16, height: 18); search.addSubview(mag)
+        mag.frame = NSRect(x: z(10), y: z(8), width: z(16), height: z(18)); search.addSubview(mag)
         let field = NSTextField(string: searchQuery)
         field.font = sys(12.5)
         field.placeholderString = "Search connections…"
@@ -184,11 +184,11 @@ final class ConnectionRailView: FlippedView {
         field.lineBreakMode = .byTruncatingTail
         field.delegate = self
         field.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
-        field.frame = NSRect(x: 30, y: 8, width: w - 28 - 70, height: 18)
+        field.frame = NSRect(x: z(30), y: z(8), width: w - z(28) - z(70), height: z(18))
         search.addSubview(field)
         searchField = field
-        let kbd = BoxView(bg: t.hover, radius: 4)
-        kbd.frame = NSRect(x: w - 28 - 38, y: 9, width: 28, height: 16)
+        let kbd = BoxView(bg: t.hover, radius: z(4))
+        kbd.frame = NSRect(x: w - z(28) - z(38), y: z(9), width: z(28), height: z(16))
         // Center the glyphs on both axes inside the pill (a plain label top-aligns its text, so
         // "⌘K" sat high); same treatment as the footer "+".
         let kl = centeredGlyph("⌘K", mono(10), t.txt5, in: kbd.frame.size)
@@ -196,30 +196,30 @@ final class ConnectionRailView: FlippedView {
         addSubview(search)
 
         // Footer.
-        let footerH: CGFloat = 48
+        let footerH: CGFloat = z(48)
         let footer = ClickRow(bg: nil)
         footer.hoverColor = t.hover
         footer.onClick = { [weak self] in self?.onAdd?() }
         footer.frame = NSRect(x: 0, y: bounds.height - footerH, width: w, height: footerH)
         let ftBorder = BoxView(bg: t.line)
-        ftBorder.frame = NSRect(x: 0, y: 0, width: w, height: 1); footer.addSubview(ftBorder)
+        ftBorder.frame = NSRect(x: 0, y: 0, width: w, height: z(1)); footer.addSubview(ftBorder)
         // The "+" box, the label, and the ⌘N hint all share the footer's vertical midline.
         let mid = footerH / 2
-        let plusSize: CGFloat = 26
-        let plus = BoxView(bg: nil, radius: 7, border: t.line2)
-        plus.frame = NSRect(x: 14, y: mid - plusSize / 2, width: plusSize, height: plusSize)
+        let plusSize: CGFloat = z(26)
+        let plus = BoxView(bg: nil, radius: z(7), border: t.line2)
+        plus.frame = NSRect(x: z(14), y: mid - plusSize / 2, width: plusSize, height: plusSize)
         let pl = centeredGlyph("+", sys(16), t.txt4, in: plus.frame.size)
         plus.addSubview(pl); footer.addSubview(plus)
-        let ftH: CGFloat = 18
+        let ftH: CGFloat = z(18)
         let ftLabel = label("New connection", sys(11.5), t.txt3)
-        ftLabel.frame = NSRect(x: 49, y: mid - ftH / 2, width: w - 49 - 40, height: ftH); footer.addSubview(ftLabel)
+        ftLabel.frame = NSRect(x: z(49), y: mid - ftH / 2, width: w - z(49) - z(40), height: ftH); footer.addSubview(ftLabel)
         let cmdN = label("⌘N", mono(10), t.txt5, align: .right)
-        cmdN.frame = NSRect(x: w - 44, y: mid - ftH / 2, width: 30, height: ftH); footer.addSubview(cmdN)
+        cmdN.frame = NSRect(x: w - z(44), y: mid - ftH / 2, width: z(30), height: ftH); footer.addSubview(cmdN)
         addSubview(footer)
 
         // Scrollable list. Its document is built by `makeListDocument` so a keystroke can rebuild
         // just the document (keeping the sibling search field focused), not the whole rail.
-        let top: CGFloat = 56
+        let top: CGFloat = z(56)
         let scroll = NSScrollView(frame: NSRect(x: 0, y: top, width: w, height: bounds.height - top - footerH))
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -233,20 +233,20 @@ final class ConnectionRailView: FlippedView {
     /// Build the (filtered) connection list as a fresh document view. Each section is narrowed by the
     /// current `searchQuery` via the pure `ConnectionSearch` rule (an empty query yields the full list).
     private func makeListDocument(width w: CGFloat, minHeight: CGFloat, t: Theme) -> FlippedView {
-        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: 10))
-        var y: CGFloat = 6
+        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
+        var y: CGFloat = z(6)
 
         func section(_ title: String, _ items: [Connection], star: Bool, count: String?) {
             guard !items.isEmpty else { return }   // hide a section with nothing in it
             let head = sectionHeader(title, accentStar: star, count: count, width: w, t: t)
-            head.frame.origin.y = y; doc.addSubview(head); y += 28
+            head.frame.origin.y = y; doc.addSubview(head); y += z(28)
             for c in items {
                 let r = connRow(c, width: w, t: t)
-                r.frame.origin.y = y; doc.addSubview(r); y += 42
+                r.frame.origin.y = y; doc.addSubview(r); y += z(42)
             }
-            y += 8
+            y += z(8)
         }
-        func place(_ hint: NSView) { hint.frame.origin.y = y; doc.addSubview(hint); y += hint.frame.height + 4 }
+        func place(_ hint: NSView) { hint.frame.origin.y = y; doc.addSubview(hint); y += hint.frame.height + z(4) }
 
         if store.connections.isEmpty {
             // Whole-rail empty state: one merged prompt, no section headers.

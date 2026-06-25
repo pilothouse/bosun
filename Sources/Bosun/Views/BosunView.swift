@@ -179,9 +179,10 @@ final class BosunView: NSView {
     private func applyTheme() {
         layer?.backgroundColor = store.theme.win.cgColor
         titlebar.apply(); rail.apply(); center.apply(); repoPanel.apply()
-        // Re-skin the live libghostty surfaces too; the dock chrome repaints via center.apply().
-        // Guarded internally so non-theme notifies (selection, data) are a cheap no-op.
-        center.terminal.syncTerminalTheme()
+        // Re-skin and re-size the live libghostty surfaces too; the dock chrome repaints via
+        // center.apply(). Guarded internally so notifies that change neither the theme nor the zoom
+        // (selection, data) are a cheap no-op.
+        center.terminal.syncTerminal()
         needsLayout = true
     }
 
@@ -329,25 +330,33 @@ final class BosunView: NSView {
         center.terminal.restoreTabs(connections: store.domainConnections)
     }
 
+    /// Console-only terminal font zoom (⌥⌘+ / ⌥⌘− / ⌥⌘0), routed from the View menu to the focused
+    /// surface — independent of the global ⌘± zoom, which scales the whole UI and the terminal together.
+    func zoomTerminalIn() { center.terminal.zoomActiveTerminalIn() }
+    func zoomTerminalOut() { center.terminal.zoomActiveTerminalOut() }
+    func zoomTerminalReset() { center.terminal.resetActiveTerminalZoom() }
+
     override func layout() {
         super.layout()
         let w = bounds.width, h = bounds.height
         // A touch taller than the standard 28pt titlebar for breathing room; the titlebar's own
         // icons stay anchored to the traffic-light line (see TitlebarView), so they remain aligned
         // with close/minimise/zoom rather than drifting to the taller bar's centre.
-        let barH: CGFloat = 34
+        // Titlebar height scales with the UI zoom so the (globally scaled) breadcrumb/icons fit; the
+        // sidebar and orgs panel scale their fixed widths the same way so their scaled contents fit.
+        let barH: CGFloat = z(34)
         titlebar.frame = NSRect(x: 0, y: 0, width: w, height: barH)
         let rowY = barH, rowH = h - barH
-        // The rail keeps a fixed 266pt width and is parked off-screen to the left when collapsed, so a
-        // toggle is a pure horizontal slide of the panel. `railSpace` is the gap it leaves for the center
-        // column: 0 when collapsed (center reclaims the room), 266 when docked.
-        let railWidth: CGFloat = 266
+        // The rail keeps a fixed 266pt width (× zoom) and is parked off-screen to the left when
+        // collapsed, so a toggle is a pure horizontal slide of the panel. `railSpace` is the gap it
+        // leaves for the center column: 0 when collapsed (center reclaims the room), else its width.
+        let railWidth: CGFloat = z(266)
         let railSpace: CGFloat = store.railCollapsed ? 0 : railWidth
         rail.frame = NSRect(x: store.railCollapsed ? -railWidth : 0, y: rowY, width: railWidth, height: rowH)
-        // The repo panel mirrors the rail: fixed 312pt width, parked off-screen to the right (x = w)
-        // when collapsed so a toggle is a pure horizontal slide. `panelSpace` is the gap it leaves for
-        // the center column: 0 when collapsed (center reclaims the room), 312 when docked.
-        let panelWidth: CGFloat = 312
+        // The repo panel mirrors the rail: fixed 312pt width (× zoom), parked off-screen to the right
+        // (x = w) when collapsed so a toggle is a pure horizontal slide. `panelSpace` is the gap it
+        // leaves for the center column: 0 when collapsed (center reclaims the room), else its width.
+        let panelWidth: CGFloat = z(312)
         let panelSpace: CGFloat = store.repoPanelCollapsed ? 0 : panelWidth
         repoPanel.frame = NSRect(x: store.repoPanelCollapsed ? w : w - panelWidth, y: rowY, width: panelWidth, height: rowH)
         center.frame = NSRect(x: railSpace, y: rowY, width: max(0, w - railSpace - panelSpace), height: rowH)

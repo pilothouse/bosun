@@ -90,10 +90,12 @@ final class TerminalContainerView: FlippedView {
     private var startHeight: CGFloat = 240
     private var startFraction: CGFloat = CGFloat(Domain.SplitLayout.defaultFraction)
 
-    /// The theme key whose palette was last pushed to libghostty. `syncTerminalTheme` runs on every
-    /// store notify (selection, data, …), so this lets it skip the config rebuild unless the theme
-    /// actually changed. Seeded to the default the first surface is created with in `GhosttyApp.start()`.
+    /// The theme key and zoom level whose config was last pushed to libghostty. `syncTerminal` runs
+    /// on every store notify (selection, data, …), so these let it skip the config rebuild unless the
+    /// theme or the UI zoom actually changed. Seeded to the defaults the first surface is created
+    /// with in `GhosttyApp.start()` (the default palette at 100% zoom).
     private var lastThemeKey = "operator"
+    private var lastZoomPercent = 100
 
     init(store: Store, ghostty: GhosttyApp) {
         self.store = store
@@ -140,21 +142,32 @@ final class TerminalContainerView: FlippedView {
 
     func apply() { needsLayout = true }
 
-    /// Re-skin the live terminal to the current theme: rebuild the libghostty palette and push it to
-    /// the app + every open surface. A no-op unless the theme changed since the last push, so it's
-    /// cheap to call from the general theme/relayout path (issue #9). The dock chrome re-reads the
-    /// theme in `layout()`, so it updates separately via `apply()`.
-    func syncTerminalTheme() {
-        guard available, store.themeKey != lastThemeKey else { return }
+    /// Re-skin and re-size the live terminal to the current theme and UI zoom: rebuild the libghostty
+    /// config (the palette *and* the zoom-scaled `font-size`, both baked in by `GhosttyApp.makeConfig`)
+    /// and push it to the app + every open surface, so a ⌘+/⌘− re-syncs every terminal to the global
+    /// zoom in lockstep with the rest of the GUI. A no-op unless the theme or the zoom changed since
+    /// the last push, so it stays cheap on the general theme/relayout path (issue #9). The dock chrome
+    /// re-reads the theme/zoom in `layout()`, so it updates separately via `apply()`.
+    func syncTerminal() {
+        let zoom = store.uiZoom.percent
+        guard available, store.themeKey != lastThemeKey || zoom != lastZoomPercent else { return }
         lastThemeKey = store.themeKey
+        lastZoomPercent = zoom
         guard let cfg = ghostty.applyPalette(store.theme.terminalPalette) else { return }
         for session in views.values { session.surfaceView?.updateConfig(cfg) }
-        ghostty.tick()   // nudge a repaint with the new colors
+        ghostty.tick()   // nudge a repaint with the new colors/size
     }
 
     var activeSurfaceView: GhosttySurfaceView? {
         tabs.activeID.flatMap { views[$0]?.surfaceView }
     }
+
+    /// Console-only font zoom (⌥⌘+ / ⌥⌘− / ⌥⌘0): adjust just the focused terminal's font via
+    /// libghostty's native keybind action, independent of and layered over the global ⌘± zoom. A
+    /// no-op when the active tab is the error placeholder (no live surface).
+    func zoomActiveTerminalIn() { activeSurfaceView?.runBindingAction("increase_font_size:1") }
+    func zoomActiveTerminalOut() { activeSurfaceView?.runBindingAction("decrease_font_size:1") }
+    func resetActiveTerminalZoom() { activeSurfaceView?.runBindingAction("reset_font_size") }
 
     private var orderedSessions: [TerminalSession] { tabs.ids.compactMap { views[$0] } }
 
@@ -452,7 +465,7 @@ final class TerminalContainerView: FlippedView {
         // The drag grip sits on whichever terminal edge faces the detail pane — that depends on both
         // the axis and which side the terminal is on. `content` is everything left for the tab bar +
         // surface once the grip's `gripT` thickness is carved off that edge.
-        let gripT: CGFloat = 7
+        let gripT: CGFloat = z(7)
         let vertical = store.splitAxis == .vertical
         let leading = store.terminalLeading
         handle.axis = store.splitAxis
@@ -476,13 +489,13 @@ final class TerminalContainerView: FlippedView {
                 content = NSRect(x: gripT, y: 0, width: w - gripT, height: h)
             }
         }
-        let grip = BoxView(bg: t.txt5, radius: 1.5)
-        grip.frame = vertical ? NSRect(x: (w - 34) / 2, y: 2, width: 34, height: 3)
-                              : NSRect(x: 2, y: (h - 34) / 2, width: 3, height: 34)
+        let grip = BoxView(bg: t.txt5, radius: z(1.5))
+        grip.frame = vertical ? NSRect(x: (w - z(34)) / 2, y: z(2), width: z(34), height: z(3))
+                              : NSRect(x: z(2), y: (h - z(34)) / 2, width: z(3), height: z(34))
         handle.subviews.forEach { $0.removeFromSuperview() }
         handle.addSubview(grip)
 
-        let barH: CGFloat = 32
+        let barH: CGFloat = z(32)
         layoutTabBar(x: content.minX, w: content.width, y: content.minY, barH: barH, priorOffset: priorTabOffset)
 
         // Active surface fills the rest of the content; inactive sessions stay attached but hidden (so
@@ -502,13 +515,13 @@ final class TerminalContainerView: FlippedView {
         let bar = FlippedView(frame: NSRect(x: x, y: y, width: w, height: barH))
         bar.wantsLayer = true
         bar.layer?.backgroundColor = t.panel.cgColor
-        let topB = BoxView(bg: t.line); topB.frame = NSRect(x: 0, y: 0, width: w, height: 1); bar.addSubview(topB)
-        let botB = BoxView(bg: t.line2); botB.frame = NSRect(x: 0, y: barH - 1, width: w, height: 1); bar.addSubview(botB)
+        let topB = BoxView(bg: t.line); topB.frame = NSRect(x: 0, y: 0, width: w, height: z(1)); bar.addSubview(topB)
+        let botB = BoxView(bg: t.line2); botB.frame = NSRect(x: 0, y: barH - z(1), width: w, height: z(1)); bar.addSubview(botB)
 
         if available {
             // Tabs + the `+` button live in a scrolling document so they stay reachable when they
             // overflow the window width (#21). The doc is inset to clear the pinned resize chevron.
-            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: w - 36, height: barH))
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: w - z(36), height: barH))
             scroll.drawsBackground = false
             scroll.hasHorizontalScroller = true
             scroll.hasVerticalScroller = false   // a horizontal-only strip; never reserve vertical space
@@ -523,7 +536,7 @@ final class TerminalContainerView: FlippedView {
             scroll.verticalScrollElasticity = .none
             scroll.horizontalScroller = ThinScroller()
 
-            let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w - 36, height: barH))
+            let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w - z(36), height: barH))
             var x: CGFloat = 0
             var activeRect: NSRect?
             for session in orderedSessions {
@@ -535,7 +548,7 @@ final class TerminalContainerView: FlippedView {
             // New local tab. Trailing slack keeps the `+` off the right edge of the document.
             let plus = ClickRow(bg: nil)
             plus.hoverColor = t.hover
-            plus.frame = NSRect(x: x + 4, y: 5, width: 22, height: barH - 10)
+            plus.frame = NSRect(x: x + z(4), y: z(5), width: z(22), height: barH - z(10))
             plus.onClick = { [weak self] in self?.openLocalTab() }
             let pl = label("+", sys(15), t.txt4, align: .center)
             pl.frame = plus.bounds; plus.addSubview(pl)
@@ -543,7 +556,7 @@ final class TerminalContainerView: FlippedView {
 
             // Document height must equal the clip height exactly — a taller flipped doc anchors to the
             // top and can spawn a stray vertical scroller. Width spans the tabs + the `+` button extent.
-            doc.frame = NSRect(x: 0, y: 0, width: x + 4 + 22 + 4, height: barH)
+            doc.frame = NSRect(x: 0, y: 0, width: x + z(4) + z(22) + z(4), height: barH)
             scroll.documentView = doc
             bar.addSubview(scroll)
             tabScroll = scroll
@@ -557,13 +570,13 @@ final class TerminalContainerView: FlippedView {
             }
             if let active = tabs.activeID, let rect = activeRect, active != lastFocusedTabId {
                 lastFocusedTabId = active
-                DispatchQueue.main.async { [weak doc] in doc?.scrollToVisible(rect.insetBy(dx: -24, dy: 0)) }
+                DispatchQueue.main.async { [weak doc] in doc?.scrollToVisible(rect.insetBy(dx: -z(24), dy: 0)) }
             } else if tabs.activeID == nil {
                 lastFocusedTabId = nil
             }
         } else {
             let nm = label("terminal unavailable", sys(11.5), t.txt3)
-            nm.frame = NSRect(x: 14, y: 8, width: w - 28, height: 16); bar.addSubview(nm)
+            nm.frame = NSRect(x: z(14), y: z(8), width: w - z(28), height: z(16)); bar.addSubview(nm)
         }
 
         // Quick-snap chevron pinned at the far right, OUTSIDE the scroll view so it's never scrolled
@@ -581,10 +594,10 @@ final class TerminalContainerView: FlippedView {
         // Mirror the `+` new-tab button: a 22×(barH-10) hit target at y=5 with the same hover fill.
         let chevBtn = ClickRow(bg: nil)
         chevBtn.hoverColor = t.hover
-        chevBtn.frame = NSRect(x: w - 30, y: 5, width: 22, height: barH - 10)
+        chevBtn.frame = NSRect(x: w - z(30), y: z(5), width: z(22), height: barH - z(10))
         let chev = NSImageView(frame: chevBtn.bounds)
         chev.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        chev.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        chev.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: z(11), weight: .semibold)
         chev.contentTintColor = t.txt3
         chev.imageScaling = .scaleNone            // render at the configured size, centered in the button
         chevBtn.addSubview(chev)
@@ -606,7 +619,7 @@ final class TerminalContainerView: FlippedView {
 
     private func tabWidth(for title: String) -> CGFloat {
         // Glyph dot + label + close button, clamped so long titles (ssh hosts) don't dominate.
-        min(200, max(86, fitW(title, sys(11.5, .semibold)) + 56))
+        min(z(200), max(z(86), fitW(title, sys(11.5, .semibold)) + z(56)))
     }
 
     private func tabView(_ session: TerminalSession, width tw: CGFloat, barH: CGFloat, x: CGFloat) -> ClickRow {
@@ -619,9 +632,9 @@ final class TerminalContainerView: FlippedView {
         tab.onClick = { [weak self] in self?.handleTabClick(id: session.id) }
 
         let underline = BoxView(bg: active ? Status.green : .clear)
-        underline.frame = NSRect(x: 0, y: barH - 2, width: tw, height: 2); tab.addSubview(underline)
-        let d = Dot(session.dot, 7); d.frame.origin = NSPoint(x: 13, y: (barH - 7) / 2); tab.addSubview(d)
-        let nameFrame = NSRect(x: 28, y: 8, width: tw - 28 - 24, height: 16)
+        underline.frame = NSRect(x: 0, y: barH - z(2), width: tw, height: z(2)); tab.addSubview(underline)
+        let d = Dot(session.dot, z(7)); d.frame.origin = NSPoint(x: z(13), y: (barH - z(7)) / 2); tab.addSubview(d)
+        let nameFrame = NSRect(x: z(28), y: z(8), width: tw - z(28) - z(24), height: z(16))
         if session.id == editingTabId {
             tab.addSubview(renameEditor(session.title, frame: nameFrame, t: t))
         } else {
@@ -630,15 +643,15 @@ final class TerminalContainerView: FlippedView {
         }
 
         // Per-tab close (×). Sits above the tab, so its click closes without also selecting.
-        let close = ClickRow(radius: 4)
+        let close = ClickRow(radius: z(4))
         close.hoverColor = t.hover
-        close.frame = NSRect(x: tw - 22, y: (barH - 18) / 2, width: 18, height: 18)
+        close.frame = NSRect(x: tw - z(22), y: (barH - z(18)) / 2, width: z(18), height: z(18))
         close.onClick = { [weak self] in self?.requestCloseTab(id: session.id) }
         let xl = label("×", sys(13), t.txt3, align: .center)
         xl.frame = close.bounds; close.addSubview(xl)
         tab.addSubview(close)
 
-        let sep = BoxView(bg: t.line); sep.frame = NSRect(x: tw - 1, y: 0, width: 1, height: barH); tab.addSubview(sep)
+        let sep = BoxView(bg: t.line); sep.frame = NSRect(x: tw - z(1), y: 0, width: z(1), height: barH); tab.addSubview(sep)
         return tab
     }
 

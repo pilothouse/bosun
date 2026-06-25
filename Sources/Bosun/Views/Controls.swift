@@ -3,11 +3,25 @@ import AppKit
 /// A flipped container so manual frames lay out top-to-bottom.
 class FlippedView: NSView { override var isFlipped: Bool { true } }
 
+/// The app-wide zoom multiplier — the App-layer mirror of `Domain.UIZoom.scale`. Every font helper
+/// (`mono`/`sys`) and every laid-out constant (`z`) reads it, so one value scales the whole GUI in
+/// lockstep with the terminal (⌘+ / ⌘− / ⌘0). Single writer: `Store` calls `setUIScale` whenever
+/// `uiZoom` changes, then triggers a full view rebuild so every `layout()` re-reads it. A plain
+/// module global (not on `Store`) because the 153 font call sites and the manual layout math are
+/// free functions with no store reference; `Sources/Bosun` is the unconstrained composition layer,
+/// so a mirror here crosses no architecture boundary.
+private(set) var uiScale: CGFloat = 1.0
+func setUIScale(_ scale: CGFloat) { uiScale = scale }
+
+/// Scale a layout constant (point size, width, padding, radius) by the current zoom. The seam the
+/// manual `layout()` passes wrap their literals in so geometry grows with the fonts.
+func z(_ value: CGFloat) -> CGFloat { value * uiScale }
+
 func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-    NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    NSFont.monospacedSystemFont(ofSize: size * uiScale, weight: weight)
 }
 func sys(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-    NSFont.systemFont(ofSize: size, weight: weight)
+    NSFont.systemFont(ofSize: size * uiScale, weight: weight)
 }
 
 /// The width an `NSTextField` needs to render `text` in `font` without truncating.
@@ -155,10 +169,11 @@ final class AvatarView: NSView {
         }
 
         // Placeholder: solid fill + centered initials. The 12pt label height reproduces the prior
-        // hand-tuned offsets for the 20/22/26pt avatars exactly (y = 4/5/7).
+        // hand-tuned offsets for the 20/22/26pt avatars exactly (y = 4/5/7); it scales with the zoom
+        // so the centering stays exact as `size`/`initialsFont` grow.
         layer?.backgroundColor = placeholderColor.cgColor
         let il = label(initials, initialsFont, initialsColor, align: .center)
-        il.frame = NSRect(x: 0, y: (size - 12) / 2, width: size, height: 12)
+        il.frame = NSRect(x: 0, y: (size - z(12)) / 2, width: size, height: z(12))
         addSubview(il)
         self.initials = il
 
@@ -207,17 +222,18 @@ func makeSpinner(size: CGFloat = 20) -> NSProgressIndicator {
 
 /// A small badge: text inside a rounded, tinted, bordered pill.
 func badge(_ text: String, fg: NSColor, bg: NSColor? = nil, border: NSColor? = nil, mono monospaced: Bool = true) -> BoxView {
-    let b = BoxView(bg: bg, radius: 5, border: border)
+    let b = BoxView(bg: bg, radius: z(5), border: border)
     let f = monospaced ? mono(10.5) : sys(10.5, .semibold)
     let l = label(text, f, fg)
     // A plain NSTextField top-aligns its text, so a fixed-height frame leaves slack at the bottom and
     // the word sits high. Collapse the label to its exact line height (sizeToFit) and center that in
-    // the box, so ISSUE / PR / EPIC sit vertically centered inside the bordered chip.
+    // the box, so ISSUE / PR / EPIC sit vertically centered inside the bordered chip. The pill's
+    // height/padding scale with the zoom so the chip grows with its (already-scaled) text.
     l.sizeToFit()
     let w = fitW(text, f)
-    let h: CGFloat = 19
-    l.frame = NSRect(x: 7, y: ((h - l.frame.height) / 2).rounded(), width: w, height: l.frame.height)
+    let h: CGFloat = z(19)
+    l.frame = NSRect(x: z(7), y: ((h - l.frame.height) / 2).rounded(), width: w, height: l.frame.height)
     b.addSubview(l)
-    b.frame.size = NSSize(width: w + 14, height: h)
+    b.frame.size = NSSize(width: w + z(14), height: h)
     return b
 }

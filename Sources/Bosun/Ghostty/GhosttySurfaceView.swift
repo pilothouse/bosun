@@ -97,6 +97,20 @@ final class GhosttySurfaceView: NSView {
         ghostty_surface_update_config(surface, cfg)
     }
 
+    /// Invoke a libghostty keybind action by name on *this* surface only — the path for the
+    /// console-only font zoom (⌥⌘+ / ⌥⌘− / ⌥⌘0), which adjusts just the focused terminal on top of
+    /// the global zoom baseline. `action` is one of the strings ghostty's binding parser accepts,
+    /// e.g. `"increase_font_size:1"`, `"decrease_font_size:1"`, `"reset_font_size"`. Repaints on the
+    /// next app tick.
+    func runBindingAction(_ action: String) {
+        guard let surface else { return }
+        let ok = action.withCString {
+            ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count))
+        }
+        if !ok { NSLog("ghostty binding action failed: \(action)") }
+        GhosttyApp.shared.tick()
+    }
+
     deinit {
         if cursorHidden { NSCursor.unhide() }
         if let surface { ghostty_surface_free(surface) }

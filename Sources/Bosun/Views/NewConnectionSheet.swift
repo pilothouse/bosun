@@ -76,18 +76,18 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
         layer?.backgroundColor = NSColor.blackA(0.45).cgColor
 
         // SSH cards are taller to fit the optional CUSTOM COMMAND field; folder cards stay compact.
-        let cardW: CGFloat = 380
-        let cardH: CGFloat = kind == .ssh ? 486 : 404
-        let card = ClickRow(bg: t.panel, radius: 12)
+        let cardW: CGFloat = z(380)
+        let cardH: CGFloat = kind == .ssh ? z(486) : z(404)
+        let card = ClickRow(bg: t.panel, radius: z(12))
         card.layer?.borderWidth = 1
         card.layer?.borderColor = t.line2.cgColor
         card.layer?.shadowColor = NSColor.black.cgColor
         card.layer?.shadowOpacity = 0.5
-        card.layer?.shadowRadius = 24
-        card.layer?.shadowOffset = CGSize(width: 0, height: -8)
+        card.layer?.shadowRadius = z(24)
+        card.layer?.shadowOffset = CGSize(width: 0, height: z(-8))
         card.layer?.masksToBounds = false
         card.frame = NSRect(x: (bounds.width - cardW) / 2,
-                            y: max(56, (bounds.height - cardH) / 2),
+                            y: max(z(56), (bounds.height - cardH) / 2),
                             width: cardW, height: cardH)
         addSubview(card)
         buildCard(card, t: t, w: cardW, h: cardH)
@@ -97,81 +97,81 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
     // MARK: Build
 
     private func buildCard(_ card: ClickRow, t: Theme, w: CGFloat, h: CGFloat) {
-        let pad: CGFloat = 20
+        let pad: CGFloat = z(20)
         let innerW = w - pad * 2
 
         let title = label(editing == nil ? "New connection" : "Edit connection", sys(15, .semibold), t.txt)
-        title.frame = NSRect(x: pad, y: 18, width: innerW, height: 22); card.addSubview(title)
+        title.frame = NSRect(x: pad, y: z(18), width: innerW, height: z(22)); card.addSubview(title)
 
         // Kind segmented toggle.
-        let gap: CGFloat = 6
+        let gap: CGFloat = z(6)
         let halfW = (innerW - gap) / 2
         let sshSeg = segButton("SSH remote", selected: kind == .ssh, t: t,
-                               frame: NSRect(x: pad, y: 50, width: halfW, height: 32)) { [weak self] in self?.selectKind(.ssh) }
+                               frame: NSRect(x: pad, y: z(50), width: halfW, height: z(32))) { [weak self] in self?.selectKind(.ssh) }
         let dirSeg = segButton("Local folder", selected: kind == .folder, t: t,
-                               frame: NSRect(x: pad + halfW + gap, y: 50, width: halfW, height: 32)) { [weak self] in self?.selectKind(.folder) }
+                               frame: NSRect(x: pad + halfW + gap, y: z(50), width: halfW, height: z(32))) { [weak self] in self?.selectKind(.folder) }
         card.addSubview(sshSeg); card.addSubview(dirSeg)
 
         // Name (always).
-        card.addSubview(caption("NAME", t: t, frame: NSRect(x: pad, y: 96, width: innerW, height: 12)))
+        card.addSubview(caption("NAME", t: t, frame: NSRect(x: pad, y: z(96), width: innerW, height: z(12))))
         let nf = field(name, placeholder: kind == .ssh ? "prod-vm-01" : "api-gateway", t: t)
-        nf.frame = NSRect(x: pad, y: 112, width: innerW, height: 26); card.addSubview(nf); nameField = nf
+        nf.frame = NSRect(x: pad, y: z(112), width: innerW, height: z(26)); card.addSubview(nf); nameField = nf
 
         // Kind-specific fields.
         if kind == .ssh {
-            card.addSubview(caption("HOST", t: t, frame: NSRect(x: pad, y: 150, width: innerW, height: 12)))
+            card.addSubview(caption("HOST", t: t, frame: NSRect(x: pad, y: z(150), width: innerW, height: z(12))))
             let hf = field(host, placeholder: "10.0.2.11 or gpu.ts.net", t: t)
-            hf.frame = NSRect(x: pad, y: 166, width: innerW, height: 26); card.addSubview(hf); hostField = hf
+            hf.frame = NSRect(x: pad, y: z(166), width: innerW, height: z(26)); card.addSubview(hf); hostField = hf
 
-            card.addSubview(caption("PORT", t: t, frame: NSRect(x: pad, y: 200, width: 96, height: 12)))
+            card.addSubview(caption("PORT", t: t, frame: NSRect(x: pad, y: z(200), width: z(96), height: z(12))))
             let pf = field(port, placeholder: "22", t: t)
-            pf.frame = NSRect(x: pad, y: 216, width: 96, height: 26); card.addSubview(pf); portField = pf
+            pf.frame = NSRect(x: pad, y: z(216), width: z(96), height: z(26)); card.addSubview(pf); portField = pf
 
-            card.addSubview(caption("USER (OPTIONAL)", t: t, frame: NSRect(x: pad + 108, y: 200, width: innerW - 108, height: 12)))
+            card.addSubview(caption("USER (OPTIONAL)", t: t, frame: NSRect(x: pad + z(108), y: z(200), width: innerW - z(108), height: z(12))))
             let uf = field(user, placeholder: "root", t: t)
-            uf.frame = NSRect(x: pad + 108, y: 216, width: innerW - 108, height: 26); card.addSubview(uf); userField = uf
+            uf.frame = NSRect(x: pad + z(108), y: z(216), width: innerW - z(108), height: z(26)); card.addSubview(uf); userField = uf
 
             // Optional post-connect command, embedded into the launch line as `ssh … -t '<cmd>'`.
             // A tall, wrapping text box (not a single-line field) so a long command stays fully
             // visible without scrolling horizontally inside the input.
-            card.addSubview(caption("CUSTOM COMMAND (OPTIONAL)", t: t, frame: NSRect(x: pad, y: 250, width: innerW, height: 12)))
-            let cmdBox = commandBox(t: t, frame: NSRect(x: pad, y: 266, width: innerW, height: 58))
+            card.addSubview(caption("CUSTOM COMMAND (OPTIONAL)", t: t, frame: NSRect(x: pad, y: z(250), width: innerW, height: z(12))))
+            let cmdBox = commandBox(t: t, frame: NSRect(x: pad, y: z(266), width: innerW, height: z(58)))
             card.addSubview(cmdBox)
         } else {
-            card.addSubview(caption("FOLDER", t: t, frame: NSRect(x: pad, y: 150, width: innerW, height: 12)))
-            let chooseW: CGFloat = 84
+            card.addSubview(caption("FOLDER", t: t, frame: NSRect(x: pad, y: z(150), width: innerW, height: z(12))))
+            let chooseW: CGFloat = z(84)
             let pf = field(path, placeholder: "~/dev/api-gateway", t: t)
-            pf.frame = NSRect(x: pad, y: 166, width: innerW - chooseW - 8, height: 26); card.addSubview(pf); pathField = pf
+            pf.frame = NSRect(x: pad, y: z(166), width: innerW - chooseW - z(8), height: z(26)); card.addSubview(pf); pathField = pf
             let choose = textButton("Choose…", t: t, accent: false,
-                                    frame: NSRect(x: pad + innerW - chooseW, y: 166, width: chooseW, height: 26)) { [weak self] in self?.chooseFolder() }
+                                    frame: NSRect(x: pad + innerW - chooseW, y: z(166), width: chooseW, height: z(26))) { [weak self] in self?.chooseFolder() }
             card.addSubview(choose)
         }
 
         // Favorite toggle + validation errors sit below the kind-specific fields; the SSH card's
         // taller CUSTOM COMMAND row pushes them down by 82pt (matched by the taller cardH).
-        let favY: CGFloat = kind == .ssh ? 338 : 256
-        let errY: CGFloat = kind == .ssh ? 372 : 290
-        let fav = ClickRow(radius: 6)
+        let favY: CGFloat = kind == .ssh ? z(338) : z(256)
+        let errY: CGFloat = kind == .ssh ? z(372) : z(290)
+        let fav = ClickRow(radius: z(6))
         fav.hoverColor = t.hover
-        fav.frame = NSRect(x: pad - 6, y: favY, width: innerW + 12, height: 26)
+        fav.frame = NSRect(x: pad - z(6), y: favY, width: innerW + z(12), height: z(26))
         fav.onClick = { [weak self] in self?.toggleFavorite() }
         let star = label(isFavorite ? "★" : "☆", sys(13), isFavorite ? t.accent : t.txt4)
-        star.frame = NSRect(x: 6, y: 5, width: 16, height: 16); fav.addSubview(star)
+        star.frame = NSRect(x: z(6), y: z(5), width: z(16), height: z(16)); fav.addSubview(star)
         let favLabel = label("Add to favorites", sys(12), t.txt2)
-        favLabel.frame = NSRect(x: 26, y: 5, width: innerW - 26, height: 16); fav.addSubview(favLabel)
+        favLabel.frame = NSRect(x: z(26), y: z(5), width: innerW - z(26), height: z(16)); fav.addSubview(favLabel)
         card.addSubview(fav)
 
         // Validation errors.
         if !errors.isEmpty {
             let msg = errors.map(message(for:)).joined(separator: "  ·  ")
             let err = label(msg, sys(11), Status.red, lines: 2)
-            err.frame = NSRect(x: pad, y: errY, width: innerW, height: 32); card.addSubview(err)
+            err.frame = NSRect(x: pad, y: errY, width: innerW, height: z(32)); card.addSubview(err)
         }
 
         // Buttons.
-        let btnW: CGFloat = 84, btnH: CGFloat = 30, btnY = h - 44
+        let btnW: CGFloat = z(84), btnH: CGFloat = z(30), btnY = h - z(44)
         let cancel = textButton("Cancel", t: t, accent: false,
-                                frame: NSRect(x: pad + innerW - btnW * 2 - 8, y: btnY, width: btnW, height: btnH)) { [weak self] in self?.onClose?() }
+                                frame: NSRect(x: pad + innerW - btnW * 2 - z(8), y: btnY, width: btnW, height: btnH)) { [weak self] in self?.onClose?() }
         let add = textButton(editing == nil ? "Add" : "Save", t: t, accent: true,
                              frame: NSRect(x: pad + innerW - btnW, y: btnY, width: btnW, height: btnH)) { [weak self] in self?.submit() }
         card.addSubview(cancel); card.addSubview(add)
@@ -216,7 +216,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
     /// container used by the comment composer. A single-line `NSTextField` would scroll a long
     /// command horizontally; this keeps the whole command visible (wrapping, then vertical scroll).
     private func commandBox(t: Theme, frame: NSRect) -> NSView {
-        let box = BoxView(bg: t.card, radius: 8, border: t.cardbr)
+        let box = BoxView(bg: t.card, radius: z(8), border: t.cardbr)
         box.frame = frame
 
         let scroll = NSScrollView(frame: NSRect(x: 1, y: 1, width: frame.width - 2, height: frame.height - 2))
@@ -249,7 +249,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
         tv.isAutomaticDataDetectionEnabled = false
         tv.isAutomaticLinkDetectionEnabled = false
         tv.smartInsertDeleteEnabled = false
-        tv.textContainerInset = NSSize(width: 6, height: 6)
+        tv.textContainerInset = NSSize(width: z(6), height: z(6))
         tv.textContainer?.lineFragmentPadding = 0
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false
@@ -288,24 +288,24 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
     }
 
     private func segButton(_ title: String, selected: Bool, t: Theme, frame: NSRect, action: @escaping () -> Void) -> ClickRow {
-        let r = ClickRow(bg: selected ? t.accentbg : t.card, radius: 7)
+        let r = ClickRow(bg: selected ? t.accentbg : t.card, radius: z(7))
         r.hoverColor = selected ? nil : t.hover
         r.frame = frame
         r.onClick = action
         let l = label(title, sys(12, selected ? .semibold : .regular), selected ? t.accent : t.txt3, align: .center)
-        l.frame = NSRect(x: 0, y: (frame.height - 16) / 2, width: frame.width, height: 16)
+        l.frame = NSRect(x: 0, y: (frame.height - z(16)) / 2, width: frame.width, height: z(16))
         r.addSubview(l)
         return r
     }
 
     private func textButton(_ title: String, t: Theme, accent: Bool, frame: NSRect, action: @escaping () -> Void) -> ClickRow {
-        let r = ClickRow(bg: accent ? t.accent : t.card, radius: 7)
+        let r = ClickRow(bg: accent ? t.accent : t.card, radius: z(7))
         r.hoverColor = accent ? nil : t.hover
         if !accent { r.layer?.borderWidth = 1; r.layer?.borderColor = t.line2.cgColor }
         r.frame = frame
         r.onClick = action
         let l = label(title, sys(12, .semibold), accent ? t.onacc : t.txt2, align: .center)
-        l.frame = NSRect(x: 0, y: (frame.height - 16) / 2, width: frame.width, height: 16)
+        l.frame = NSRect(x: 0, y: (frame.height - z(16)) / 2, width: frame.width, height: z(16))
         r.addSubview(l)
         return r
     }

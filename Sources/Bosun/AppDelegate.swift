@@ -56,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 store.statusMenuOpen = false
             }
         }
+        // ⌘= (the unshifted +/= key) zooms in too, matching the menu's ⌘+ without a duplicate item.
+        win.onZoomIn = { [weak self] in self?.zoomIn() }
         win.titlebarAppearsTransparent = true
         win.titleVisibility = .hidden
         win.title = "Bosun"
@@ -165,6 +167,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openSettings() {
         root.store.settingsOpen = true
     }
+
+    // MARK: Zoom (Bosun menu)
+
+    /// True when the live terminal surface holds focus, so ⌘± should zoom just the console.
+    private var isConsoleFocused: Bool { window?.firstResponder is GhosttySurfaceView }
+
+    /// Contextual zoom (⌘+ / ⌘− / ⌘0): when the console is focused, zoom only that terminal (via
+    /// libghostty's native font zoom); otherwise zoom the whole GUI — fonts, layout geometry, and the
+    /// terminal font in lockstep — via `Store.uiZoom`. The main menu dispatches these before the
+    /// focused view sees the keystroke, and the focus check happens at action time, so a ⌘+ typed
+    /// into the terminal grows just the terminal while one typed elsewhere grows the whole app.
+    @objc private func zoomIn() { isConsoleFocused ? root.zoomTerminalIn() : zoomAppIn() }
+    @objc private func zoomOut() { isConsoleFocused ? root.zoomTerminalOut() : zoomAppOut() }
+    @objc private func zoomActualSize() { isConsoleFocused ? root.zoomTerminalReset() : zoomAppActualSize() }
+
+    /// Whole-app zoom: scales the entire GUI + terminal in lockstep via `Store.uiZoom`. Used by the
+    /// contextual handlers above for the non-console path (the menu has no direct items for these).
+    private func zoomAppIn() { root.store.uiZoom = root.store.uiZoom.zoomedIn() }
+    private func zoomAppOut() { root.store.uiZoom = root.store.uiZoom.zoomedOut() }
+    private func zoomAppActualSize() { root.store.uiZoom = root.store.uiZoom.reset() }
 
     /// Standard macOS about panel. Version + build come from the bundle's Info.plist (stamped by
     /// scripts/package-app.sh from the release tag); a bare `swift build` executable has no Info.plist,
@@ -283,6 +305,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsItem.target = self
         appMenu.addItem(settingsItem)
         appMenu.addItem(.separator())
+        // Zoom is grouped under a single "Zoom ▸" submenu in the Bosun menu. Each item zooms
+        // contextually — the focused console, else the whole app (see `zoomIn`). Key equivalents fire
+        // from a closed submenu, so the shortcuts work without opening it.
+        let zoomItem = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
+        let zoomMenu = NSMenu(title: "Zoom")
+        addZoomItem(to: zoomMenu, "Zoom In", #selector(zoomIn), "+")
+        addZoomItem(to: zoomMenu, "Zoom Out", #selector(zoomOut), "-")
+        addZoomItem(to: zoomMenu, "Actual Size", #selector(zoomActualSize), "0")
+        zoomItem.submenu = zoomMenu
+        appMenu.addItem(zoomItem)
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Bosun", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
@@ -307,5 +340,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editItem.submenu = editMenu
 
         NSApp.mainMenu = mainMenu
+    }
+
+    /// Add one ⌘-modified zoom menu item targeting self. The unshifted ⌘= compatibility shortcut is
+    /// handled in `DismissingWindow.performKeyEquivalent`, not here, so the menu shows a single clean
+    /// shortcut per row.
+    private func addZoomItem(to menu: NSMenu, _ title: String, _ action: Selector, _ key: String) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.keyEquivalentModifierMask = .command
+        item.target = self
+        menu.addItem(item)
     }
 }

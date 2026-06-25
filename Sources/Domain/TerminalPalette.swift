@@ -19,14 +19,17 @@ public struct TerminalPalette: Equatable, Sendable {
 
     /// The libghostty config override block: the surface colors first, then one repeated
     /// `palette = <index>=<hex>` line per ANSI entry (the form ghostty's parser expects). Loaded
-    /// after the user's default files so these win.
-    public func ghosttyConfig(fontFamily: String, cursorStyle: String) -> String {
+    /// after the user's default files so these win. `fontSize` (points) is the app-wide zoom level
+    /// applied to the terminal so it scales in lockstep with the UI; rounded to two decimals so the
+    /// emitted config text is stable (a clean `font-size = 15.6`, not a long float tail).
+    public func ghosttyConfig(fontFamily: String, cursorStyle: String, fontSize: Double) -> String {
         var lines = [
             "background = \(background)",
             "foreground = \(foreground)",
             "cursor-color = \(cursor)",
             "cursor-style = \(cursorStyle)",
             "font-family = \(fontFamily)",
+            "font-size = \((fontSize * 100).rounded() / 100)",
         ]
         for (index, hex) in ansi.enumerated() {
             lines.append("palette = \(index)=\(hex)")

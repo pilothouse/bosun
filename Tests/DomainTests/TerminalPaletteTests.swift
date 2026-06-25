@@ -13,20 +13,22 @@ final class TerminalPaletteTests: XCTestCase {
     }
 
     func testRendersTheFullOverrideBlockInOrder() {
-        let text = samplePalette().ghosttyConfig(fontFamily: "JetBrains Mono", cursorStyle: "block")
+        let text = samplePalette().ghosttyConfig(fontFamily: "JetBrains Mono", cursorStyle: "block",
+                                                 fontSize: 13)
         var expected = """
         background = 0a0c0f
         foreground = c2c6cd
         cursor-color = 7c8cff
         cursor-style = block
         font-family = JetBrains Mono
+        font-size = 13.0
         """
         for i in 0..<16 { expected += "\npalette = \(i)=00000" + String(i, radix: 16) }
         XCTAssertEqual(text, expected)
     }
 
     func testEmitsExactlySixteenPaletteLines() {
-        let text = samplePalette().ghosttyConfig(fontFamily: "Menlo", cursorStyle: "bar")
+        let text = samplePalette().ghosttyConfig(fontFamily: "Menlo", cursorStyle: "bar", fontSize: 13)
         let paletteLines = text.split(separator: "\n").filter { $0.hasPrefix("palette = ") }
         XCTAssertEqual(paletteLines.count, 16)
         XCTAssertEqual(paletteLines.first, "palette = 0=000000")
@@ -34,8 +36,17 @@ final class TerminalPaletteTests: XCTestCase {
     }
 
     func testFontAndCursorStyleAreParameterized() {
-        let text = samplePalette().ghosttyConfig(fontFamily: "Fira Code", cursorStyle: "underline")
+        let text = samplePalette().ghosttyConfig(fontFamily: "Fira Code", cursorStyle: "underline",
+                                                 fontSize: 13)
         XCTAssertTrue(text.contains("font-family = Fira Code"))
         XCTAssertTrue(text.contains("cursor-style = underline"))
+    }
+
+    func testFontSizeIsRenderedAndRoundedToTwoDecimals() {
+        // The App layer feeds base × zoom-scale here, which carries a float tail (13 × 1.2 ≈
+        // 15.600000000000001); the renderer must emit a clean `font-size = 15.6`.
+        let text = samplePalette().ghosttyConfig(fontFamily: "Menlo", cursorStyle: "block",
+                                                 fontSize: 13 * 1.2)
+        XCTAssertTrue(text.contains("font-size = 15.6"), "got: \(text)")
     }
 }

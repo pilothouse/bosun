@@ -10,7 +10,7 @@ final class ManageOrgsSheet: FlippedView {
     private let store: Store
     var onClose: (() -> Void)?
 
-    private let rowH: CGFloat = 34
+    private let rowH: CGFloat = z(34)
 
     // Live-drag session state. `listDoc` is the scroll document holding the rows; `followedRows`
     // maps an org id to its row view so the drag can reposition siblings without a full rebuild.
@@ -70,25 +70,25 @@ final class ManageOrgsSheet: FlippedView {
         let followedSet = Set(followed.map(\.id))
         let unfollowed = orgs.filter { !followedSet.contains($0.id) }
 
-        let cardW: CGFloat = 380
+        let cardW: CGFloat = z(380)
         // The header holds the title, subtitle, and the repo-ordering dropdown row.
-        let headerH: CGFloat = 104, footerH: CGFloat = 56
+        let headerH: CGFloat = z(104), footerH: CGFloat = z(56)
         // Each org gets a row; the "not shown" caption gets a half-row when both sections exist.
-        let captionH: CGFloat = (!followed.isEmpty && !unfollowed.isEmpty) ? 24 : 0
-        let contentH = CGFloat(orgs.count) * rowH + captionH + 12
-        let listH = min(max(contentH, rowH), 360)
+        let captionH: CGFloat = (!followed.isEmpty && !unfollowed.isEmpty) ? z(24) : 0
+        let contentH = CGFloat(orgs.count) * rowH + captionH + z(12)
+        let listH = min(max(contentH, rowH), z(360))
         let cardH = headerH + listH + footerH
 
-        let card = ClickRow(bg: t.panel, radius: 12)
+        let card = ClickRow(bg: t.panel, radius: z(12))
         card.layer?.borderWidth = 1
         card.layer?.borderColor = t.line2.cgColor
         card.layer?.shadowColor = NSColor.black.cgColor
         card.layer?.shadowOpacity = 0.5
-        card.layer?.shadowRadius = 24
-        card.layer?.shadowOffset = CGSize(width: 0, height: -8)
+        card.layer?.shadowRadius = z(24)
+        card.layer?.shadowOffset = CGSize(width: 0, height: z(-8))
         card.layer?.masksToBounds = false
         card.frame = NSRect(x: (bounds.width - cardW) / 2,
-                            y: max(56, (bounds.height - cardH) / 2),
+                            y: max(z(56), (bounds.height - cardH) / 2),
                             width: cardW, height: cardH)
         addSubview(card)
         buildCard(card, t: t, w: cardW, h: cardH, headerH: headerH, listH: listH,
@@ -100,27 +100,27 @@ final class ManageOrgsSheet: FlippedView {
     private func buildCard(_ card: ClickRow, t: Theme, w: CGFloat, h: CGFloat,
                            headerH: CGFloat, listH: CGFloat,
                            followed: [Org], unfollowed: [Org]) {
-        let pad: CGFloat = 20
+        let pad: CGFloat = z(20)
         let innerW = w - pad * 2
 
         let title = label("Manage organizations", sys(15, .semibold), t.txt)
-        title.frame = NSRect(x: pad, y: 18, width: innerW, height: 22); card.addSubview(title)
+        title.frame = NSRect(x: pad, y: z(18), width: innerW, height: z(22)); card.addSubview(title)
         let sub = label("Choose which orgs appear in the panel. Drag ☰ to reorder.",
                         sys(11, .regular), t.txt4, lines: 1)
-        sub.frame = NSRect(x: pad, y: 41, width: innerW, height: 14); card.addSubview(sub)
+        sub.frame = NSRect(x: pad, y: z(41), width: innerW, height: z(14)); card.addSubview(sub)
 
         // Repo-ordering dropdown: same shape as the panel's View-options button.
         let orderCap = label("Order:", sys(11.5), t.txt3)
-        orderCap.frame = NSRect(x: pad, y: 70, width: 44, height: 16); card.addSubview(orderCap)
-        let ddX = pad + 50, ddW: CGFloat = 150
-        let dd = ClickRow(bg: t.card, radius: 8)
+        orderCap.frame = NSRect(x: pad, y: z(70), width: z(44), height: z(16)); card.addSubview(orderCap)
+        let ddX = pad + z(50), ddW: CGFloat = z(150)
+        let dd = ClickRow(bg: t.card, radius: z(8))
         dd.hoverColor = t.hover
-        dd.frame = NSRect(x: ddX, y: 65, width: ddW, height: 30)
+        dd.frame = NSRect(x: ddX, y: z(65), width: ddW, height: z(30))
         dd.layer?.borderWidth = 1; dd.layer?.borderColor = t.cardbr.cgColor
         let ddl = label(Self.orderLabel(store.repoOrdering), sys(12, .semibold), t.txt)
-        ddl.frame = NSRect(x: 12, y: 7, width: ddW - 12 - 22, height: 16); dd.addSubview(ddl)
+        ddl.frame = NSRect(x: z(12), y: z(7), width: ddW - z(12) - z(22), height: z(16)); dd.addSubview(ddl)
         let ddc = label("▾", sys(10), t.txt4, align: .right)
-        ddc.frame = NSRect(x: ddW - 22, y: 7, width: 14, height: 16); dd.addSubview(ddc)
+        ddc.frame = NSRect(x: ddW - z(22), y: z(7), width: z(14), height: z(16)); dd.addSubview(ddc)
         dd.onClick = { [weak self] in self?.orderMenuOpen.toggle(); self?.needsLayout = true }
         card.addSubview(dd)
 
@@ -133,7 +133,7 @@ final class ManageOrgsSheet: FlippedView {
 
         if store.orgs.isEmpty {
             let empty = label("No organizations on this account.", sys(12), t.txt3, align: .center)
-            empty.frame = NSRect(x: pad, y: headerH + listH / 2 - 8, width: innerW, height: 16)
+            empty.frame = NSRect(x: pad, y: headerH + listH / 2 - z(8), width: innerW, height: z(16))
             card.addSubview(empty)
         } else {
             buildList(in: card, t: t, x: 0, y: headerH, w: w, h: listH,
@@ -141,7 +141,7 @@ final class ManageOrgsSheet: FlippedView {
         }
 
         // Footer: Reset (back to show-all) on the left, Done on the right.
-        let btnW: CGFloat = 84, btnH: CGFloat = 30, btnY = h - 44
+        let btnW: CGFloat = z(84), btnH: CGFloat = z(30), btnY = h - z(44)
         let reset = textButton("Reset", t: t, accent: false,
                                frame: NSRect(x: pad, y: btnY, width: btnW, height: btnH)) { [weak self] in
             self?.store.followedOrgs = nil
@@ -156,29 +156,29 @@ final class ManageOrgsSheet: FlippedView {
         // View-options dropdown (RepoPanelView): a ✓ on the active mode, label, row per case.
         if orderMenuOpen {
             let modes = RepoOrderingMode.allCases
-            let menu = BoxView(bg: t.panel, radius: 10, border: t.line2)
-            menu.frame = NSRect(x: ddX, y: 65 + 34, width: ddW, height: CGFloat(modes.count) * 36 + 10)
+            let menu = BoxView(bg: t.panel, radius: z(10), border: t.line2)
+            menu.frame = NSRect(x: ddX, y: z(65) + z(34), width: ddW, height: CGFloat(modes.count) * z(36) + z(10))
             menu.layer?.shadowColor = NSColor.black.cgColor
             menu.layer?.shadowOpacity = 0.45
-            menu.layer?.shadowRadius = 16
-            menu.layer?.shadowOffset = CGSize(width: 0, height: -6)
+            menu.layer?.shadowRadius = z(16)
+            menu.layer?.shadowOffset = CGSize(width: 0, height: z(-6))
             menu.layer?.masksToBounds = false
-            var my: CGFloat = 5
+            var my: CGFloat = z(5)
             for mode in modes {
                 let on = store.repoOrdering == mode
-                let row = ClickRow(bg: on ? t.accentbg : nil, radius: 7)
+                let row = ClickRow(bg: on ? t.accentbg : nil, radius: z(7))
                 row.hoverColor = t.hover
-                row.frame = NSRect(x: 5, y: my, width: ddW - 10, height: 34)
+                row.frame = NSRect(x: z(5), y: my, width: ddW - z(10), height: z(34))
                 let chk = label(on ? "✓" : "", sys(11), t.accent)
-                chk.frame = NSRect(x: 10, y: 9, width: 14, height: 16); row.addSubview(chk)
+                chk.frame = NSRect(x: z(10), y: z(9), width: z(14), height: z(16)); row.addSubview(chk)
                 let ml = label(Self.orderLabel(mode), sys(12.5), t.txt)
-                ml.frame = NSRect(x: 30, y: 9, width: ddW - 40, height: 16); row.addSubview(ml)
+                ml.frame = NSRect(x: z(30), y: z(9), width: ddW - z(40), height: z(16)); row.addSubview(ml)
                 row.onClick = { [weak self] in
                     self?.store.repoOrdering = mode
                     self?.orderMenuOpen = false
                     self?.needsLayout = true
                 }
-                menu.addSubview(row); my += 36
+                menu.addSubview(row); my += z(36)
             }
             card.addSubview(menu)
         }
@@ -199,14 +199,14 @@ final class ManageOrgsSheet: FlippedView {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: 10))
+        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
         listDoc = doc
 
         followedRows = [:]
         dragOrder = followed.map(\.id)
         let canReorder = followed.count >= 2
 
-        var dy: CGFloat = 6
+        var dy: CGFloat = z(6)
         listTopInDoc = dy
         for org in followed {
             let row = orgRow(org, t: t, w: w, followed: true, draggable: canReorder)
@@ -217,8 +217,8 @@ final class ManageOrgsSheet: FlippedView {
 
         if !followed.isEmpty && !unfollowed.isEmpty {
             let cap = label("NOT SHOWN", mono(9.5, .semibold), t.txt4)
-            cap.frame = NSRect(x: 20, y: dy + 6, width: 160, height: 12); doc.addSubview(cap)
-            dy += 24
+            cap.frame = NSRect(x: z(20), y: dy + z(6), width: z(160), height: z(12)); doc.addSubview(cap)
+            dy += z(24)
         }
 
         for org in unfollowed {
@@ -227,22 +227,22 @@ final class ManageOrgsSheet: FlippedView {
             dy += rowH
         }
 
-        doc.frame.size = NSSize(width: w, height: max(dy + 6, h))
+        doc.frame.size = NSSize(width: w, height: max(dy + z(6), h))
         scroll.documentView = doc
         card.addSubview(scroll)
     }
 
     /// One org row: drag handle (followed + reorderable only), follow checkbox, color square, name.
     private func orgRow(_ org: Org, t: Theme, w: CGFloat, followed: Bool, draggable: Bool) -> ClickRow {
-        let row = ClickRow(bg: nil, radius: 7)
+        let row = ClickRow(bg: nil, radius: z(7))
         row.hoverColor = t.hover
-        row.frame = NSRect(x: 8, y: 0, width: w - 16, height: rowH - 4)
+        row.frame = NSRect(x: z(8), y: 0, width: w - z(16), height: rowH - z(4))
         row.onClick = { [weak self] in self?.toggle(org.id) }
 
         if draggable {
-            let handle = OrgDragGrip(frame: NSRect(x: 6, y: 0, width: 24, height: rowH - 4))
+            let handle = OrgDragGrip(frame: NSRect(x: z(6), y: 0, width: z(24), height: rowH - z(4)))
             let hl = label("☰", sys(13), t.txt4, align: .center)
-            hl.frame = NSRect(x: 0, y: (rowH - 4 - 16) / 2, width: 24, height: 16); handle.addSubview(hl)
+            hl.frame = NSRect(x: 0, y: (rowH - z(4) - z(16)) / 2, width: z(24), height: z(16)); handle.addSubview(hl)
             handle.onDown = { [weak self] e in self?.beginDrag(org.id, event: e) }
             handle.onDrag = { [weak self] e in self?.updateDrag(event: e) }
             handle.onUp = { [weak self] _ in self?.endDrag() }
@@ -250,28 +250,28 @@ final class ManageOrgsSheet: FlippedView {
         }
 
         let check = label(followed ? "☑" : "☐", sys(13), followed ? t.accent : t.txt4)
-        check.frame = NSRect(x: 34, y: (rowH - 4 - 16) / 2, width: 16, height: 16); row.addSubview(check)
+        check.frame = NSRect(x: z(34), y: (rowH - z(4) - z(16)) / 2, width: z(16), height: z(16)); row.addSubview(check)
 
-        let sq = BoxView(bg: org.color, radius: 5)
-        sq.frame = NSRect(x: 58, y: (rowH - 4 - 18) / 2, width: 18, height: 18)
+        let sq = BoxView(bg: org.color, radius: z(5))
+        sq.frame = NSRect(x: z(58), y: (rowH - z(4) - z(18)) / 2, width: z(18), height: z(18))
         let initials = label(String(org.name.prefix(2)).uppercased(), sys(8, .bold), .white, align: .center)
-        initials.frame = sq.bounds.insetBy(dx: 0, dy: 4); sq.addSubview(initials)
+        initials.frame = sq.bounds.insetBy(dx: 0, dy: z(4)); sq.addSubview(initials)
         row.addSubview(sq)
 
         let nm = label(org.name, sys(12.5, followed ? .semibold : .regular), followed ? t.txt : t.txt3)
-        nm.frame = NSRect(x: 84, y: (rowH - 4 - 16) / 2, width: w - 16 - 84 - 12, height: 16)
+        nm.frame = NSRect(x: z(84), y: (rowH - z(4) - z(16)) / 2, width: w - z(16) - z(84) - z(12), height: z(16))
         row.addSubview(nm)
         return row
     }
 
     private func textButton(_ title: String, t: Theme, accent: Bool, frame: NSRect, action: @escaping () -> Void) -> ClickRow {
-        let r = ClickRow(bg: accent ? t.accent : t.card, radius: 7)
+        let r = ClickRow(bg: accent ? t.accent : t.card, radius: z(7))
         r.hoverColor = accent ? nil : t.hover
         if !accent { r.layer?.borderWidth = 1; r.layer?.borderColor = t.line2.cgColor }
         r.frame = frame
         r.onClick = action
         let l = label(title, sys(12, .semibold), accent ? t.onacc : t.txt2, align: .center)
-        l.frame = NSRect(x: 0, y: (frame.height - 16) / 2, width: frame.width, height: 16)
+        l.frame = NSRect(x: 0, y: (frame.height - z(16)) / 2, width: frame.width, height: z(16))
         r.addSubview(l)
         return r
     }
@@ -286,8 +286,8 @@ final class ManageOrgsSheet: FlippedView {
         doc.addSubview(row)                 // raise above siblings
         row.layer?.shadowColor = NSColor.black.cgColor
         row.layer?.shadowOpacity = 0.35
-        row.layer?.shadowRadius = 8
-        row.layer?.shadowOffset = CGSize(width: 0, height: 2)
+        row.layer?.shadowRadius = z(8)
+        row.layer?.shadowOffset = CGSize(width: 0, height: z(2))
         row.layer?.masksToBounds = false
         (row as? ClickRow)?.setBase(store.theme.card)
     }

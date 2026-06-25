@@ -76,6 +76,11 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// trailing — bottom in a vertical split, right in a horizontal one; `true` moves it leading
     /// (top/left). Applies to both axes.
     public var terminalLeading: Bool
+    /// The app-wide zoom level as a whole percent on a 10% grid in `[50, 200]` (see `UIZoom`). The
+    /// App layer scales both the UI fonts/geometry and the terminal font by `percent / 100`. `100`
+    /// (1:1) by default, so an upgrade — and a saved blob from a build without this field — looks
+    /// unchanged.
+    public var uiZoomPercent: Int
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -127,7 +132,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         skipEmptyRepos: Bool = false,
         splitAxis: String? = nil,
         terminalFraction: Double = SplitLayout.defaultFraction,
-        terminalLeading: Bool = false
+        terminalLeading: Bool = false,
+        uiZoomPercent: Int = 100
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -154,6 +160,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.splitAxis = splitAxis
         self.terminalFraction = terminalFraction
         self.terminalLeading = terminalLeading
+        self.uiZoomPercent = uiZoomPercent
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -189,7 +196,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             skipEmptyRepos: try container.decodeIfPresent(Bool.self, forKey: .skipEmptyRepos) ?? fallback.skipEmptyRepos,
             splitAxis: try container.decodeIfPresent(String.self, forKey: .splitAxis) ?? fallback.splitAxis,
             terminalFraction: try container.decodeIfPresent(Double.self, forKey: .terminalFraction) ?? fallback.terminalFraction,
-            terminalLeading: try container.decodeIfPresent(Bool.self, forKey: .terminalLeading) ?? fallback.terminalLeading
+            terminalLeading: try container.decodeIfPresent(Bool.self, forKey: .terminalLeading) ?? fallback.terminalLeading,
+            uiZoomPercent: try container.decodeIfPresent(Int.self, forKey: .uiZoomPercent) ?? fallback.uiZoomPercent
         )
     }
 

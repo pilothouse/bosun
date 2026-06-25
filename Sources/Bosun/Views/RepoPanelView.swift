@@ -90,41 +90,41 @@ final class RepoPanelView: FlippedView {
     // MARK: builders
 
     private func orgRows(width w: CGFloat, t: Theme) -> (FlippedView, CGFloat) {
-        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: 10))
+        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
         var y: CGFloat = 0
-        let head = FlippedView(frame: NSRect(x: 0, y: y, width: w, height: 30))
+        let head = FlippedView(frame: NSRect(x: 0, y: y, width: w, height: z(30)))
         let hl = label("ORGANIZATIONS", mono(9.5, .semibold), t.txt4)
-        hl.frame = NSRect(x: 14, y: 9, width: 160, height: 14); head.addSubview(hl)
+        hl.frame = NSRect(x: z(14), y: z(9), width: z(160), height: z(14)); head.addSubview(hl)
         // The "manage" link opens the follow/unfollow + reorder sheet.
-        let manage = ClickRow(bg: nil, radius: 5)
+        let manage = ClickRow(bg: nil, radius: z(5))
         manage.hoverColor = t.hover
-        manage.frame = NSRect(x: w - 78, y: 4, width: 66, height: 24)
+        manage.frame = NSRect(x: w - z(78), y: z(4), width: z(66), height: z(24))
         manage.onClick = { [weak self] in self?.onManageOrgs?() }
         let manageLabel = label("manage", sys(11, .semibold), t.accent, align: .right)
-        manageLabel.frame = NSRect(x: 0, y: 5, width: 58, height: 14); manage.addSubview(manageLabel)
+        manageLabel.frame = NSRect(x: 0, y: z(5), width: z(58), height: z(14)); manage.addSubview(manageLabel)
         head.addSubview(manage)
-        doc.addSubview(head); y += 30
+        doc.addSubview(head); y += z(30)
 
         let orgs = store.visibleOrgs
         if orgs.isEmpty {
             // First load: show a spinner; only fall back to the text hint once the fetch settles.
             if store.isLoadingOrgs {
-                let spinner = makeSpinner(size: 18)
-                spinner.frame.origin = NSPoint(x: 14, y: y + 6); doc.addSubview(spinner)
+                let spinner = makeSpinner(size: z(18))
+                spinner.frame.origin = NSPoint(x: z(14), y: y + z(6)); doc.addSubview(spinner)
             } else {
                 let hint = label(orgsEmptyHint(), sys(11.5), t.txt4, lines: 0)
-                hint.frame = NSRect(x: 14, y: y + 4, width: w - 28, height: 34); doc.addSubview(hint)
+                hint.frame = NSRect(x: z(14), y: y + z(4), width: w - z(28), height: z(34)); doc.addSubview(hint)
             }
-            doc.frame.size.height = y + 44
-            return (doc, y + 44)
+            doc.frame.size.height = y + z(44)
+            return (doc, y + z(44))
         }
 
         for org in orgs {
             let expanded = store.expandedOrgs.contains(org.id)
             let selectedOrg = store.selectedOrgId == org.id
-            let row = ClickRow(bg: selectedOrg ? t.accentbg : nil, radius: 6)
+            let row = ClickRow(bg: selectedOrg ? t.accentbg : nil, radius: z(6))
             row.hoverColor = t.hover
-            row.frame = NSRect(x: 0, y: y, width: w, height: 36)
+            row.frame = NSRect(x: 0, y: y, width: w, height: z(36))
             // Clicking the row body selects the org (clearing any repo highlight), expands it, and
             // loads its aggregated items — the controller owns that selection + fetch. Clicking the
             // *already-selected* org instead toggles its repo list (collapse/expand) and stays
@@ -134,47 +134,47 @@ final class RepoPanelView: FlippedView {
                 if self.store.selectedOrgId == org.id { self.toggleOrgExpanded(org.id) }
                 else { self.onSelectOrg?(org.id) }
             }
-            let sq = AvatarView(size: 22, cornerRadius: 6, url: org.avatarURL,
+            let sq = AvatarView(size: z(22), cornerRadius: z(6), url: org.avatarURL,
                                 placeholderColor: org.color,
                                 initials: String(org.name.prefix(2)).uppercased(),
                                 initialsFont: sys(9, .bold), initialsColor: .white)
-            sq.frame = NSRect(x: 14, y: 7, width: 22, height: 22)
+            sq.frame = NSRect(x: z(14), y: z(7), width: z(22), height: z(22))
             row.addSubview(sq)
             let nm = label(org.name, sys(12.5, .semibold), t.txt)
-            nm.frame = NSRect(x: 46, y: 9, width: w - 46 - 60, height: 18); row.addSubview(nm)
+            nm.frame = NSRect(x: z(46), y: z(9), width: w - z(46) - z(60), height: z(18)); row.addSubview(nm)
             let rc = label("\(org.repos.count)", mono(10), t.txt4, align: .right)
-            rc.frame = NSRect(x: w - 56, y: 9, width: 24, height: 18); row.addSubview(rc)
+            rc.frame = NSRect(x: w - z(56), y: z(9), width: z(24), height: z(18)); row.addSubview(rc)
             // The caret is a nested ClickRow that toggles collapse without selecting — a shortcut to
             // collapse an org you haven't selected (mirrors the grouped-row caret). Its accent tint is
             // the org row's selected glyph cue.
-            let caretBox = ClickRow(bg: nil, radius: 4)
+            let caretBox = ClickRow(bg: nil, radius: z(4))
             caretBox.hoverColor = t.hover
-            caretBox.frame = NSRect(x: w - 30, y: 6, width: 24, height: 24)
+            caretBox.frame = NSRect(x: w - z(30), y: z(6), width: z(24), height: z(24))
             caretBox.onClick = { [weak self] in self?.toggleOrgExpanded(org.id) }
             let caret = label(expanded ? "▾" : "▸", sys(10), selectedOrg ? t.accent : t.txt4, align: .center)
-            caret.frame = NSRect(x: 6, y: 3, width: 12, height: 18); caretBox.addSubview(caret)
+            caret.frame = NSRect(x: z(6), y: z(3), width: z(12), height: z(18)); caretBox.addSubview(caret)
             row.addSubview(caretBox)
-            doc.addSubview(row); y += 36
+            doc.addSubview(row); y += z(36)
 
             if expanded {
                 for rp in org.repos {
                     let selectedRepo = store.selectedRepoKey == "\(rp.owner)/\(rp.name)"
-                    let rr = ClickRow(bg: selectedRepo ? t.accentbg : nil, radius: 6)
+                    let rr = ClickRow(bg: selectedRepo ? t.accentbg : nil, radius: z(6))
                     rr.hoverColor = t.hover
-                    rr.frame = NSRect(x: 0, y: y, width: w, height: 28)
+                    rr.frame = NSRect(x: 0, y: y, width: w, height: z(28))
                     rr.onClick = { [weak self] in self?.onSelectRepo?(rp.owner, rp.name) }
                     let g = label("◇", sys(10), selectedRepo ? t.accent : t.txt4)
-                    g.frame = NSRect(x: 30, y: 6, width: 12, height: 16); rr.addSubview(g)
+                    g.frame = NSRect(x: z(30), y: z(6), width: z(12), height: z(16)); rr.addSubview(g)
                     let rn = label(rp.name, sys(12), selectedRepo ? t.txt : t.txt2)
-                    rn.frame = NSRect(x: 46, y: 5, width: w - 46 - 50, height: 16); rr.addSubview(rn)
-                    let open = BoxView(bg: t.accentbg2, radius: 9)
+                    rn.frame = NSRect(x: z(46), y: z(5), width: w - z(46) - z(50), height: z(16)); rr.addSubview(rn)
+                    let open = BoxView(bg: t.accentbg2, radius: z(9))
                     let ow = label("\(rp.open)", sys(9.5, .semibold), t.accent, align: .center)
-                    let oww = max(20, ow.intrinsicContentSize.width + 12)
-                    open.frame = NSRect(x: w - oww - 14, y: 6, width: oww, height: 16)
+                    let oww = max(z(20), ow.intrinsicContentSize.width + z(12))
+                    open.frame = NSRect(x: w - oww - z(14), y: z(6), width: oww, height: z(16))
                     ow.frame = open.bounds; open.addSubview(ow); rr.addSubview(open)
-                    doc.addSubview(rr); y += 28
+                    doc.addSubview(rr); y += z(28)
                 }
-                y += 4
+                y += z(4)
             }
         }
         doc.frame.size.height = y
@@ -183,64 +183,64 @@ final class RepoPanelView: FlippedView {
 
     private func itemCard(_ it: Item, width w: CGFloat, t: Theme) -> ClickRow {
         let selected = store.selectedItemId == it.id
-        let card = ClickRow(bg: t.card, radius: 9)
+        let card = ClickRow(bg: t.card, radius: z(9))
         card.hoverColor = t.hover
-        card.frame = NSRect(x: 10, y: 0, width: w - 20, height: 52)
+        card.frame = NSRect(x: z(10), y: 0, width: w - z(20), height: z(52))
         card.layer?.borderWidth = 1
         card.layer?.borderColor = (selected ? t.accent : t.cardbr).cgColor
         card.onClick = { [weak self] in self?.selectItem(it) }
-        let cw = w - 20
+        let cw = w - z(20)
 
-        let dot = Dot(it.dotColor, 8, radius: 4)
-        dot.frame.origin = NSPoint(x: 10, y: 10); card.addSubview(dot)
+        let dot = Dot(it.dotColor, z(8), radius: z(4))
+        dot.frame.origin = NSPoint(x: z(10), y: z(10)); card.addSubview(dot)
         let num = label(it.num, mono(11), t.txt3)
-        num.frame = NSRect(x: 24, y: 8, width: 36, height: 14); card.addSubview(num)
+        num.frame = NSRect(x: z(24), y: z(8), width: z(36), height: z(14)); card.addSubview(num)
         let title = label(it.title, sys(12.5, .medium), t.txt)
-        title.frame = NSRect(x: 62, y: 8, width: cw - 62 - 70, height: 14); card.addSubview(title)
+        title.frame = NSRect(x: z(62), y: z(8), width: cw - z(62) - z(70), height: z(14)); card.addSubview(title)
         // Tooltip only when the title is actually truncated — `fitW` is the width it needs to render
         // in full, so if that exceeds the label's frame the row is showing a tail ellipsis.
         if fitW(title) > title.frame.width { title.toolTip = it.title }
         let st = label(it.statusLabel, sys(10, .semibold), it.statusColor, align: .right)
-        st.frame = NSRect(x: cw - 76, y: 8, width: 70, height: 14); card.addSubview(st)
+        st.frame = NSRect(x: cw - z(76), y: z(8), width: z(70), height: z(14)); card.addSubview(st)
 
         let ml = label(it.metaLeft, mono(10), t.txt4)
-        ml.frame = NSRect(x: 25, y: 28, width: cw / 2, height: 14); card.addSubview(ml)
+        ml.frame = NSRect(x: z(25), y: z(28), width: cw / 2, height: z(14)); card.addSubview(ml)
         let mr = label(it.metaRight, mono(10), it.agentColor, align: .right)
-        mr.frame = NSRect(x: cw - 110, y: 28, width: 104, height: 14); card.addSubview(mr)
+        mr.frame = NSRect(x: cw - z(110), y: z(28), width: z(104), height: z(14)); card.addSubview(mr)
         return card
     }
 
     private func groupedRow(_ it: Item, indent: CGFloat, hasChildren: Bool,
                             width w: CGFloat, t: Theme) -> ClickRow {
         let selected = store.selectedItemId == it.id
-        let row = ClickRow(bg: selected ? t.accentbg : nil, radius: 6)
+        let row = ClickRow(bg: selected ? t.accentbg : nil, radius: z(6))
         row.hoverColor = t.hover
-        row.frame = NSRect(x: 8, y: 0, width: w - 16, height: 27)
+        row.frame = NSRect(x: z(8), y: 0, width: w - z(16), height: z(27))
         row.onClick = { [weak self] in self?.selectItem(it) }
-        let cw = w - 16
+        let cw = w - z(16)
         // A disclosure caret sits in the indent gutter (left of the glyph) for rows with children;
         // it's a nested ClickRow so clicking it toggles collapse instead of selecting the row.
         if hasChildren {
             let collapsed = store.collapsedItems.contains(it.id)
-            let caret = ClickRow(bg: nil, radius: 4)
+            let caret = ClickRow(bg: nil, radius: z(4))
             caret.hoverColor = t.hover
-            caret.frame = NSRect(x: indent, y: 3, width: 14, height: 21)
+            caret.frame = NSRect(x: indent, y: z(3), width: z(14), height: z(21))
             caret.onClick = { [weak self] in self?.toggleCollapse(it.id) }
             let cl = label(collapsed ? "▸" : "▾", sys(9), t.txt4, align: .center)
-            cl.frame = NSRect(x: 0, y: 5, width: 14, height: 12); caret.addSubview(cl)
+            cl.frame = NSRect(x: 0, y: z(5), width: z(14), height: z(12)); caret.addSubview(cl)
             row.addSubview(caret)
         }
         let g = label(it.glyph, sys(11), it.gcolor, align: .center)
-        g.frame = NSRect(x: indent + 14, y: 6, width: 14, height: 14); row.addSubview(g)
+        g.frame = NSRect(x: indent + z(14), y: z(6), width: z(14), height: z(14)); row.addSubview(g)
         let num = label(it.num, mono(11), t.txt3)
-        num.frame = NSRect(x: indent + 32, y: 6, width: 34, height: 14); row.addSubview(num)
+        num.frame = NSRect(x: indent + z(32), y: z(6), width: z(34), height: z(14)); row.addSubview(num)
         let title = label(it.title, sys(12), selected ? t.txt : t.txt2)
-        title.frame = NSRect(x: indent + 68, y: 6, width: cw - indent - 68 - 22, height: 14); row.addSubview(title)
+        title.frame = NSRect(x: indent + z(68), y: z(6), width: cw - indent - z(68) - z(22), height: z(14)); row.addSubview(title)
         // Tooltip only when the title is actually truncated (see `itemCard`).
         if fitW(title) > title.frame.width { title.toolTip = it.title }
         if it.blocked != nil {
             let b = label("⊘", sys(10), Status.red, align: .center)
-            b.frame = NSRect(x: cw - 20, y: 6, width: 14, height: 14); row.addSubview(b)
+            b.frame = NSRect(x: cw - z(20), y: z(6), width: z(14), height: z(14)); row.addSubview(b)
         }
         return row
     }
@@ -266,17 +266,17 @@ final class RepoPanelView: FlippedView {
     /// `collapsedItems` by the repo's `owner/name` (which can't collide with an item's `repo#number`).
     private func repoSectionHeader(_ repoKey: String, count: Int, collapsed: Bool,
                                    width w: CGFloat, t: Theme) -> ClickRow {
-        let row = ClickRow(bg: nil, radius: 6)
+        let row = ClickRow(bg: nil, radius: z(6))
         row.hoverColor = t.hover
-        row.frame = NSRect(x: 8, y: 0, width: w - 16, height: 26)
+        row.frame = NSRect(x: z(8), y: 0, width: w - z(16), height: z(26))
         row.onClick = { [weak self] in self?.toggleCollapse(repoKey) }
         let shortName = String(repoKey.split(separator: "/").last ?? Substring(repoKey))
         let caret = label(collapsed ? "▸" : "▾", sys(9), t.txt4, align: .center)
-        caret.frame = NSRect(x: 6, y: 6, width: 12, height: 14); row.addSubview(caret)
+        caret.frame = NSRect(x: z(6), y: z(6), width: z(12), height: z(14)); row.addSubview(caret)
         let nm = label(shortName, sys(11.5, .semibold), t.txt2)
-        nm.frame = NSRect(x: 22, y: 5, width: w - 22 - 50, height: 16); row.addSubview(nm)
+        nm.frame = NSRect(x: z(22), y: z(5), width: w - z(22) - z(50), height: z(16)); row.addSubview(nm)
         let cnt = label("\(count)", mono(10), t.txt4, align: .right)
-        cnt.frame = NSRect(x: w - 16 - 40, y: 5, width: 32, height: 16); row.addSubview(cnt)
+        cnt.frame = NSRect(x: w - z(16) - z(40), y: z(5), width: z(32), height: z(16)); row.addSubview(cnt)
         return row
     }
 
@@ -298,7 +298,7 @@ final class RepoPanelView: FlippedView {
 
         // 1. Orgs (scroll region; design caps it at max-height 268, shrinking to fit content).
         let (orgsDoc, orgsContentH) = orgRows(width: w, t: t)
-        let orgsH: CGFloat = min(orgsContentH, 268)
+        let orgsH: CGFloat = min(orgsContentH, z(268))
         let orgsScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: w, height: orgsH))
         orgsScroll.drawsBackground = false
         orgsScroll.hasVerticalScroller = true
@@ -336,40 +336,40 @@ final class RepoPanelView: FlippedView {
         ob.frame = NSRect(x: 0, y: orgsH, width: w, height: 1); addSubview(ob)
 
         // 2. Repo header + tabs.
-        var y = orgsH + 12
+        var y = orgsH + z(12)
         let scopeTitle = store.scopeTitle
         let repoTitle = label(scopeTitle.isEmpty ? "No repository" : scopeTitle,
                               sys(13, .bold), scopeTitle.isEmpty ? t.txt4 : t.txt)
-        repoTitle.frame = NSRect(x: 14, y: y, width: w - 28, height: 18); addSubview(repoTitle)
-        y += 30
+        repoTitle.frame = NSRect(x: z(14), y: y, width: w - z(28), height: z(18)); addSubview(repoTitle)
+        y += z(30)
 
-        let tabW = (w - 28 - 5) / 2
+        let tabW = (w - z(28) - z(5)) / 2
         let prSel = store.tab == .prs
-        let prTab = ClickRow(bg: prSel ? t.accentbg2 : t.card, radius: 7)
-        prTab.frame = NSRect(x: 14, y: y, width: tabW, height: 28)
+        let prTab = ClickRow(bg: prSel ? t.accentbg2 : t.card, radius: z(7))
+        prTab.frame = NSRect(x: z(14), y: y, width: tabW, height: z(28))
         let prL = label("PRs · \(store.visiblePRs.count)", sys(11.5, .semibold), prSel ? t.accent : t.txt3, align: .center)
-        prL.frame = NSRect(x: 0, y: 6, width: tabW, height: 16); prTab.addSubview(prL)
+        prL.frame = NSRect(x: 0, y: z(6), width: tabW, height: z(16)); prTab.addSubview(prL)
         prTab.onClick = { [weak self] in self?.store.tab = .prs }
         addSubview(prTab)
 
         let isSel = store.tab == .issues
-        let isTab = ClickRow(bg: isSel ? t.accentbg2 : t.card, radius: 7)
-        isTab.frame = NSRect(x: 14 + tabW + 5, y: y, width: tabW, height: 28)
+        let isTab = ClickRow(bg: isSel ? t.accentbg2 : t.card, radius: z(7))
+        isTab.frame = NSRect(x: z(14) + tabW + z(5), y: y, width: tabW, height: z(28))
         let isL = label("Issues · \(store.visibleIssues.count)", sys(11.5, .semibold), isSel ? t.accent : t.txt3, align: .center)
-        isL.frame = NSRect(x: 0, y: 6, width: tabW, height: 16); isTab.addSubview(isL)
+        isL.frame = NSRect(x: 0, y: z(6), width: tabW, height: z(16)); isTab.addSubview(isL)
         isTab.onClick = { [weak self] in self?.store.tab = .issues }
         addSubview(isTab)
-        y += 38
+        y += z(38)
 
         // 3. Controls row: the View (grouping) icon button, the inline sort control, and the status
         // filter share one row. View is shrunk to icon-only to free room for the sort control between.
-        let gap: CGFloat = 6
-        let viewW: CGFloat = 50
-        let statusW: CGFloat = 92
-        let sortX = 12 + viewW + gap
-        let statusX = w - 12 - statusW
+        let gap: CGFloat = z(6)
+        let viewW: CGFloat = z(50)
+        let statusW: CGFloat = z(92)
+        let sortX = z(12) + viewW + gap
+        let statusX = w - z(12) - statusW
         let sortW = statusX - gap - sortX
-        addSubview(dropdownButton(x: 12, y: y, width: viewW, t: t, icon: "≣", text: "") { [weak self] in
+        addSubview(dropdownButton(x: z(12), y: y, width: viewW, t: t, icon: "≣", text: "") { [weak self] in
             guard let self else { return }
             self.store.statusMenuOpen = false
             self.store.viewMenuOpen.toggle()
@@ -386,37 +386,37 @@ final class RepoPanelView: FlippedView {
         // to consult. The sort control opens no menu, so it's deliberately not listed: a tap there
         // both dismisses an open menu and applies the sort.
         if store.viewMenuOpen || store.statusMenuOpen {
-            var rects = [NSRect(x: 12, y: y, width: viewW, height: 32),
-                         NSRect(x: statusX, y: y, width: statusW, height: 32)]
+            var rects = [NSRect(x: z(12), y: y, width: viewW, height: z(32)),
+                         NSRect(x: statusX, y: y, width: statusW, height: z(32))]
             if store.viewMenuOpen {
                 // The View menu stays full-width below the row — the grouping labels need the room.
-                rects.append(NSRect(x: 12, y: y + 36, width: w - 24,
-                                    height: CGFloat(Store.GroupBy.allCases.count) * 36 + 10))
+                rects.append(NSRect(x: z(12), y: y + z(36), width: w - z(24),
+                                    height: CGFloat(Store.GroupBy.allCases.count) * z(36) + z(10)))
             }
             if store.statusMenuOpen {
-                rects.append(NSRect(x: statusX, y: y + 36, width: statusW,
-                                    height: CGFloat(statusOptions.count) * 36 + 10))
+                rects.append(NSRect(x: statusX, y: y + z(36), width: statusW,
+                                    height: CGFloat(statusOptions.count) * z(36) + z(10)))
             }
             store.menuDismissRects = rects.map { convert($0, to: nil) }
         } else {
             store.menuDismissRects = []
         }
-        let listTop = y + 42
+        let listTop = y + z(42)
 
         // 4. List body.
-        let listScroll = NSScrollView(frame: NSRect(x: 0, y: listTop, width: w, height: bounds.height - listTop - 8))
+        let listScroll = NSScrollView(frame: NSRect(x: 0, y: listTop, width: w, height: bounds.height - listTop - z(8)))
         listScroll.drawsBackground = false
         listScroll.hasVerticalScroller = true
         listScroll.autohidesScrollers = true
-        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: 10))
-        var ly: CGFloat = 6
+        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
+        var ly: CGFloat = z(6)
         var selectedRect: NSRect?   // the open item's card, captured so we can scroll it into view
         let items = store.listItems
         if store.isLoadingItems && items.isEmpty {
             // First load of this repo's items: a spinner where the cards will appear.
             let spinner = makeSpinner()
-            spinner.frame.origin = NSPoint(x: (w - 20) / 2, y: 16); doc.addSubview(spinner)
-            ly += 52
+            spinner.frame.origin = NSPoint(x: (w - z(20)) / 2, y: z(16)); doc.addSubview(spinner)
+            ly += z(52)
         } else if store.isOrgScope {
             // Aggregate org view: one collapsible section per repo (in panel order). Within a section
             // the active grouping still applies — "By parent"/"By blocked-by" nest that repo's items
@@ -428,34 +428,34 @@ final class RepoPanelView: FlippedView {
                 let collapsed = store.collapsedItems.contains(repoKey)
                 let header = repoSectionHeader(repoKey, count: repoItems.count, collapsed: collapsed,
                                                width: w, t: t)
-                header.frame.origin.y = ly; doc.addSubview(header); ly += 30
+                header.frame.origin.y = ly; doc.addSubview(header); ly += z(30)
                 if collapsed { continue }
                 if store.groupBy == .none {
                     for it in repoItems {
                         let gr = groupedRow(it, indent: 0, hasChildren: false, width: w, t: t)
                         gr.frame.origin.y = ly; doc.addSubview(gr)
                         if it.id == store.selectedItemId { selectedRect = gr.frame }
-                        ly += 29
+                        ly += z(29)
                     }
                 } else {
                     let byId = Dictionary(repoItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
                     for r in groupedTreeRows(repoItems) {
                         guard let it = byId[r.id] else { continue }
-                        let gr = groupedRow(it, indent: CGFloat(r.depth) * 18, hasChildren: r.hasChildren,
+                        let gr = groupedRow(it, indent: CGFloat(r.depth) * z(18), hasChildren: r.hasChildren,
                                             width: w, t: t)
                         gr.frame.origin.y = ly; doc.addSubview(gr)
                         if it.id == store.selectedItemId { selectedRect = gr.frame }
-                        ly += 29
+                        ly += z(29)
                     }
                 }
-                ly += 4
+                ly += z(4)
             }
         } else if store.groupBy == .none {
             for it in items {
                 let c = itemCard(it, width: w, t: t)
                 c.frame.origin.y = ly; doc.addSubview(c)
                 if it.id == store.selectedItemId { selectedRect = c.frame }
-                ly += 58
+                ly += z(58)
             }
         } else {
             // Grouped tree (single repo): nest by the active mode's relationship — sub-issue parent
@@ -463,19 +463,19 @@ final class RepoPanelView: FlippedView {
             let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             for r in groupedTreeRows(items) {
                 guard let it = byId[r.id] else { continue }
-                let gr = groupedRow(it, indent: CGFloat(r.depth) * 18, hasChildren: r.hasChildren,
+                let gr = groupedRow(it, indent: CGFloat(r.depth) * z(18), hasChildren: r.hasChildren,
                                     width: w, t: t)
                 gr.frame.origin.y = ly; doc.addSubview(gr)
                 if it.id == store.selectedItemId { selectedRect = gr.frame }
-                ly += 29
+                ly += z(29)
             }
         }
         // When the closed/merged history was bounded, say so rather than implying the list is complete.
         if store.listTruncated && !(store.isLoadingItems && items.isEmpty) {
             let note = label("Showing newest \(GitHubItemStates.historyCap) — older closed items not loaded.",
                              sys(10.5), t.txt4, lines: 2)
-            note.frame = NSRect(x: 14, y: ly + 4, width: w - 28, height: 30); doc.addSubview(note)
-            ly += 38
+            note.frame = NSRect(x: z(14), y: ly + z(4), width: w - z(28), height: z(30)); doc.addSubview(note)
+            ly += z(38)
         }
         doc.frame.size.height = max(ly, listScroll.frame.height)
         listScroll.documentView = doc
@@ -504,33 +504,33 @@ final class RepoPanelView: FlippedView {
             focusedItemId = nil
         } else if let rect = selectedRect, store.selectedItemId != focusedItemId {
             focusedItemId = store.selectedItemId
-            DispatchQueue.main.async { [weak doc] in doc?.scrollToVisible(rect.insetBy(dx: 0, dy: -28)) }
+            DispatchQueue.main.async { [weak doc] in doc?.scrollToVisible(rect.insetBy(dx: 0, dy: z(-28))) }
         }
 
         // Dropdown overlay.
         if store.viewMenuOpen {
-            let menu = BoxView(bg: t.panel, radius: 10, border: t.line2)
-            let mh = CGFloat(Store.GroupBy.allCases.count) * 36 + 10
-            menu.frame = NSRect(x: 12, y: y + 36, width: w - 24, height: mh)
+            let menu = BoxView(bg: t.panel, radius: z(10), border: t.line2)
+            let mh = CGFloat(Store.GroupBy.allCases.count) * z(36) + z(10)
+            menu.frame = NSRect(x: z(12), y: y + z(36), width: w - z(24), height: mh)
             menu.layer?.shadowColor = NSColor.black.cgColor
             menu.layer?.shadowOpacity = 0.45
-            menu.layer?.shadowRadius = 16
-            menu.layer?.shadowOffset = CGSize(width: 0, height: -6)
+            menu.layer?.shadowRadius = z(16)
+            menu.layer?.shadowOffset = CGSize(width: 0, height: z(-6))
             menu.layer?.masksToBounds = false
-            var my: CGFloat = 5
+            var my: CGFloat = z(5)
             for g in Store.GroupBy.allCases {
                 let on = store.groupBy == g
-                let row = ClickRow(bg: on ? t.accentbg : nil, radius: 7)
+                let row = ClickRow(bg: on ? t.accentbg : nil, radius: z(7))
                 row.hoverColor = t.hover
-                row.frame = NSRect(x: 5, y: my, width: w - 24 - 10, height: 34)
-                let chk = label(on ? "✓" : "", sys(11), t.accent); chk.frame = NSRect(x: 10, y: 9, width: 14, height: 16); row.addSubview(chk)
-                let gl = label(g.rawValue, sys(12.5), t.txt); gl.frame = NSRect(x: 30, y: 9, width: 160, height: 16); row.addSubview(gl)
+                row.frame = NSRect(x: z(5), y: my, width: w - z(24) - z(10), height: z(34))
+                let chk = label(on ? "✓" : "", sys(11), t.accent); chk.frame = NSRect(x: z(10), y: z(9), width: z(14), height: z(16)); row.addSubview(chk)
+                let gl = label(g.rawValue, sys(12.5), t.txt); gl.frame = NSRect(x: z(30), y: z(9), width: z(160), height: z(16)); row.addSubview(gl)
                 row.onClick = { [weak self] in
                     self?.store.groupBy = g
                     self?.store.viewMenuOpen = false
                     self?.onChangeGroup?()   // lazily load blocked-by data on first entering that mode
                 }
-                menu.addSubview(row); my += 36
+                menu.addSubview(row); my += z(36)
             }
             addSubview(menu)
         }
@@ -540,24 +540,24 @@ final class RepoPanelView: FlippedView {
         if store.statusMenuOpen {
             let options = statusOptions
             let selected = store.tab == .prs ? store.prStates : store.issueStates
-            let menu = BoxView(bg: t.panel, radius: 10, border: t.line2)
-            let mh = CGFloat(options.count) * 36 + 10
-            menu.frame = NSRect(x: statusX, y: y + 36, width: statusW, height: mh)
+            let menu = BoxView(bg: t.panel, radius: z(10), border: t.line2)
+            let mh = CGFloat(options.count) * z(36) + z(10)
+            menu.frame = NSRect(x: statusX, y: y + z(36), width: statusW, height: mh)
             menu.layer?.shadowColor = NSColor.black.cgColor
             menu.layer?.shadowOpacity = 0.45
-            menu.layer?.shadowRadius = 16
-            menu.layer?.shadowOffset = CGSize(width: 0, height: -6)
+            menu.layer?.shadowRadius = z(16)
+            menu.layer?.shadowOffset = CGSize(width: 0, height: z(-6))
             menu.layer?.masksToBounds = false
-            var my: CGFloat = 5
+            var my: CGFloat = z(5)
             for state in options {
                 let on = selected.contains(state)
-                let row = ClickRow(bg: on ? t.accentbg : nil, radius: 7)
+                let row = ClickRow(bg: on ? t.accentbg : nil, radius: z(7))
                 row.hoverColor = t.hover
-                row.frame = NSRect(x: 5, y: my, width: statusW - 10, height: 34)
-                let chk = label(on ? "✓" : "", sys(11), t.accent); chk.frame = NSRect(x: 10, y: 9, width: 14, height: 16); row.addSubview(chk)
-                let gl = label(Self.stateName(state), sys(12.5), t.txt); gl.frame = NSRect(x: 30, y: 9, width: statusW - 40, height: 16); row.addSubview(gl)
+                row.frame = NSRect(x: z(5), y: my, width: statusW - z(10), height: z(34))
+                let chk = label(on ? "✓" : "", sys(11), t.accent); chk.frame = NSRect(x: z(10), y: z(9), width: z(14), height: z(16)); row.addSubview(chk)
+                let gl = label(Self.stateName(state), sys(12.5), t.txt); gl.frame = NSRect(x: z(30), y: z(9), width: statusW - z(40), height: z(16)); row.addSubview(gl)
                 row.onClick = { [weak self] in self?.toggleStatus(state) }
-                menu.addSubview(row); my += 36
+                menu.addSubview(row); my += z(36)
             }
             addSubview(menu)
         }
@@ -604,17 +604,17 @@ final class RepoPanelView: FlippedView {
     /// caret. `onClick` opens its menu.
     private func dropdownButton(x: CGFloat, y: CGFloat, width: CGFloat, t: Theme,
                                 icon: String, text: String, onClick: @escaping () -> Void) -> ClickRow {
-        let dd = ClickRow(bg: t.card, radius: 8)
-        dd.frame = NSRect(x: x, y: y, width: width, height: 32)
+        let dd = ClickRow(bg: t.card, radius: z(8))
+        dd.frame = NSRect(x: x, y: y, width: width, height: z(32))
         dd.layer?.borderWidth = 1; dd.layer?.borderColor = t.cardbr.cgColor
-        let car = label("▾", sys(10), t.txt4, align: .right); car.frame = NSRect(x: width - 22, y: 8, width: 14, height: 16); dd.addSubview(car)
+        let car = label("▾", sys(10), t.txt4, align: .right); car.frame = NSRect(x: width - z(22), y: z(8), width: z(14), height: z(16)); dd.addSubview(car)
         if text.isEmpty {
             // Icon-only (the compact "View" control): icon + caret, no label, so it fits a narrow width.
-            let ic = label(icon, sys(12), t.txt3, align: .center); ic.frame = NSRect(x: 8, y: 8, width: 18, height: 16); dd.addSubview(ic)
+            let ic = label(icon, sys(12), t.txt3, align: .center); ic.frame = NSRect(x: z(8), y: z(8), width: z(18), height: z(16)); dd.addSubview(ic)
         } else {
-            let ic = label(icon, sys(12), t.txt3); ic.frame = NSRect(x: 10, y: 8, width: 16, height: 16); dd.addSubview(ic)
+            let ic = label(icon, sys(12), t.txt3); ic.frame = NSRect(x: z(10), y: z(8), width: z(16), height: z(16)); dd.addSubview(ic)
             let l = label(text, sys(12, .semibold), t.txt)   // lines: 1 → already truncates with a tail
-            l.frame = NSRect(x: 30, y: 8, width: width - 30 - 22, height: 16); dd.addSubview(l)
+            l.frame = NSRect(x: z(30), y: z(8), width: width - z(30) - z(22), height: z(16)); dd.addSubview(l)
         }
         dd.onClick = onClick
         return dd
@@ -625,28 +625,28 @@ final class RepoPanelView: FlippedView {
     /// accent. Unlike View/Status it opens no menu — tapping a field sets `sortField`, tapping the
     /// chevron toggles `sortAscending`, both directly (so it needs no entry in `menuDismissRects`).
     private func sortControl(x: CGFloat, y: CGFloat, width: CGFloat, t: Theme) -> ClickRow {
-        let box = ClickRow(bg: t.card, radius: 8)   // container chrome only; its own onClick stays nil
-        box.frame = NSRect(x: x, y: y, width: width, height: 32)
+        let box = ClickRow(bg: t.card, radius: z(8))   // container chrome only; its own onClick stays nil
+        box.frame = NSRect(x: x, y: y, width: width, height: z(32))
         box.layer?.borderWidth = 1; box.layer?.borderColor = t.cardbr.cgColor
 
         let fields: [(ItemSortField, String)] = [(.date, "◷"), (.number, "#"), (.title, "Az")]
-        let chevW: CGFloat = 22
+        let chevW: CGFloat = z(22)
         let cellW = (width - chevW) / CGFloat(fields.count)
         for (i, f) in fields.enumerated() {
             let on = store.sortField == f.0
-            let cell = ClickRow(bg: on ? t.accentbg : nil, radius: 6)
+            let cell = ClickRow(bg: on ? t.accentbg : nil, radius: z(6))
             cell.hoverColor = t.hover
-            cell.frame = NSRect(x: cellW * CGFloat(i) + 2, y: 4, width: cellW - 3, height: 24)
+            cell.frame = NSRect(x: cellW * CGFloat(i) + z(2), y: z(4), width: cellW - z(3), height: z(24))
             let gl = label(f.1, sys(12, on ? .semibold : .regular), on ? t.accent : t.txt3, align: .center)
-            gl.frame = NSRect(x: 0, y: 4, width: cellW - 3, height: 16); cell.addSubview(gl)
+            gl.frame = NSRect(x: 0, y: z(4), width: cellW - z(3), height: z(16)); cell.addSubview(gl)
             cell.onClick = { [weak self] in self?.store.sortField = f.0 }
             box.addSubview(cell)
         }
-        let chev = ClickRow(bg: nil, radius: 6)
+        let chev = ClickRow(bg: nil, radius: z(6))
         chev.hoverColor = t.hover
-        chev.frame = NSRect(x: width - chevW + 1, y: 4, width: chevW - 3, height: 24)
+        chev.frame = NSRect(x: width - chevW + 1, y: z(4), width: chevW - z(3), height: z(24))
         let cl = label(store.sortAscending ? "▲" : "▼", sys(9), t.txt3, align: .center)
-        cl.frame = NSRect(x: 0, y: 6, width: chevW - 3, height: 12); chev.addSubview(cl)
+        cl.frame = NSRect(x: 0, y: z(6), width: chevW - z(3), height: z(12)); chev.addSubview(cl)
         chev.onClick = { [weak self] in self?.store.sortAscending.toggle() }
         box.addSubview(chev)
         return box

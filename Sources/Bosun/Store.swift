@@ -140,6 +140,20 @@ final class Store {
     var prsTruncated = false { didSet { if oldValue != prsTruncated { notify() } } }
     var issuesTruncated = false { didSet { if oldValue != issuesTruncated { notify() } } }
 
+    /// The app-wide zoom level (⌘+ / ⌘− / ⌘0), persisted. Setting it mirrors the scale into the
+    /// `Controls` global (`setUIScale`) so every font helper and laid-out constant reads the new
+    /// value, then `changed()` rebuilds the whole view tree (each `layout()` re-reads the scale) and
+    /// re-syncs the terminal font via `BosunView.applyTheme` → `TerminalContainerView.syncTerminal`.
+    /// `setUIScale` runs even while restoring (it is *not* gated on `isLoading`), so a relaunch seats
+    /// the saved zoom before `applyPersisted`'s final `refresh()` lays everything out at that scale.
+    var uiZoom = Domain.UIZoom() {
+        didSet {
+            guard oldValue != uiZoom else { return }
+            setUIScale(uiZoom.scale)
+            changed()
+        }
+    }
+
     /// Window opacity. It drives the window directly (via `onWindowAlpha`) rather than a content
     /// rebuild, so it is deliberately not part of `notify` — otherwise dragging the opacity
     /// slider would tear down and rebuild the Settings popover under the cursor.
@@ -312,7 +326,8 @@ final class Store {
             skipEmptyRepos: skipEmptyRepos,
             splitAxis: splitAxis.rawValue,
             terminalFraction: Double(terminalFraction),
-            terminalLeading: terminalLeading)
+            terminalLeading: terminalLeading,
+            uiZoomPercent: uiZoom.percent)
         Task { await preferences.save(snapshot) }
     }
 
@@ -345,6 +360,10 @@ final class Store {
         splitAxis = SplitAxis(rawValue: p.splitAxis ?? "") ?? .default
         terminalFraction = CGFloat(p.terminalFraction)
         terminalLeading = p.terminalLeading
+        // Seats the saved zoom: the didSet mirrors it into the `Controls` global via `setUIScale`
+        // even now (it's not gated on `isLoading`), so the final `refresh()` below lays the whole
+        // tree out at the restored scale and `syncTerminal` pushes the matching terminal font size.
+        uiZoom = UIZoom(percent: p.uiZoomPercent)
         isLoading = false
         onWindowAlpha?(windowAlpha)
         refresh()

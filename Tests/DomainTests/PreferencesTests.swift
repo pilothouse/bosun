@@ -428,4 +428,28 @@ final class PreferencesTests: XCTestCase {
 
         XCTAssertFalse(decoded.terminalLeading)
     }
+
+    func testUIZoomDefaultsToOneHundredPercent() {
+        XCTAssertEqual(Preferences.default.uiZoomPercent, 100,
+                       "an upgrade starts at 1:1 zoom, unchanged")
+    }
+
+    func testUIZoomRoundTripsThroughCodable() throws {
+        let original = Preferences(uiZoomPercent: 130)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.uiZoomPercent, 130)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutUIZoomFallsBackToOneHundred() throws {
+        // A payload written by a build before the zoom feature existed must open at 1:1.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertEqual(decoded.uiZoomPercent, 100)
+    }
 }
