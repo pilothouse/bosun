@@ -137,38 +137,59 @@ final class DetailView: FlippedView {
 
         func add(_ v: NSView, x: CGFloat = padX) { v.frame.origin = NSPoint(x: x, y: y); doc.addSubview(v) }
 
+        // A clickable `#id` chip in the header id row: a `color` label that opens `url` on click
+        // (no-op when `url` is empty). Returns the x just past it so the caller can place the next
+        // element. Used for the plain id and for both ids inside the blocked-by marker.
+        func idLink(_ text: String, url: String, color: NSColor, x: CGFloat) -> CGFloat {
+            let link = ClickRow(radius: 4)
+            link.hoverColor = t.hover
+            if !url.isEmpty {
+                link.cursor = .pointingHand
+                link.onClick = { [weak self] in self?.openItemURL(url) }
+            }
+            let w = fitW(text, mono(12))
+            link.frame = NSRect(x: x, y: y, width: w + 6, height: 20)
+            let lbl = label(text, mono(12), color)
+            lbl.frame = NSRect(x: 3, y: 2, width: w, height: 16); link.addSubview(lbl)
+            doc.addSubview(link)
+            return link.frame.maxX
+        }
+
         // Type row. The kind badge (PR/ISSUE/EPIC) carries the item's *state* color (open green,
         // closed/merged, …) on its text and border — the standalone status label is gone. Its
         // top-right slot now hosts the hydration spinner, so loading never shifts the body down.
         let typeLabel: String = it.epic ? "EPIC" : (it.kind == .pr ? "PR" : "ISSUE")
         let tb = badge(typeLabel, fg: it.statusColor, border: it.statusColor, mono: false)
         tb.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(tb)
-        // Repo name (plain), then the issue/PR id as an anchor link that opens the item on github.com
-        // in the default browser, then a copy-link glyph that copies the web URL instead.
+        // Repo name (plain), then the current-issue id row. Normally the plain `#id` (accent) opens
+        // the item on github.com; under the "By blocked-by" grouping the id is replaced by the
+        // dependency marker `⊘ #<blocker> → #<this>` (red, both ids linking to their pages) so the
+        // blocker reads right after the repo. A copy-link glyph trails the row.
         let rnX = padX + tb.frame.width + 10
         let repoLabel = label(it.repo, mono(12), t.txt3)
         let repoW = fitW(repoLabel)
         repoLabel.frame = NSRect(x: rnX, y: y + 2, width: repoW, height: 16); doc.addSubview(repoLabel)
 
-        let numLink = ClickRow(radius: 4)
-        numLink.hoverColor = t.hover
-        numLink.cursor = .pointingHand
-        let numW = fitW(it.num, mono(12))
-        numLink.frame = NSRect(x: rnX + repoW + 5, y: y, width: numW + 6, height: 20)
-        let numLbl = label(it.num, mono(12), t.accent)
-        numLbl.frame = NSRect(x: 3, y: 2, width: numW, height: 16); numLink.addSubview(numLbl)
-        if !it.url.isEmpty { numLink.onClick = { [weak self] in self?.openItemURL(it.url) } }
-        doc.addSubview(numLink)
-
+        var headerRX = rnX + repoW + 5
+        if let blocked = it.blocked {
+            let cross = label("⊘", sys(12), Status.red, align: .center)
+            cross.frame = NSRect(x: headerRX, y: y + 2, width: 14, height: 16); doc.addSubview(cross)
+            headerRX = idLink("#\(blocked)", url: "https://github.com/\(it.repo)/issues/\(blocked)",
+                              color: Status.red, x: headerRX + 16)
+            let arrow = label("→", sys(12), Status.red)
+            arrow.frame = NSRect(x: headerRX + 1, y: y + 2, width: 14, height: 16); doc.addSubview(arrow)
+            headerRX = idLink(it.num, url: it.url, color: Status.red, x: headerRX + 19)
+        } else {
+            headerRX = idLink(it.num, url: it.url, color: t.accent, x: headerRX)
+        }
         // Copy-link affordance: a small clickable glyph that copies the item's web URL and flashes
-        // "Copied ✓" in place. Sized to its content so it hugs the id, well left of the top-right
-        // hydration slot below.
+        // "Copied ✓" in place. Sits just past the id/marker, left of the top-right hydration slot.
         if !it.url.isEmpty {
             let copy = ClickRow(radius: 5)
             copy.hoverColor = t.hover
             copy.cursor = .pointingHand
             copy.onClick = { [weak self] in self?.copyItemURL(it.url) }
-            let cx = numLink.frame.maxX + 4
+            let cx = headerRX + 4
             if justCopiedURL {
                 let done = label("Copied ✓", mono(11), t.accent)
                 let w = fitW(done)
@@ -211,9 +232,6 @@ final class DetailView: FlippedView {
         }
         if let a = it.add, let d = it.del {
             let diff = label("+\(a) −\(d)", mono(10.5), t.txt3); diff.frame = NSRect(x: rx, y: y + 3, width: 90, height: 16); doc.addSubview(diff); rx += 96
-        }
-        if let blocked = it.blocked {
-            let bb = badge("⊘ \(blocked)", fg: Status.red, bg: .hexA(0xf85149, 0.12)); bb.frame.origin = NSPoint(x: rx, y: y); doc.addSubview(bb)
         }
         y += 30
 

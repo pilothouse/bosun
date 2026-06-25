@@ -197,25 +197,51 @@ final class GitHubDataController {
     }
 
     /// Lazily fetch GitHub issue dependencies and mark blocked items — but only while the user is in
-    /// the "By blocked-by" grouping, since it costs one REST call per item. Idempotent per repo for
-    /// the session (the flag is cleared on each item load, so a refresh re-fetches). Wired to the
-    /// View's group-mode change and re-run after items land so entering a repo already in that mode
-    /// populates. A no-op in any other grouping.
+    /// the "By blocked-by" grouping, since it costs one REST call per item. Works for a single repo
+    /// and for the aggregate org view: items can span repos, so blockers are fetched per repo and
+    /// keyed by each item's composite id (`repo#number`) to avoid same-number collisions across repos.
+    /// Idempotent per scope for the session (the flag is cleared on each item load, so a refresh
+    /// re-fetches). Wired to the View's group-mode change and re-run after items land so entering a
+    /// scope already in that mode populates. A no-op in any other grouping.
     func loadBlockedByIfNeeded() {
-        guard store.groupBy == .blocked, let repo = currentRepo else { return }
-        let repoKey = "\(repo.owner)/\(repo.name)"
-        guard !blockedByLoaded.contains(repoKey) else { return }
-        blockedByLoaded.insert(repoKey)
+        guard store.groupBy == .blocked else { return }
+        let scopeKey: String
+        if let repo = currentRepo { scopeKey = "\(repo.owner)/\(repo.name)" }
+        else if let org = currentOrg { scopeKey = "org:\(org)" }
+        else { return }
+        guard !blockedByLoaded.contains(scopeKey) else { return }
+        blockedByLoaded.insert(scopeKey)
         let api = self.api
-        let (owner, name) = (repo.owner, repo.name)
+        let (scopeRepo, scopeOrg) = (currentRepo, currentOrg)
         Task { @MainActor in
-            @MainActor func isCurrent() -> Bool { currentRepo?.owner == owner && currentRepo?.name == name }
-            let numbers = (store.issues + store.prs).map(\.number)
-            guard !numbers.isEmpty else { return }
-            let blockers = await Self.fetchBlockers(api: api, owner: owner, name: name, numbers: numbers)
+            @MainActor func isCurrent() -> Bool {
+                currentRepo?.owner == scopeRepo?.owner && currentRepo?.name == scopeRepo?.name
+                    && currentOrg == scopeOrg
+            }
+            // Dependencies are same-repo, so group the (possibly multi-repo) items by repo, fetch
+            // each repo's blockers, and key them by composite id so two repos' #N can't collide.
+            let byRepo = Dictionary(grouping: store.issues + store.prs, by: \.repo)
+            guard !byRepo.isEmpty else { return }
+            var blockers: [String: [Int]] = [:]
+            for (repoKey, repoItems) in byRepo {
+                let parts = repoKey.split(separator: "/", maxSplits: 1)
+                guard parts.count == 2 else { continue }
+                let perRepo = await Self.fetchBlockers(
+                    api: api, owner: String(parts[0]), name: String(parts[1]),
+                    numbers: repoItems.map(\.number))
+                for (num, deps) in perRepo where !deps.isEmpty { blockers["\(repoKey)#\(num)"] = deps }
+            }
             guard isCurrent() else { return }
             store.prs = store.prs.map { Self.applyBlocked(blockers, to: $0) }
             store.issues = store.issues.map { Self.applyBlocked(blockers, to: $0) }
+            // The open detail is a separate copy that outranks the list item in `selectedItem`, so
+            // refresh its blocked marker too. Without this, a detail built before enrichment landed —
+            // e.g. the restored selection on relaunch, whose detail loads first — keeps an empty
+            // marker until the item is re-opened.
+            if let detail = store.selectedItemDetail {
+                let updated = Self.applyBlocked(blockers, to: detail)
+                if updated.blocked != detail.blocked { store.selectedItemDetail = updated }
+            }
         }
     }
 
@@ -245,9 +271,10 @@ final class GitHubDataController {
     }
 
     /// Set the item's first blocker (so the grouped list nests it and shows the ⊘ badge), or leave
-    /// it untouched when it has none.
-    private static func applyBlocked(_ blockers: [Int: [Int]], to item: Item) -> Item {
-        guard let first = blockers[item.number]?.first else { return item }
+    /// it untouched when it has none. Keyed by the item's composite id (`repo#number`) so the org
+    /// view, whose items span repos, can't cross-apply one repo's blockers to another's same number.
+    private static func applyBlocked(_ blockers: [String: [Int]], to item: Item) -> Item {
+        guard let first = blockers[item.id]?.first else { return item }
         var copy = item
         copy.blocked = String(first)
         return copy
@@ -424,6 +451,7 @@ final class GitHubDataController {
         itemsTask?.cancel()
         detailTask?.cancel()
         store.dataError = nil
+        blockedByLoaded.remove("org:\(orgId)")   // a fresh load re-fetches blockers if "By blocked-by" is on
         guard let org = store.visibleOrgs.first(where: { $0.id == orgId }) else { clearItems(); return }
         let openOnly = store.prStates == [.open] && store.issueStates == [.open]
         let repoKeys = org.repos
@@ -465,6 +493,7 @@ final class GitHubDataController {
                 store.prs = prs.map(Item.init(domain:))
                 store.issues = issues.map(Item.init(domain:))
                 reconcileSelectionForScope(preserveTab: preserveTab)
+                loadBlockedByIfNeeded()   // populate the ⊘ tree when the org opens already in that mode
             } catch {
                 handleFetchError(error) { [weak self] in self?.loadOrgItems(orgId: orgId, preserveTab: preserveTab) }
                 if isCurrent() { store.isLoadingItems = false }
@@ -642,7 +671,15 @@ final class GitHubDataController {
                 let detail = try await api.itemDetail(owner: owner, repo: name, number: number)
                 // Drop a stale detail if the selection moved on while this was in flight.
                 guard isCurrent() else { return }
-                store.selectedItemDetail = Item(domain: detail)
+                // Carry the lazily-enriched blocked-by marker (set on the list item only, in
+                // `applyBlocked`) onto the hydrated detail item — `Item(domain:)` hardcodes it nil
+                // because the detail GraphQL fetch doesn't include dependencies. Without this the
+                // detail item (which outranks the list item in `selectedItem`) drops the ⊘ badge.
+                var hydrated = Item(domain: detail)
+                if let prior = (store.prs + store.issues).first(where: { $0.id == hydrated.id }) {
+                    hydrated.blocked = prior.blocked
+                }
+                store.selectedItemDetail = hydrated
                 store.isLoadingDetail = false
             } catch {
                 // A detail failure is non-fatal: the lead list item keeps showing, so don't blow

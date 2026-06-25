@@ -245,6 +245,22 @@ final class RepoPanelView: FlippedView {
         return row
     }
 
+    /// Tree rows (id, depth, hasChildren — in list order) for `items`, nested by the active grouping:
+    /// sub-issue parent ("By parent") or first blocker ("By blocked-by"). Relationships are same-repo
+    /// numbers, keyed to the related item's composite id (`repo#number`) so they match the unique ids
+    /// in `order`. The pure `GitHubItemTree` rule keeps roots/siblings in list order, treats an item
+    /// whose related item isn't in view as a root, guards cycles, and honors collapse. Shared by the
+    /// single-repo tree and each per-repo section of the aggregate org view.
+    private func groupedTreeRows(_ items: [Item]) -> [GitHubItemTree.Row<String>] {
+        let parentOf: [String: String] = items.reduce(into: [:]) { map, it in
+            if let key = store.groupBy == .blocked ? it.blocked : it.parent {
+                map[it.id] = "\(it.repo)#\(key)"
+            }
+        }
+        return GitHubItemTree.rows(order: items.map(\.id), parentOf: parentOf,
+                                   collapsed: store.collapsedItems)
+    }
+
     /// A collapsible section header for the aggregate org view — one per repo, showing the repo's
     /// short name and its item count. Clicking it toggles the section's collapse, keyed in
     /// `collapsedItems` by the repo's `owner/name` (which can't collide with an item's `repo#number`).
@@ -402,10 +418,10 @@ final class RepoPanelView: FlippedView {
             spinner.frame.origin = NSPoint(x: (w - 20) / 2, y: 16); doc.addSubview(spinner)
             ly += 52
         } else if store.isOrgScope {
-            // Aggregate org view: one collapsible section per repo (in panel order), each listing that
-            // repo's items for the active tab. Items keep their unique `repo#number` id, so selection
-            // works across repos. The grouping ("View") modes are per-repo concepts, so they're not
-            // applied here — the org view is always sectioned by repo.
+            // Aggregate org view: one collapsible section per repo (in panel order). Within a section
+            // the active grouping still applies — "By parent"/"By blocked-by" nest that repo's items
+            // into a tree (relationships are same-repo), "Flat list" lists them flat. Items keep their
+            // unique `repo#number` id, so selection works across repos.
             let byRepo = Dictionary(grouping: items, by: \.repo)
             for repoKey in store.selectedOrgRepoKeys {
                 guard let repoItems = byRepo[repoKey], !repoItems.isEmpty else { continue }
@@ -414,11 +430,23 @@ final class RepoPanelView: FlippedView {
                                                width: w, t: t)
                 header.frame.origin.y = ly; doc.addSubview(header); ly += 30
                 if collapsed { continue }
-                for it in repoItems {
-                    let gr = groupedRow(it, indent: 0, hasChildren: false, width: w, t: t)
-                    gr.frame.origin.y = ly; doc.addSubview(gr)
-                    if it.id == store.selectedItemId { selectedRect = gr.frame }
-                    ly += 29
+                if store.groupBy == .none {
+                    for it in repoItems {
+                        let gr = groupedRow(it, indent: 0, hasChildren: false, width: w, t: t)
+                        gr.frame.origin.y = ly; doc.addSubview(gr)
+                        if it.id == store.selectedItemId { selectedRect = gr.frame }
+                        ly += 29
+                    }
+                } else {
+                    let byId = Dictionary(repoItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                    for r in groupedTreeRows(repoItems) {
+                        guard let it = byId[r.id] else { continue }
+                        let gr = groupedRow(it, indent: CGFloat(r.depth) * 18, hasChildren: r.hasChildren,
+                                            width: w, t: t)
+                        gr.frame.origin.y = ly; doc.addSubview(gr)
+                        if it.id == store.selectedItemId { selectedRect = gr.frame }
+                        ly += 29
+                    }
                 }
                 ly += 4
             }
@@ -430,21 +458,10 @@ final class RepoPanelView: FlippedView {
                 ly += 58
             }
         } else {
-            // Grouped tree: nest by the active mode's relationship — sub-issue parent ("By parent")
-            // or first blocker ("By blocked-by") — honoring collapse. The pure `GitHubItemTree`
-            // rule keeps roots/siblings in list order, treats an item whose related item isn't in
-            // view as a root, and guards cycles.
+            // Grouped tree (single repo): nest by the active mode's relationship — sub-issue parent
+            // ("By parent") or first blocker ("By blocked-by"), honoring collapse.
             let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            let parentOf: [String: String] = items.reduce(into: [:]) { map, it in
-                // `it.blocked`/`it.parent` are same-repo numbers; key them to the related item's
-                // composite id (`repo#number`) so the tree matches the unique ids in `order`.
-                if let key = store.groupBy == .blocked ? it.blocked : it.parent {
-                    map[it.id] = "\(it.repo)#\(key)"
-                }
-            }
-            let rows = GitHubItemTree.rows(order: items.map(\.id), parentOf: parentOf,
-                                           collapsed: store.collapsedItems)
-            for r in rows {
+            for r in groupedTreeRows(items) {
                 guard let it = byId[r.id] else { continue }
                 let gr = groupedRow(it, indent: CGFloat(r.depth) * 18, hasChildren: r.hasChildren,
                                     width: w, t: t)
