@@ -316,9 +316,25 @@ final class GitHubDataController {
     }
 
     /// Select a list item: show its lead content immediately (the store already has it) and
-    /// fetch the hydrated detail (body tasks, comments, PR checks) to upgrade it.
+    /// fetch the hydrated detail (body tasks, comments, PR checks) to upgrade it. Re-clicking the
+    /// already-open item is a no-op (`DetailReselectionPolicy`) — no flash, no refetch, scroll kept.
+    /// The compare is against the *loaded* detail's id, not `selectedItemId`, because the panel sets
+    /// `selectedItemId` before calling here, so a genuine new selection still arrives with the prior
+    /// item's detail loaded — and a re-click after a failed/aborted fetch (no loaded detail) retries.
     func selectItem(_ item: Item) {
+        guard DetailReselectionPolicy.shouldFetchDetail(
+            loadedDetailId: store.selectedItemDetail?.id, target: item.id) else { return }
         store.selectedItemId = item.id
+        store.selectedItemDetail = nil
+        loadDetail(for: item)
+    }
+
+    /// Force-reload the open item's detail, bypassing the reselection skip. Drops the hydrated detail
+    /// to re-show the "Loading details…" placeholder, then re-fetches. Wired to the detail pane's
+    /// in-pane Refresh button. `selectedItem` is the hydrated item while one is loaded, so this routes
+    /// the fetch to the item's own repo (correct in aggregate-org scope).
+    func refreshDetail() {
+        guard let item = store.selectedItem else { return }
         store.selectedItemDetail = nil
         loadDetail(for: item)
     }

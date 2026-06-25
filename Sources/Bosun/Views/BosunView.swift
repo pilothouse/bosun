@@ -130,6 +130,7 @@ final class BosunView: NSView {
         repoPanel.onChangeFilter = { [weak self] in self?.data.reloadCurrentItems() }
         repoPanel.onChangeGroup = { [weak self] in self?.data.loadBlockedByIfNeeded() }
         center.detail.onSubmitComment = { [weak self] body, done in self?.data.submitComment(body: body, completion: done) }
+        center.detail.onRefreshDetail = { [weak self] in self?.data.refreshDetail() }
 
         store.observe { [weak self] in self?.onChange() }
         applyTheme()

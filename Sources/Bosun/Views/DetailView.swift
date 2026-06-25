@@ -24,6 +24,10 @@ final class DetailView: FlippedView {
     /// keeps the draft so the user can retry and surfaces `message`.
     var onSubmitComment: ((String, @escaping (Bool, String?) -> Void) -> Void)?
 
+    /// Called when the user clicks the in-pane Refresh button (shown once the detail is loaded, in the
+    /// same top-right slot the hydration spinner uses). The controller force-reloads the open item.
+    var onRefreshDetail: (() -> Void)?
+
     // Composer state lives on the view (not the rebuilt subviews), so it survives `rebuild()`:
     // an in-flight post, a typed-but-unsent draft, and the last error all persist across relayouts.
     private var composerDraft = ""
@@ -202,14 +206,29 @@ final class DetailView: FlippedView {
             }
             doc.addSubview(copy)
         }
-        // Hydration indicator in the freed-up top-right slot: the lead item renders instantly; this
-        // signals the full body/tasks/comments/checks are still loading and vanishes in place when
-        // they land — no vertical shift either way.
+        // Top-right slot: while hydrating, a spinner + "Loading details…" (the lead item renders
+        // instantly; this signals the body/tasks/comments/checks are still loading and vanishes in
+        // place when they land — no vertical shift). Once loaded, a Refresh button in the same slot
+        // force-reloads the open item; re-shows this spinner while it reloads.
         if store.isLoadingDetail && store.selectedItemDetail == nil {
             let spinner = makeSpinner(size: 14)
             spinner.frame.origin = NSPoint(x: padX + cw - 16, y: y + 2); doc.addSubview(spinner)
             let loading = label("Loading details…", sys(11.5), t.txt4, align: .right)
             loading.frame = NSRect(x: padX + cw - 160, y: y + 2, width: 138, height: 16); doc.addSubview(loading)
+        } else if store.selectedItemDetail != nil {
+            let refresh = ClickRow(radius: 5)
+            refresh.hoverColor = t.hover
+            refresh.cursor = .pointingHand
+            refresh.toolTip = "Refresh"
+            refresh.onClick = { [weak self] in self?.onRefreshDetail?() }
+            refresh.frame = NSRect(x: padX + cw - 22, y: y, width: 22, height: 20)
+            let iv = NSImageView(frame: NSRect(x: 3, y: 2, width: 16, height: 16))
+            iv.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")
+            iv.contentTintColor = t.txt4
+            iv.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+            iv.imageScaling = .scaleProportionallyUpOrDown
+            refresh.addSubview(iv)
+            doc.addSubview(refresh)
         }
         y += 30
 
