@@ -196,8 +196,10 @@ final class RepoPanelView: FlippedView {
         let num = label(it.num, mono(11), t.txt3)
         num.frame = NSRect(x: 24, y: 8, width: 36, height: 14); card.addSubview(num)
         let title = label(it.title, sys(12.5, .medium), t.txt)
-        title.toolTip = it.title
         title.frame = NSRect(x: 62, y: 8, width: cw - 62 - 70, height: 14); card.addSubview(title)
+        // Tooltip only when the title is actually truncated — `fitW` is the width it needs to render
+        // in full, so if that exceeds the label's frame the row is showing a tail ellipsis.
+        if fitW(title) > title.frame.width { title.toolTip = it.title }
         let st = label(it.statusLabel, sys(10, .semibold), it.statusColor, align: .right)
         st.frame = NSRect(x: cw - 76, y: 8, width: 70, height: 14); card.addSubview(st)
 
@@ -233,8 +235,9 @@ final class RepoPanelView: FlippedView {
         let num = label(it.num, mono(11), t.txt3)
         num.frame = NSRect(x: indent + 32, y: 6, width: 34, height: 14); row.addSubview(num)
         let title = label(it.title, sys(12), selected ? t.txt : t.txt2)
-        title.toolTip = it.title
         title.frame = NSRect(x: indent + 68, y: 6, width: cw - indent - 68 - 22, height: 14); row.addSubview(title)
+        // Tooltip only when the title is actually truncated (see `itemCard`).
+        if fitW(title) > title.frame.width { title.toolTip = it.title }
         if it.blocked != nil {
             let b = label("⊘", sys(10), Status.red, align: .center)
             b.frame = NSRect(x: cw - 20, y: 6, width: 14, height: 14); row.addSubview(b)
