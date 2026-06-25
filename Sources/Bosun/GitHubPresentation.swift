@@ -86,6 +86,7 @@ extension Item {
             body: it.body,
             tasks: it.tasks.map(TaskItem.init(domain:)),
             checks: it.checks.map(Check.init(domain:)),
+            files: (it.files ?? []).map(FileChange.init(domain:)),
             comments: it.comments.map(Comment.init(domain:)),
             branch: it.branch,
             add: it.additions,
@@ -166,6 +167,26 @@ extension Comment {
                   badge: isBot ? "agent" : "",
                   body: c.body,
                   avatarURL: c.author.avatarURL)
+    }
+}
+
+extension FileChange {
+    init(domain f: GitHubFile) {
+        let v = FileChange.visual(for: f.change)
+        self.init(path: f.path, glyph: v.glyph, color: v.color, add: f.additions, del: f.deletions)
+    }
+
+    /// The single-letter badge + color GitHub uses for each change type (A/M/D/R/C, "~" for a
+    /// generic change). Mirrors `Check.visual`.
+    private static func visual(for change: GitHubFileChange) -> (glyph: String, color: NSColor) {
+        switch change {
+        case .added:    return ("A", Status.green)
+        case .modified: return ("M", Status.yellow)
+        case .removed:  return ("D", Status.red)
+        case .renamed:  return ("R", Status.blue)
+        case .copied:   return ("C", Status.dim)
+        case .changed:  return ("~", Status.dim)
+        }
     }
 }
 

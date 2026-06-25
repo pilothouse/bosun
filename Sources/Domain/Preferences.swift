@@ -48,6 +48,12 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// Whether the PR detail pane's `ACTIONS` (CI checks) section is collapsed. Global — one
     /// app-wide preference shared across every PR, not per-PR. `false` (expanded) by default.
     public var prChecksCollapsed: Bool
+    /// Whether the PR detail pane's `FILES CHANGED` section is collapsed. Global, like
+    /// `prChecksCollapsed`. `false` (expanded) by default.
+    public var prFilesCollapsed: Bool
+    /// Whether the detail pane's `COMMENTS` thread is collapsed. Global, like `prChecksCollapsed`;
+    /// the composer stays visible when collapsed. `false` (expanded) by default.
+    public var prCommentsCollapsed: Bool
     /// Whether the org panel hides repos with zero open issues+PRs. `false` (show every repo) by
     /// default — the user opts in to declutter. "Empty" is open-only; see `RepoVisibility`.
     public var skipEmptyRepos: Bool
@@ -95,6 +101,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         openTabs: [TerminalTabState]? = nil,
         activeTabId: String? = nil,
         prChecksCollapsed: Bool = false,
+        prFilesCollapsed: Bool = false,
+        prCommentsCollapsed: Bool = false,
         skipEmptyRepos: Bool = false
     ) {
         self.themeKey = themeKey
@@ -114,6 +122,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.openTabs = openTabs
         self.activeTabId = activeTabId
         self.prChecksCollapsed = prChecksCollapsed
+        self.prFilesCollapsed = prFilesCollapsed
+        self.prCommentsCollapsed = prCommentsCollapsed
         self.skipEmptyRepos = skipEmptyRepos
     }
 
@@ -143,6 +153,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             openTabs: try container.decodeIfPresent([TerminalTabState].self, forKey: .openTabs) ?? fallback.openTabs,
             activeTabId: try container.decodeIfPresent(String.self, forKey: .activeTabId) ?? fallback.activeTabId,
             prChecksCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prChecksCollapsed) ?? fallback.prChecksCollapsed,
+            prFilesCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prFilesCollapsed) ?? fallback.prFilesCollapsed,
+            prCommentsCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prCommentsCollapsed) ?? fallback.prCommentsCollapsed,
             skipEmptyRepos: try container.decodeIfPresent(Bool.self, forKey: .skipEmptyRepos) ?? fallback.skipEmptyRepos
         )
     }

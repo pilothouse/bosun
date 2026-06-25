@@ -133,6 +133,7 @@ enum GitHubGraphQLQueries {
                 }
               }
             }
+            files(first: 100) { nodes { path additions deletions changeType } }
           }
         }
       }

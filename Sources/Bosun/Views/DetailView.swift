@@ -284,76 +284,128 @@ final class DetailView: FlippedView {
             y += 22
         }
 
-        // Comments.
-        let chdr = label("COMMENTS · \(it.comments.count)", mono(9.5, .semibold), t.txt4)
-        chdr.frame = NSRect(x: padX, y: y, width: cw, height: 14); doc.addSubview(chdr); y += 22
-        for cm in it.comments {
-            let av = AvatarView(size: 26, cornerRadius: 13, url: cm.avatarURL,
-                                placeholderColor: cm.color, initials: cm.initials,
-                                initialsFont: sys(10, .bold), initialsColor: .hex(0x0d0f13),
-                                ring: cm.badge == "agent" ? cm.color : nil)
-            av.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(av)
-            let bubbleW = cw - 37
-            let body = markdownView(cm.body, baseFont: sys(12.5), width: bubbleW - 26)
-            let bubbleH = body.frame.height + 38
-            let bubble = BoxView(bg: t.card, radius: 11, border: t.cardbr)
-            bubble.frame = NSRect(x: padX + 37, y: y, width: bubbleW, height: bubbleH)
-            let an = label(cm.author, sys(12, .bold), t.txt); an.frame = NSRect(x: 13, y: 11, width: 200, height: 16); bubble.addSubview(an)
-            let tm = label(cm.time, sys(11), t.txt4, align: .right); tm.frame = NSRect(x: bubbleW - 90, y: 11, width: 76, height: 16); bubble.addSubview(tm)
-            if !cm.badge.isEmpty {
-                let bg = badge(cm.badge, fg: t.accent, border: t.accent); bg.frame.origin = NSPoint(x: 13 + fitW(an) + 8, y: 9); bubble.addSubview(bg)
+        // PR changed files. Mirrors the ACTIONS disclosure above: the header toggles the global,
+        // persisted `store.prFilesCollapsed`, and the count stays visible when collapsed. The list
+        // is what a detail fetch hydrated (issues never reach here; a PR with no files renders none).
+        if it.kind == .pr && !it.files.isEmpty {
+            let collapsed = store.prFilesCollapsed
+            let header = ClickRow(bg: nil, radius: 6)
+            header.hoverColor = t.hover
+            header.frame = NSRect(x: padX, y: y, width: cw, height: 18)
+            header.onClick = { [weak store] in store?.prFilesCollapsed.toggle() }
+            let caret = label(collapsed ? "▶" : "▼", sys(8), t.txt4, align: .center)
+            caret.frame = NSRect(x: 0, y: 4, width: 14, height: 12); header.addSubview(caret)
+            let hdr = label("FILES CHANGED · \(it.files.count)", mono(9.5, .semibold), t.txt4)
+            hdr.frame = NSRect(x: 15, y: 2, width: cw - 15, height: 14); header.addSubview(hdr)
+            doc.addSubview(header); y += 24
+            if !collapsed {
+                let box = BoxView(bg: t.card, radius: 11, border: t.cardbr)
+                let rowH: CGFloat = 31
+                box.frame = NSRect(x: padX, y: y, width: cw, height: rowH * CGFloat(it.files.count))
+                var fy: CGFloat = 0
+                for (i, f) in it.files.enumerated() {
+                    let row = FlippedView(frame: NSRect(x: 0, y: fy, width: cw, height: rowH))
+                    let icon = BoxView(bg: .hexA(UInt32(f.color.toHex()), 0.12), radius: 5, border: f.color)
+                    icon.frame = NSRect(x: 14, y: 8, width: 16, height: 16)
+                    icon.addSubview(centeredGlyph(f.glyph, sys(9, .bold), f.color, in: icon.frame.size)); row.addSubview(icon)
+                    // Middle-truncate so the filename stays readable when the directory path is long.
+                    let nm = label(f.path, mono(11.5), t.txt2); nm.lineBreakMode = .byTruncatingMiddle
+                    nm.frame = NSRect(x: 40, y: 7, width: cw - 175, height: 16); row.addSubview(nm)
+                    let diff = label("+\(f.add) −\(f.del)", mono(10.5), t.txt3, align: .right)
+                    diff.frame = NSRect(x: cw - 130, y: 7, width: 116, height: 16); row.addSubview(diff)
+                    if i < it.files.count - 1 {
+                        let sep = BoxView(bg: t.line); sep.frame = NSRect(x: 0, y: rowH - 1, width: cw, height: 1); row.addSubview(sep)
+                    }
+                    box.addSubview(row); fy += rowH
+                }
+                doc.addSubview(box); y += box.frame.height
             }
-            body.frame.origin = NSPoint(x: 13, y: 30); bubble.addSubview(body)
-            doc.addSubview(bubble); y += bubbleH + 13
+            y += 22
         }
 
-        // Composer. The avatar is the signed-in viewer (real image once it loads, initials until
-        // then); the field is editable and Send posts the comment. Sized like a comment row above it.
-        let cav = AvatarView(size: 26, cornerRadius: 13, url: store.viewer?.avatarURL,
-                             placeholderColor: store.viewer?.color ?? Status.dim,
-                             initials: store.viewer?.initials ?? "?",
-                             initialsFont: sys(10, .bold), initialsColor: .hex(0x0d0f13))
-        cav.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(cav)
+        // Comments. The header is a disclosure mirroring ACTIONS/FILES CHANGED: it toggles the
+        // global, persisted `store.prCommentsCollapsed`. Only the thread collapses — the composer
+        // below stays visible so a comment can always be posted.
+        let commentsCollapsed = store.prCommentsCollapsed
+        let cHeader = ClickRow(bg: nil, radius: 6)
+        cHeader.hoverColor = t.hover
+        cHeader.frame = NSRect(x: padX, y: y, width: cw, height: 18)
+        cHeader.onClick = { [weak store] in store?.prCommentsCollapsed.toggle() }
+        let cCaret = label(commentsCollapsed ? "▶" : "▼", sys(8), t.txt4, align: .center)
+        cCaret.frame = NSRect(x: 0, y: 4, width: 14, height: 12); cHeader.addSubview(cCaret)
+        let chdr = label("COMMENTS · \(it.comments.count)", mono(9.5, .semibold), t.txt4)
+        chdr.frame = NSRect(x: 15, y: 2, width: cw - 15, height: 14); cHeader.addSubview(chdr)
+        doc.addSubview(cHeader); y += 24
+        if !commentsCollapsed {
+            for cm in it.comments {
+                let av = AvatarView(size: 26, cornerRadius: 13, url: cm.avatarURL,
+                                    placeholderColor: cm.color, initials: cm.initials,
+                                    initialsFont: sys(10, .bold), initialsColor: .hex(0x0d0f13),
+                                    ring: cm.badge == "agent" ? cm.color : nil)
+                av.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(av)
+                let bubbleW = cw - 37
+                let body = markdownView(cm.body, baseFont: sys(12.5), width: bubbleW - 26)
+                let bubbleH = body.frame.height + 38
+                let bubble = BoxView(bg: t.card, radius: 11, border: t.cardbr)
+                bubble.frame = NSRect(x: padX + 37, y: y, width: bubbleW, height: bubbleH)
+                let an = label(cm.author, sys(12, .bold), t.txt); an.frame = NSRect(x: 13, y: 11, width: 200, height: 16); bubble.addSubview(an)
+                let tm = label(cm.time, sys(11), t.txt4, align: .right); tm.frame = NSRect(x: bubbleW - 90, y: 11, width: 76, height: 16); bubble.addSubview(tm)
+                if !cm.badge.isEmpty {
+                    let bg = badge(cm.badge, fg: t.accent, border: t.accent); bg.frame.origin = NSPoint(x: 13 + fitW(an) + 8, y: 9); bubble.addSubview(bg)
+                }
+                body.frame.origin = NSPoint(x: 13, y: 30); bubble.addSubview(body)
+                doc.addSubview(bubble); y += bubbleH + 13
+            }
 
-        let compW = cw - 37
-        let comp = BoxView(bg: t.card, radius: 10, border: t.cardbr)
-        comp.frame = NSRect(x: padX + 37, y: y, width: compW, height: 38)
+            // Composer. The avatar is the signed-in viewer (real image once it loads, initials until
+            // then); the field is editable and Send posts the comment. Inside the collapse gate, so
+            // collapsing COMMENTS hides the thread and its input together.
+            let cav = AvatarView(size: 26, cornerRadius: 13, url: store.viewer?.avatarURL,
+                                 placeholderColor: store.viewer?.color ?? Status.dim,
+                                 initials: store.viewer?.initials ?? "?",
+                                 initialsFont: sys(10, .bold), initialsColor: .hex(0x0d0f13))
+            cav.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(cav)
 
-        let field = NSTextField(string: composerDraft)
-        field.font = sys(12.5)
-        field.placeholderString = "Write a comment…"
-        field.isBezeled = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        field.textColor = t.txt
-        field.lineBreakMode = .byTruncatingTail
-        field.delegate = self
-        field.target = self
-        field.action = #selector(composerReturn)   // Return submits; fires only on Enter, not on blur
-        field.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
-        field.isEnabled = !isPosting
-        field.frame = NSRect(x: 12, y: 9, width: compW - 84, height: 20)
-        comp.addSubview(field)
-        composerField = field
+            let compW = cw - 37
+            let comp = BoxView(bg: t.card, radius: 10, border: t.cardbr)
+            comp.frame = NSRect(x: padX + 37, y: y, width: compW, height: 38)
 
-        if isPosting {
-            let spinner = makeSpinner(size: 14)
-            spinner.frame.origin = NSPoint(x: compW - 64 + 21, y: 12); comp.addSubview(spinner)
-        } else {
-            let send = ClickRow(bg: t.accent, radius: 7)
-            send.frame = NSRect(x: compW - 64, y: 7, width: 56, height: 24)
-            send.onClick = { [weak self] in self?.submitComposer() }
-            let sl = label("Send", sys(11, .semibold), t.onacc, align: .center)
-            sl.frame = NSRect(x: 0, y: 4, width: 56, height: 16); send.addSubview(sl)
-            comp.addSubview(send)
-        }
-        doc.addSubview(comp); y += 46
+            let field = NSTextField(string: composerDraft)
+            field.font = sys(12.5)
+            field.placeholderString = "Write a comment…"
+            field.isBezeled = false
+            field.drawsBackground = false
+            field.focusRingType = .none
+            field.textColor = t.txt
+            field.lineBreakMode = .byTruncatingTail
+            field.delegate = self
+            field.target = self
+            field.action = #selector(composerReturn)   // Return submits; fires only on Enter, not on blur
+            field.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+            field.isEnabled = !isPosting
+            field.frame = NSRect(x: 12, y: 9, width: compW - 84, height: 20)
+            comp.addSubview(field)
+            composerField = field
 
-        if let composerError {
-            let err = label(composerError, sys(11), Status.red, lines: 0)
-            err.preferredMaxLayoutWidth = compW
-            err.frame = NSRect(x: padX + 37, y: y, width: compW, height: 30)
-            doc.addSubview(err); y += 22
+            if isPosting {
+                let spinner = makeSpinner(size: 14)
+                spinner.frame.origin = NSPoint(x: compW - 64 + 21, y: 12); comp.addSubview(spinner)
+            } else {
+                let send = ClickRow(bg: t.accent, radius: 7)
+                send.frame = NSRect(x: compW - 64, y: 7, width: 56, height: 24)
+                send.onClick = { [weak self] in self?.submitComposer() }
+                let sl = label("Send", sys(11, .semibold), t.onacc, align: .center)
+                sl.frame = NSRect(x: 0, y: 4, width: 56, height: 16); send.addSubview(sl)
+                comp.addSubview(send)
+            }
+            doc.addSubview(comp); y += 46
+
+            if let composerError {
+                let err = label(composerError, sys(11), Status.red, lines: 0)
+                err.preferredMaxLayoutWidth = compW
+                err.frame = NSRect(x: padX + 37, y: y, width: compW, height: 30)
+                doc.addSubview(err); y += 22
+            }
         }
         y += 8
 

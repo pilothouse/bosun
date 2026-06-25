@@ -15,9 +15,9 @@ public enum GitHubItemState: String, Sendable, Equatable, Codable {
 }
 
 /// A pull request or issue. List fetches populate the lead fields and leave the heavy
-/// collections (`comments`/`checks`) empty; a detail fetch fills them in. `tasks` is derived
-/// from `body` via `GitHubTask.parse`, and PR-only fields (`branch`/`additions`/`deletions`)
-/// stay nil for issues. Pure value type — the presentation layer adds colors and glyphs.
+/// collections (`comments`/`checks`/`files`) empty; a detail fetch fills them in. `tasks` is
+/// derived from `body` via `GitHubTask.parse`, and PR-only fields (`branch`/`additions`/`deletions`/
+/// `files`) stay nil/empty for issues. Pure value type — the presentation layer adds colors and glyphs.
 public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
     public let id: String
     public let number: Int
@@ -35,6 +35,10 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
     public let deletions: Int?
     public let comments: [GitHubComment]
     public let checks: [GitHubCheck]
+    /// The files a PR changed (path + counts + change type). PR-only and detail-hydrated, like
+    /// `checks`. Optional so an older cache written before this key still decodes (to nil); the
+    /// presentation layer treats nil as "none".
+    public let files: [GitHubFile]?
     public let tasks: [GitHubTask]
     /// The number of this item's sub-issue parent in the same repo, or nil when it isn't a
     /// sub-issue. Carried from the list fetch (GitHub's GraphQL `parent`) so the panel can group
@@ -46,7 +50,7 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
                 repositoryNameWithOwner: String, labels: [String] = [], isDraft: Bool = false,
                 branch: String? = nil, additions: Int? = nil, deletions: Int? = nil,
                 comments: [GitHubComment] = [], checks: [GitHubCheck] = [],
-                tasks: [GitHubTask] = [], parentNumber: Int? = nil) {
+                files: [GitHubFile]? = nil, tasks: [GitHubTask] = [], parentNumber: Int? = nil) {
         self.id = id
         self.number = number
         self.kind = kind
@@ -63,6 +67,7 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
         self.deletions = deletions
         self.comments = comments
         self.checks = checks
+        self.files = files
         self.tasks = tasks
         self.parentNumber = parentNumber
     }

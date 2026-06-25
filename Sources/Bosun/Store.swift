@@ -47,6 +47,12 @@ final class Store {
     /// (the `groupBy` precedent), so a change repaints the open PR and survives relaunch, shared
     /// across every PR.
     var prChecksCollapsed = false { didSet { if oldValue != prChecksCollapsed { changed() } } }
+    /// Whether the PR detail's `FILES CHANGED` section is collapsed. Global and persisted, exactly
+    /// like `prChecksCollapsed`; a change repaints the open PR and survives relaunch.
+    var prFilesCollapsed = false { didSet { if oldValue != prFilesCollapsed { changed() } } }
+    /// Whether the detail pane's `COMMENTS` thread is collapsed. Global and persisted, like
+    /// `prChecksCollapsed`; the composer stays visible when collapsed.
+    var prCommentsCollapsed = false { didSet { if oldValue != prCommentsCollapsed { changed() } } }
     /// Whether the org panel hides repos with zero open issues+PRs. Global, persisted; a change
     /// re-filters every org's repos instantly via `visibleOrgs`. Off (show all) by default.
     var skipEmptyRepos = false { didSet { if oldValue != skipEmptyRepos { changed() } } }
@@ -257,6 +263,8 @@ final class Store {
             openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
             activeTabId: activeTerminalTabId,
             prChecksCollapsed: prChecksCollapsed,
+            prFilesCollapsed: prFilesCollapsed,
+            prCommentsCollapsed: prCommentsCollapsed,
             skipEmptyRepos: skipEmptyRepos)
         Task { await preferences.save(snapshot) }
     }
@@ -282,6 +290,8 @@ final class Store {
         terminalTabs = p.openTabs ?? []
         activeTerminalTabId = p.activeTabId
         prChecksCollapsed = p.prChecksCollapsed
+        prFilesCollapsed = p.prFilesCollapsed
+        prCommentsCollapsed = p.prCommentsCollapsed
         skipEmptyRepos = p.skipEmptyRepos
         isLoading = false
         onWindowAlpha?(windowAlpha)

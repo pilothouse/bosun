@@ -49,6 +49,14 @@
               }
             }
           ]
+        },
+        "files": {
+          "nodes": [
+            { "path": "Sources/RateLimiter.swift", "additions": 80, "deletions": 10, "changeType": "MODIFIED" },
+            { "path": "Sources/Burst.swift", "additions": 44, "deletions": 0, "changeType": "ADDED" },
+            { "path": "Sources/Legacy.swift", "additions": 0, "deletions": 8, "changeType": "DELETED" },
+            { "path": "Tests/RateLimiterTests.swift", "additions": 0, "deletions": 0, "changeType": "RENAMED" }
+          ]
         }
       }
     }

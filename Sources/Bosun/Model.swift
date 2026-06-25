@@ -45,6 +45,9 @@ extension Connection {
 
 struct TaskItem { let label: String; let done: Bool }
 struct Check { let name, icon: String; let color: NSColor; let dur, statusText: String; var running = false }
+/// One changed file in a PR's `FILES CHANGED` section. `glyph`/`color` encode the change type
+/// (A/M/D/R/C); `add`/`del` are the per-file line counts. Built by `FileChange.init(domain:)`.
+struct FileChange { let path, glyph: String; let color: NSColor; let add, del: Int }
 struct Comment { let author, initials: String; let color: NSColor; let time, badge, body: String; let avatarURL: URL? }
 
 /// The signed-in viewer, projected for the comment composer's avatar. `color`/`initials` are the
@@ -81,6 +84,7 @@ struct Item {
     let body: String
     var tasks: [TaskItem] = []
     var checks: [Check] = []
+    var files: [FileChange] = []
     var comments: [Comment] = []
     var branch: String? = nil
     var add: Int? = nil

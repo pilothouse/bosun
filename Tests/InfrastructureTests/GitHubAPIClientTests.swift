@@ -146,6 +146,24 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(item.comments.first?.authorAssociation, "MEMBER")
     }
 
+    func testItemDetailMapsChangedFiles() async throws {
+        StubURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            if path.contains("/graphql") { return (self.ok(request), try fixture("item-detail")) }
+            return (self.ok(request), try fixture("comments"))
+        }
+        let item = try await makeClient().itemDetail(owner: "acme-corp", repo: "api-gateway", number: 482)
+
+        let files = try XCTUnwrap(item.files)
+        XCTAssertEqual(files.map(\.path), [
+            "Sources/RateLimiter.swift", "Sources/Burst.swift",
+            "Sources/Legacy.swift", "Tests/RateLimiterTests.swift",
+        ])
+        XCTAssertEqual(files.map(\.change), [.modified, .added, .removed, .renamed])  // DELETED → removed
+        XCTAssertEqual(files[0].additions, 80)
+        XCTAssertEqual(files[0].deletions, 10)
+    }
+
     func testCommentsPaginationFollowsLinkHeader() async throws {
         let nextURL = "https://api.github.com/repos/acme-corp/api-gateway/issues/482/comments?per_page=100&page=2"
         StubURLProtocol.handler = { request in

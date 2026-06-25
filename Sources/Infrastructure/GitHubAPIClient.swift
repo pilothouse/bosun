@@ -116,7 +116,8 @@ public actor GitHubAPIClient: GitHubAPI {
         let comments: [CommentDTO] = try await getPaged(
             path: "/repos/\(owner)/\(repo)/issues/\(number)/comments")
         return node.toDomain(kind: kind, repoNameWithOwner: "\(owner)/\(repo)",
-                             comments: comments.map { $0.toDomain() }, checks: node.rollupChecks)
+                             comments: comments.map { $0.toDomain() }, checks: node.rollupChecks,
+                             files: node.changedFiles)
     }
 
     public func issueDependencies(owner: String, repo: String, number: Int) async throws -> [Int] {
@@ -461,6 +462,7 @@ private struct ItemNode: Decodable {
     let headRefName: String?
     let typeName: String?
     let commits: CommitConnection?
+    let files: FilesConnection?
     let parent: ParentRef?
 
     /// The sub-issue parent, when this issue is one — only its `number` is needed to group locally.
@@ -468,7 +470,7 @@ private struct ItemNode: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id, number, title, body, createdAt, state, author, labels
-        case isDraft, additions, deletions, headRefName, commits, parent
+        case isDraft, additions, deletions, headRefName, commits, files, parent
         case typeName = "__typename"
     }
 
@@ -477,8 +479,14 @@ private struct ItemNode: Decodable {
         commits?.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap { $0.toDomain() } ?? []
     }
 
+    /// The files a PR changed (empty for issues, or a PR whose `files` GraphQL field is absent).
+    var changedFiles: [GitHubFile] {
+        files?.nodes.map { $0.toDomain() } ?? []
+    }
+
     func toDomain(kind: GitHubItemKind, repoNameWithOwner: String,
-                  comments: [GitHubComment] = [], checks: [GitHubCheck] = []) -> GitHubItem {
+                  comments: [GitHubComment] = [], checks: [GitHubCheck] = [],
+                  files: [GitHubFile]? = nil) -> GitHubItem {
         GitHubItem(
             id: id, number: number, kind: kind, title: title,
             state: GitHubItem.state(fromGraphQL: state),
@@ -486,8 +494,8 @@ private struct ItemNode: Decodable {
             createdAt: createdAt, body: body, repositoryNameWithOwner: repoNameWithOwner,
             labels: labels?.nodes.map(\.name) ?? [], isDraft: isDraft ?? false,
             branch: headRefName, additions: additions, deletions: deletions,
-            comments: comments, checks: checks, tasks: GitHubTask.parse(markdownBody: body),
-            parentNumber: parent?.number)
+            comments: comments, checks: checks, files: files,
+            tasks: GitHubTask.parse(markdownBody: body), parentNumber: parent?.number)
     }
 }
 

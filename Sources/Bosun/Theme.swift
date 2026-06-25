@@ -127,6 +127,7 @@ enum Status {
     static let yellow = NSColor.hex(0xd29922)
     static let red = NSColor.hex(0xf85149)
     static let purple = NSColor.hex(0xd2a8ff)
+    static let blue = NSColor.hex(0x58a6ff)
     static let dim = NSColor.hex(0x6b7079)
     static let add = NSColor.hex(0x3fb950)
     static let del = NSColor.hex(0xf85149)
