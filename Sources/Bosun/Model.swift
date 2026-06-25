@@ -96,3 +96,13 @@ struct Item {
     /// The item's GitHub web URL (issue or PR), used by the detail view's copy-link affordance.
     var url = ""
 }
+
+extension Item {
+    /// `repo` ("owner/name") split into its parts, so the data controller can route this item's
+    /// detail/comment fetch to its own repo — the aggregate org view mixes items from many repos, so
+    /// the scope can't be assumed. nil if `repo` is empty/malformed.
+    var ownerRepo: (owner: String, name: String)? {
+        guard let slash = repo.firstIndex(of: "/") else { return nil }
+        return (String(repo[..<slash]), String(repo[repo.index(after: slash)...]))
+    }
+}

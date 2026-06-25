@@ -177,6 +177,52 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNil(decoded.selectedRepoKey)
     }
 
+    func testSelectedOrgIdDefaultsToEmpty() {
+        XCTAssertEqual(Preferences.default.selectedOrgId, "",
+                       "empty means a single repo (or nothing) was the active scope, not an org")
+    }
+
+    func testSelectedOrgIdRoundTripsThroughCodable() throws {
+        let original = Preferences(selectedOrgId: "acme")
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.selectedOrgId, "acme")
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutSelectedOrgIdFallsBackToEmpty() throws {
+        // A payload written by a build before the aggregate org view was remembered.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertEqual(decoded.selectedOrgId, "")
+    }
+
+    func testOrgsScrollOffsetDefaultsToTop() {
+        XCTAssertEqual(Preferences.default.orgsScrollOffset, 0, "the orgs panel starts at the top")
+    }
+
+    func testOrgsScrollOffsetRoundTripsThroughCodable() throws {
+        let original = Preferences(orgsScrollOffset: 184.5)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.orgsScrollOffset, 184.5)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutOrgsScrollOffsetFallsBackToZero() throws {
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertEqual(decoded.orgsScrollOffset, 0)
+    }
+
     func testSelectedTabAndGroupByDefaultToNil() {
         XCTAssertNil(Preferences.default.selectedTab, "nil means 'use the default tab'")
         XCTAssertNil(Preferences.default.groupBy, "nil means 'use the default View'")

@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var root: BosunView!
     private var authController: GitHubAuthController!
     private var dataController: GitHubDataController!
+    private var store: Store?
     let ghostty = GhosttyApp.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -16,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let preferences = CompositionRoot.makePreferencesStore()
         let store = Store(preferences: preferences)
+        self.store = store
         let services = CompositionRoot.makeConnectionServices()
         let githubServices = CompositionRoot.makeGitHubAuthServices()
         let auth = GitHubAuthController(services: githubServices, store: store)
@@ -73,6 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Flush the latest UI state (notably the orgs panel's live scroll offset, which is mirrored into
+    /// the store as the user scrolls but only written by a `persist()`) so a scroll-then-quit with no
+    /// other change still restores where the user left off.
+    func applicationWillTerminate(_ notification: Notification) {
+        store?.persist()
+    }
 
     /// Dev-only end-to-end probe of the live `GitHubAPI` client, off unless `BOSUN_API_SMOKE=1`.
     /// It fetches the viewer and their organizations and logs what decoded — proof the GraphQL +

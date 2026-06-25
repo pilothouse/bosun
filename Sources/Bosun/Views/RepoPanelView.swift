@@ -5,8 +5,12 @@ final class RepoPanelView: FlippedView {
     let store: Store
     /// Pick a repo to drive the PR/issue lists (owner, name). Wired to the data controller.
     var onSelectRepo: ((String, String) -> Void)?
-    /// Open an item's detail by its number. Wired to the data controller.
-    var onSelectItem: ((Int) -> Void)?
+    /// Pick a whole org: aggregate every repo's PRs/issues into per-repo sections. Wired to the
+    /// data controller (which also clears the repo selection and expands the org).
+    var onSelectOrg: ((String) -> Void)?
+    /// Open an item's detail. Passes the whole item so the controller can route the detail fetch to
+    /// the item's own repo (the aggregate org list mixes repos). Wired to the data controller.
+    var onSelectItem: ((Item) -> Void)?
     /// Open the "manage organizations" sheet (follow/unfollow + reorder).
     var onManageOrgs: (() -> Void)?
     /// The status filter changed — ask the data controller to re-fetch the current repo in the new
@@ -24,6 +28,19 @@ final class RepoPanelView: FlippedView {
     /// item hydrates its detail, which repaints the whole panel — without this the list would jump
     /// back to the top on every such repaint (and on every background refresh).
     private weak var listScroll: NSScrollView?
+    /// The orgs/repos scroll view, retained for the same reason as `listScroll`: selecting an
+    /// org/repo or a background refresh repaints the whole panel, which would otherwise snap this
+    /// list back to the top. Its offset is preserved across rebuilds.
+    private weak var orgsScroll: NSScrollView?
+    /// One-shot guard for the *cross-launch* orgs-scroll restore: the persisted offset is applied on
+    /// the first rebuild that actually has orgs (so the content is tall enough to honor it), after
+    /// which live preservation takes over. Without this, the empty "loading" render would set a live
+    /// offset of 0 and the saved position would be lost.
+    private var restoredOrgsScroll = false
+    /// The bounds-change observer on the orgs clip view, so the user's scroll is mirrored into
+    /// `store.orgsScrollOffset` for persistence. Recreated each rebuild (the scroll view is), so the
+    /// previous one is torn down first to avoid stacking observers.
+    private var orgsScrollObserver: NSObjectProtocol?
     /// Identity of the list currently shown (repo + tab + grouping + status filter). When it changes
     /// the list is a different list, so the scroll resets to the top; otherwise the prior offset is
     /// restored across the repaint.
@@ -43,13 +60,19 @@ final class RepoPanelView: FlippedView {
     /// Highlight the row immediately, then ask the data controller to hydrate its detail.
     private func selectItem(_ it: Item) {
         store.selectedItemId = it.id
-        if let number = Int(it.id) { onSelectItem?(number) }
+        onSelectItem?(it)
     }
 
     /// Collapse or expand a grouped row's subtree (the store change triggers a rebuild).
     private func toggleCollapse(_ id: String) {
         if store.collapsedItems.contains(id) { store.collapsedItems.remove(id) }
         else { store.collapsedItems.insert(id) }
+    }
+
+    /// Collapse or expand an org's repo list in the panel (the store change triggers a rebuild).
+    private func toggleOrgExpanded(_ id: String) {
+        if store.expandedOrgs.contains(id) { store.expandedOrgs.remove(id) }
+        else { store.expandedOrgs.insert(id) }
     }
 
     /// What the orgs region shows before any live data loads: a sign-in prompt when signed out,
@@ -98,13 +121,18 @@ final class RepoPanelView: FlippedView {
 
         for org in orgs {
             let expanded = store.expandedOrgs.contains(org.id)
-            let row = ClickRow(bg: nil)
+            let selectedOrg = store.selectedOrgId == org.id
+            let row = ClickRow(bg: selectedOrg ? t.accentbg : nil, radius: 6)
             row.hoverColor = t.hover
             row.frame = NSRect(x: 0, y: y, width: w, height: 36)
+            // Clicking the row body selects the org (clearing any repo highlight), expands it, and
+            // loads its aggregated items — the controller owns that selection + fetch. Clicking the
+            // *already-selected* org instead toggles its repo list (collapse/expand) and stays
+            // selected, so the caret isn't the only way to collapse it.
             row.onClick = { [weak self] in
                 guard let self else { return }
-                if self.store.expandedOrgs.contains(org.id) { self.store.expandedOrgs.remove(org.id) }
-                else { self.store.expandedOrgs.insert(org.id) }
+                if self.store.selectedOrgId == org.id { self.toggleOrgExpanded(org.id) }
+                else { self.onSelectOrg?(org.id) }
             }
             let sq = AvatarView(size: 22, cornerRadius: 6, url: org.avatarURL,
                                 placeholderColor: org.color,
@@ -116,8 +144,16 @@ final class RepoPanelView: FlippedView {
             nm.frame = NSRect(x: 46, y: 9, width: w - 46 - 60, height: 18); row.addSubview(nm)
             let rc = label("\(org.repos.count)", mono(10), t.txt4, align: .right)
             rc.frame = NSRect(x: w - 56, y: 9, width: 24, height: 18); row.addSubview(rc)
-            let caret = label(expanded ? "▾" : "▸", sys(10), t.txt4, align: .center)
-            caret.frame = NSRect(x: w - 26, y: 9, width: 12, height: 18); row.addSubview(caret)
+            // The caret is a nested ClickRow that toggles collapse without selecting — a shortcut to
+            // collapse an org you haven't selected (mirrors the grouped-row caret). Its accent tint is
+            // the org row's selected glyph cue.
+            let caretBox = ClickRow(bg: nil, radius: 4)
+            caretBox.hoverColor = t.hover
+            caretBox.frame = NSRect(x: w - 30, y: 6, width: 24, height: 24)
+            caretBox.onClick = { [weak self] in self?.toggleOrgExpanded(org.id) }
+            let caret = label(expanded ? "▾" : "▸", sys(10), selectedOrg ? t.accent : t.txt4, align: .center)
+            caret.frame = NSRect(x: 6, y: 3, width: 12, height: 18); caretBox.addSubview(caret)
+            row.addSubview(caretBox)
             doc.addSubview(row); y += 36
 
             if expanded {
@@ -204,12 +240,32 @@ final class RepoPanelView: FlippedView {
         return row
     }
 
+    /// A collapsible section header for the aggregate org view — one per repo, showing the repo's
+    /// short name and its item count. Clicking it toggles the section's collapse, keyed in
+    /// `collapsedItems` by the repo's `owner/name` (which can't collide with an item's `repo#number`).
+    private func repoSectionHeader(_ repoKey: String, count: Int, collapsed: Bool,
+                                   width w: CGFloat, t: Theme) -> ClickRow {
+        let row = ClickRow(bg: nil, radius: 6)
+        row.hoverColor = t.hover
+        row.frame = NSRect(x: 8, y: 0, width: w - 16, height: 26)
+        row.onClick = { [weak self] in self?.toggleCollapse(repoKey) }
+        let shortName = String(repoKey.split(separator: "/").last ?? Substring(repoKey))
+        let caret = label(collapsed ? "▸" : "▾", sys(9), t.txt4, align: .center)
+        caret.frame = NSRect(x: 6, y: 6, width: 12, height: 14); row.addSubview(caret)
+        let nm = label(shortName, sys(11.5, .semibold), t.txt2)
+        nm.frame = NSRect(x: 22, y: 5, width: w - 22 - 50, height: 16); row.addSubview(nm)
+        let cnt = label("\(count)", mono(10), t.txt4, align: .right)
+        cnt.frame = NSRect(x: w - 16 - 40, y: 5, width: 32, height: 16); row.addSubview(cnt)
+        return row
+    }
+
     // MARK: layout
 
     private func rebuild() {
         // Capture the list's scroll position before tearing the panel down, so a plain repaint
         // (e.g. opening an item, which hydrates its detail) can restore it instead of jumping to top.
         let priorListOffset = listScroll?.contentView.bounds.origin
+        let priorOrgsOffset = orgsScroll?.contentView.bounds.origin
         subviews.forEach { $0.removeFromSuperview() }
         let t = store.theme
         layer?.backgroundColor = t.panel.cgColor
@@ -229,13 +285,40 @@ final class RepoPanelView: FlippedView {
         orgsDoc.frame.size.width = w
         orgsScroll.documentView = orgsDoc
         addSubview(orgsScroll)
+        self.orgsScroll = orgsScroll
+        if let token = orgsScrollObserver { NotificationCenter.default.removeObserver(token) }
+        // Restore the user's place. On the first populated render, apply the *persisted* offset
+        // (cross-launch restore); thereafter keep the live offset across repaints (selecting an
+        // org/repo, a background refresh, expanding an org). Clamp to the new content in case the
+        // list shrank — e.g. an org collapsed — so we never land in empty space.
+        let targetY: CGFloat
+        if !restoredOrgsScroll, !store.orgs.isEmpty {
+            targetY = CGFloat(store.orgsScrollOffset)
+            restoredOrgsScroll = true
+        } else {
+            targetY = priorOrgsOffset?.y ?? 0
+        }
+        let maxOrgsY = max(0, orgsDoc.frame.height - orgsScroll.contentView.bounds.height)
+        orgsScroll.contentView.scroll(to: NSPoint(x: 0, y: min(max(0, targetY), maxOrgsY)))
+        orgsScroll.reflectScrolledClipView(orgsScroll.contentView)
+        // Mirror the user's scroll into the store for persistence — only after the cross-launch
+        // restore has run, so the empty/loading renders can't clobber the saved offset. A plain
+        // store write (no repaint); the next `persist()` saves it.
+        orgsScroll.contentView.postsBoundsChangedNotifications = true
+        orgsScrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: orgsScroll.contentView,
+            queue: .main) { [weak self, weak orgsScroll] _ in
+            guard let self, let orgsScroll, self.restoredOrgsScroll else { return }
+            self.store.orgsScrollOffset = Double(orgsScroll.contentView.bounds.origin.y)
+        }
         let ob = BoxView(bg: t.line)
         ob.frame = NSRect(x: 0, y: orgsH, width: w, height: 1); addSubview(ob)
 
         // 2. Repo header + tabs.
         var y = orgsH + 12
-        let repoTitle = label(store.selectedRepoTitle.isEmpty ? "No repository" : store.selectedRepoTitle,
-                              sys(13, .bold), store.selectedRepoTitle.isEmpty ? t.txt4 : t.txt)
+        let scopeTitle = store.scopeTitle
+        let repoTitle = label(scopeTitle.isEmpty ? "No repository" : scopeTitle,
+                              sys(13, .bold), scopeTitle.isEmpty ? t.txt4 : t.txt)
         repoTitle.frame = NSRect(x: 14, y: y, width: w - 28, height: 18); addSubview(repoTitle)
         y += 30
 
@@ -313,6 +396,27 @@ final class RepoPanelView: FlippedView {
             let spinner = makeSpinner()
             spinner.frame.origin = NSPoint(x: (w - 20) / 2, y: 16); doc.addSubview(spinner)
             ly += 52
+        } else if store.isOrgScope {
+            // Aggregate org view: one collapsible section per repo (in panel order), each listing that
+            // repo's items for the active tab. Items keep their unique `repo#number` id, so selection
+            // works across repos. The grouping ("View") modes are per-repo concepts, so they're not
+            // applied here — the org view is always sectioned by repo.
+            let byRepo = Dictionary(grouping: items, by: \.repo)
+            for repoKey in store.selectedOrgRepoKeys {
+                guard let repoItems = byRepo[repoKey], !repoItems.isEmpty else { continue }
+                let collapsed = store.collapsedItems.contains(repoKey)
+                let header = repoSectionHeader(repoKey, count: repoItems.count, collapsed: collapsed,
+                                               width: w, t: t)
+                header.frame.origin.y = ly; doc.addSubview(header); ly += 30
+                if collapsed { continue }
+                for it in repoItems {
+                    let gr = groupedRow(it, indent: 0, hasChildren: false, width: w, t: t)
+                    gr.frame.origin.y = ly; doc.addSubview(gr)
+                    if it.id == store.selectedItemId { selectedRect = gr.frame }
+                    ly += 29
+                }
+                ly += 4
+            }
         } else if store.groupBy == .none {
             for it in items {
                 let c = itemCard(it, width: w, t: t)
@@ -327,7 +431,11 @@ final class RepoPanelView: FlippedView {
             // view as a root, and guards cycles.
             let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let parentOf: [String: String] = items.reduce(into: [:]) { map, it in
-                if let key = store.groupBy == .blocked ? it.blocked : it.parent { map[it.id] = key }
+                // `it.blocked`/`it.parent` are same-repo numbers; key them to the related item's
+                // composite id (`repo#number`) so the tree matches the unique ids in `order`.
+                if let key = store.groupBy == .blocked ? it.blocked : it.parent {
+                    map[it.id] = "\(it.repo)#\(key)"
+                }
             }
             let rows = GitHubItemTree.rows(order: items.map(\.id), parentOf: parentOf,
                                            collapsed: store.collapsedItems)
@@ -355,7 +463,7 @@ final class RepoPanelView: FlippedView {
         // Preserve the user's place across a plain repaint; reset to the top only when the list
         // itself changed (repo/tab/grouping/status-filter switch). The selection-focus below can
         // still override this to bring a newly-opened item into view.
-        let identity = [store.selectedRepoKey ?? "", store.tab.rawValue, store.groupBy.storageKey,
+        let identity = [store.selectedOrgId, store.selectedRepoKey ?? "", store.tab.rawValue, store.groupBy.storageKey,
                         store.sortField.rawValue + (store.sortAscending ? "↑" : "↓"),
                         store.prStates.map(\.rawValue).sorted().joined(separator: ","),
                         store.issueStates.map(\.rawValue).sorted().joined(separator: ",")]

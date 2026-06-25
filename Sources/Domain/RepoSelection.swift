@@ -20,4 +20,25 @@ public enum RepoSelection {
         if let persisted, available.contains(persisted) { return .restore(persisted) }
         return .autoSelect
     }
+
+    /// The active panel selection is either an org or a repo, never both. The store holds the two
+    /// fields (`selectedOrgId: String`, `selectedRepoKey: String?`); `selectingOrg`/`selectingRepo`
+    /// compute the resulting pair so the org-row click and the repo-select path share one definition
+    /// of "only one is active".
+    public struct Selection: Equatable {
+        /// "" when a repo (or nothing) is the active selection.
+        public let orgId: String
+        /// nil when an org (or nothing) is the active selection.
+        public let repoKey: String?
+        public init(orgId: String, repoKey: String?) {
+            self.orgId = orgId
+            self.repoKey = repoKey
+        }
+    }
+
+    /// After picking org `id`: that org is active, no repo.
+    public static func selectingOrg(_ id: String) -> Selection { Selection(orgId: id, repoKey: nil) }
+
+    /// After picking repo `key` (`owner/name`): that repo is active, no org.
+    public static func selectingRepo(_ key: String) -> Selection { Selection(orgId: "", repoKey: key) }
 }

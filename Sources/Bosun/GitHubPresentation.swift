@@ -62,7 +62,10 @@ extension Item {
         let status = Item.status(for: it)
         let isEpic = it.labels.contains { $0.caseInsensitiveCompare("epic") == .orderedSame }
         self.init(
-            id: String(it.number),
+            // Globally unique across repos (`owner/name#number`) so the org-aggregate view can list
+            // items from many repos without two repos' identically-numbered items colliding on
+            // selection/collapse. The raw number stays in `number`; the repo in `repo`.
+            id: "\(it.repositoryNameWithOwner)#\(it.number)",
             num: "#\(it.number)",
             title: it.title,
             number: it.number,

@@ -124,7 +124,8 @@ final class BosunView: NSView {
         rail.onConnect = { [weak self] id in self?.connect(id) }
 
         repoPanel.onSelectRepo = { [weak self] owner, name in self?.data.selectRepo(owner: owner, name: name) }
-        repoPanel.onSelectItem = { [weak self] number in self?.data.selectItem(number: number) }
+        repoPanel.onSelectOrg = { [weak self] id in self?.data.selectOrg(id: id) }
+        repoPanel.onSelectItem = { [weak self] item in self?.data.selectItem(item) }
         repoPanel.onManageOrgs = { [weak self] in self?.store.manageOrgsOpen = true }
         repoPanel.onChangeFilter = { [weak self] in self?.data.reloadCurrentItems() }
         repoPanel.onChangeGroup = { [weak self] in self?.data.loadBlockedByIfNeeded() }

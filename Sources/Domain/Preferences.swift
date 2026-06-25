@@ -21,6 +21,14 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// first available repo on launch. On restore, a key the viewer can no longer reach (access
     /// lost or repo gone) falls back to that same auto-selection. See `RepoSelection`.
     public var selectedRepoKey: String?
+    /// The last selected org (`Org.id`) when the aggregate org view was the active scope, restored
+    /// on relaunch. `""` means a single repo (or nothing) was selected instead — org and repo
+    /// selection are mutually exclusive. A saved org no longer visible falls back to the repo
+    /// selection. See `RepoSelection`.
+    public var selectedOrgId: String
+    /// The orgs panel's vertical scroll offset, restored on relaunch so the user lands where they
+    /// left off. `0` is the top.
+    public var orgsScrollOffset: Double
     /// The active item tab (PRs vs Issues) and the list grouping ("View"), stored as opaque keys
     /// the App layer maps to its own enums. `nil` means never customized — use the default. The
     /// open item's kind can still override the restored tab so the item stays visible.
@@ -102,6 +110,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         windowAlpha: Double = 1.0,
         followedOrgs: [String]? = nil,
         selectedRepoKey: String? = nil,
+        selectedOrgId: String = "",
+        orgsScrollOffset: Double = 0,
         selectedTab: String? = nil,
         groupBy: String? = nil,
         repoOrdering: String? = nil,
@@ -126,6 +136,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.windowAlpha = Preferences.clampAlpha(windowAlpha)
         self.followedOrgs = followedOrgs
         self.selectedRepoKey = selectedRepoKey
+        self.selectedOrgId = selectedOrgId
+        self.orgsScrollOffset = orgsScrollOffset
         self.selectedTab = selectedTab
         self.groupBy = groupBy
         self.repoOrdering = repoOrdering
@@ -160,6 +172,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             windowAlpha: try container.decodeIfPresent(Double.self, forKey: .windowAlpha) ?? fallback.windowAlpha,
             followedOrgs: try container.decodeIfPresent([String].self, forKey: .followedOrgs) ?? fallback.followedOrgs,
             selectedRepoKey: try container.decodeIfPresent(String.self, forKey: .selectedRepoKey) ?? fallback.selectedRepoKey,
+            selectedOrgId: try container.decodeIfPresent(String.self, forKey: .selectedOrgId) ?? fallback.selectedOrgId,
+            orgsScrollOffset: try container.decodeIfPresent(Double.self, forKey: .orgsScrollOffset) ?? fallback.orgsScrollOffset,
             selectedTab: try container.decodeIfPresent(String.self, forKey: .selectedTab) ?? fallback.selectedTab,
             groupBy: try container.decodeIfPresent(String.self, forKey: .groupBy) ?? fallback.groupBy,
             repoOrdering: try container.decodeIfPresent(String.self, forKey: .repoOrdering) ?? fallback.repoOrdering,

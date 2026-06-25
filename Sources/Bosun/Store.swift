@@ -104,6 +104,16 @@ final class Store {
     /// repo is picked. Drives which `prs`/`issues` the panel lists. Persisted, so the selection is
     /// restored on relaunch (see `GitHubDataController.applyOrgGroups` and `RepoSelection`).
     var selectedRepoKey: String? { didSet { if oldValue != selectedRepoKey { changed() } } }
+    /// The currently-selected org as `Org.id`, painted with an accent row in the panel; "" when a
+    /// repo (or nothing) is the active selection instead. Org and repo selection are mutually
+    /// exclusive (see `RepoSelection.Selection`). Persisted, so the aggregate org scope is restored
+    /// on relaunch.
+    var selectedOrgId = "" { didSet { if oldValue != selectedOrgId { changed() } } }
+    /// The orgs panel's vertical scroll offset, mirrored here so it rides the persisted snapshot and
+    /// is restored on relaunch. Updated by `RepoPanelView` as the user scrolls; a plain property (no
+    /// `notify`/`persist` on write) so scrolling never triggers a repaint or a write storm — it's
+    /// captured by the next `persist()` (any change, or app termination).
+    var orgsScrollOffset: Double = 0
     /// The fully-hydrated item (body tasks, comments, PR checks) for the open detail pane. Lead
     /// list items render immediately; this upgrades them once the detail fetch completes.
     var selectedItemDetail: Item? { didSet { notify() } }
@@ -244,6 +254,24 @@ final class Store {
     /// `owner/name` of the selected repo for the titlebar breadcrumb and panel header.
     var selectedRepoTitle: String { selectedRepoKey ?? "" }
 
+    /// Whether the active selection is a whole org (its aggregated items shown as per-repo sections)
+    /// rather than a single repo. Org and repo selection are mutually exclusive (see `RepoSelection`).
+    var isOrgScope: Bool { !selectedOrgId.isEmpty }
+
+    /// The breadcrumb/header title for the active scope: the org's name in org scope, otherwise the
+    /// selected repo's `owner/name` (empty when nothing is selected).
+    var scopeTitle: String {
+        if isOrgScope { return visibleOrgs.first { $0.id == selectedOrgId }?.name ?? selectedOrgId }
+        return selectedRepoTitle
+    }
+
+    /// `owner/name` of the selected org's repos in panel order — the section order for the aggregate
+    /// org view. Empty when no org is selected.
+    var selectedOrgRepoKeys: [String] {
+        guard isOrgScope, let org = visibleOrgs.first(where: { $0.id == selectedOrgId }) else { return [] }
+        return org.repos.map { "\($0.owner)/\($0.name)" }
+    }
+
     private var observers: [() -> Void] = []
     func observe(_ f: @escaping () -> Void) { observers.append(f) }
     private func notify() { observers.forEach { $0() } }
@@ -267,6 +295,8 @@ final class Store {
             windowAlpha: Double(windowAlpha),
             followedOrgs: followedOrgs,
             selectedRepoKey: selectedRepoKey,
+            selectedOrgId: selectedOrgId,
+            orgsScrollOffset: orgsScrollOffset,
             selectedTab: tab.rawValue,
             groupBy: groupBy.storageKey,
             repoOrdering: repoOrdering.rawValue,
@@ -297,6 +327,8 @@ final class Store {
         windowAlpha = CGFloat(p.windowAlpha)
         followedOrgs = p.followedOrgs
         selectedRepoKey = p.selectedRepoKey
+        selectedOrgId = p.selectedOrgId
+        orgsScrollOffset = p.orgsScrollOffset
         tab = Tab(rawValue: p.selectedTab ?? "") ?? .prs
         groupBy = GroupBy(storageKey: p.groupBy)
         repoOrdering = RepoOrderingMode(rawValue: p.repoOrdering ?? "") ?? .default

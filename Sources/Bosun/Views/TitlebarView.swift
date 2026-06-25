@@ -94,8 +94,9 @@ final class TitlebarView: FlippedView {
         addSubview(name)
         x += name.frame.width + 7
 
-        // Repo breadcrumb: bound to the live selection, shown only once a repo is picked.
-        let repoTitle = store.selectedRepoTitle
+        // Scope breadcrumb: the selected repo's `owner/name`, or the org name in the aggregate org
+        // view. Bound to the live selection, shown only once something is picked.
+        let repoTitle = store.scopeTitle
         if !repoTitle.isEmpty {
             let slash = label("/", sys(12.5), t.txt4)
             slash.frame = NSRect(x: x, y: textY, width: 8, height: 16)

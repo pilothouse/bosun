@@ -39,9 +39,16 @@ final class GitHubDataController {
     /// *during* recovery via `onSignedOut`); only a real success clears it.
     private var awaitingRevalidation = false
 
-    /// The repo whose items are currently shown, so an item-detail fetch knows its owner/name and
-    /// late responses for a previous repo can be ignored.
+    /// The repo whose items are currently shown, so late responses for a previous repo can be
+    /// ignored. nil in org-aggregate scope (see `currentOrg`); item-detail fetches route by the
+    /// item's own repo, not this, so a cross-repo aggregate list still opens details correctly.
     private var currentRepo: (owner: String, name: String)?
+
+    /// The org whose aggregated items (every repo's PRs/issues) are currently shown, or nil in
+    /// single-repo scope. Exactly one of `currentRepo`/`currentOrg` is set — they're the two
+    /// mutually-exclusive selection scopes (see `RepoSelection`). Used so a stale org fetch is
+    /// dropped when the scope moves on, mirroring `currentRepo`.
+    private var currentOrg: String?
 
     /// Repos (`owner/name`) whose blocked-by relationships have already been merged this session, so
     /// re-entering the "By blocked-by" grouping doesn't refetch. Cleared per repo on each item load.
@@ -70,7 +77,7 @@ final class GitHubDataController {
             let hadCache = !cachedOrgs.isEmpty || !cachedRepos.isEmpty
             if hadCache {
                 applyOrgGroups(orgs: cachedOrgs, personalRepos: cachedRepos,
-                               establishSelection: currentRepo == nil)
+                               establishSelection: currentRepo == nil && currentOrg == nil)
             } else {
                 store.isLoadingOrgs = true   // cold start: this is the one spinner the user sees
             }
@@ -98,7 +105,7 @@ final class GitHubDataController {
                 // unchanged refresh leaves the store, the selection, and the views alone.
                 if !hadCache || !orgsDelta.isUnchanged || !reposDelta.isUnchanged {
                     applyOrgGroups(orgs: orgsDelta.merged, personalRepos: reposDelta.merged,
-                                   establishSelection: currentRepo == nil)
+                                   establishSelection: currentRepo == nil && currentOrg == nil)
                 }
             } catch {
                 handleFetchError(error) { [weak self] in self?.load() }
@@ -120,6 +127,16 @@ final class GitHubDataController {
         if let personal = Org(personalRepos: personalRepos) { groups.insert(personal, at: 0) }
         store.orgs = groups
         guard establishSelection else { return }
+
+        // Restore a remembered aggregate-org scope first (org and repo selection are mutually
+        // exclusive). loadOrgItems reconciles the remembered open item against the aggregate, so the
+        // org, its sections, and the open issue all come back together.
+        if !store.selectedOrgId.isEmpty,
+           store.visibleOrgs.contains(where: { $0.id == store.selectedOrgId }) {
+            selectOrg(id: store.selectedOrgId)
+            return
+        }
+        store.selectedOrgId = ""   // a saved org that's no longer visible — drop it, fall back to repo
 
         let availableKeys = store.visibleOrgs.flatMap { org in org.repos.map { "\($0.owner)/\($0.name)" } }
         if case .restore(let key) = RepoSelection.reconcile(persisted: store.selectedRepoKey,
@@ -156,9 +173,27 @@ final class GitHubDataController {
     /// Switch the active repo: update the breadcrumb/header and reload its PRs and issues.
     func selectRepo(owner: String, name: String) {
         currentRepo = (owner, name)
-        store.selectedRepoKey = "\(owner)/\(name)"
+        currentOrg = nil
+        // Org and repo selection are mutually exclusive — picking a repo clears any org highlight.
+        let sel = RepoSelection.selectingRepo("\(owner)/\(name)")
+        store.selectedOrgId = sel.orgId
+        store.selectedRepoKey = sel.repoKey
         store.collapsedItems = []   // a collapsed number from the old repo would hide an unrelated item
         loadItems(owner: owner, name: name)
+    }
+
+    /// Switch the active scope to a whole org: aggregate the open PRs/issues across every repo the
+    /// org holds, shown as per-repo sections. Mutually exclusive with `selectRepo` — picking an org
+    /// clears any repo highlight (and vice-versa). The org-row click in the panel drives this.
+    func selectOrg(id: String) {
+        currentOrg = id
+        currentRepo = nil
+        let sel = RepoSelection.selectingOrg(id)
+        store.selectedOrgId = sel.orgId
+        store.selectedRepoKey = sel.repoKey
+        store.expandedOrgs.insert(id)   // selecting an org expands its repo list in the panel
+        store.collapsedItems = []       // section-collapse state is fresh for the new scope
+        loadOrgItems(orgId: id)
     }
 
     /// Lazily fetch GitHub issue dependencies and mark blocked items — but only while the user is in
@@ -175,7 +210,7 @@ final class GitHubDataController {
         let (owner, name) = (repo.owner, repo.name)
         Task { @MainActor in
             @MainActor func isCurrent() -> Bool { currentRepo?.owner == owner && currentRepo?.name == name }
-            let numbers = (store.issues + store.prs).compactMap { Int($0.id) }
+            let numbers = (store.issues + store.prs).map(\.number)
             guard !numbers.isEmpty else { return }
             let blockers = await Self.fetchBlockers(api: api, owner: owner, name: name, numbers: numbers)
             guard isCurrent() else { return }
@@ -212,7 +247,7 @@ final class GitHubDataController {
     /// Set the item's first blocker (so the grouped list nests it and shows the ⊘ badge), or leave
     /// it untouched when it has none.
     private static func applyBlocked(_ blockers: [Int: [Int]], to item: Item) -> Item {
-        guard let number = Int(item.id), let first = blockers[number]?.first else { return item }
+        guard let first = blockers[item.number]?.first else { return item }
         var copy = item
         copy.blocked = String(first)
         return copy
@@ -223,10 +258,14 @@ final class GitHubDataController {
     /// (and narrowing it prunes them from the cache). The display already updated instantly off the
     /// cache; this reconciles the cache with the new scope. A no-op before a repo is selected.
     func reloadCurrentItems() {
-        guard let repo = currentRepo else { return }
         // A filter change must not move the user off the tab they're on, so preserve it across the
-        // reload (the selection-follows-tab switch in `reconcileSelection` is for launch/restore only).
-        loadItems(owner: repo.owner, name: repo.name, preserveTab: true)
+        // reload (the selection-follows-tab switch in `reconcileSelectionForScope` is for
+        // launch/restore only). Routes to whichever scope is active.
+        if let org = currentOrg {
+            loadOrgItems(orgId: org, preserveTab: true)
+        } else if let repo = currentRepo {
+            loadItems(owner: repo.owner, name: repo.name, preserveTab: true)
+        }
     }
 
     /// User-initiated global refresh: reload the orgs/repos panel and the current repo's PRs/issues at
@@ -251,11 +290,10 @@ final class GitHubDataController {
 
     /// Select a list item: show its lead content immediately (the store already has it) and
     /// fetch the hydrated detail (body tasks, comments, PR checks) to upgrade it.
-    func selectItem(number: Int) {
-        guard let repo = currentRepo else { return }
-        store.selectedItemId = String(number)
+    func selectItem(_ item: Item) {
+        store.selectedItemId = item.id
         store.selectedItemDetail = nil
-        loadDetail(owner: repo.owner, name: repo.name, number: number)
+        loadDetail(for: item)
     }
 
     /// Post a comment on the open item and, on success, append the comment GitHub stored to the
@@ -265,14 +303,17 @@ final class GitHubDataController {
     /// the view just doesn't send). Mirrors the read path's task ownership: a comment that lands
     /// after the user moved on isn't grafted onto a different item.
     func submitComment(body: String, completion: @escaping (Bool, String?) -> Void) {
-        guard let repo = currentRepo, let number = Int(store.selectedItemId) else {
+        let selectedId = store.selectedItemId
+        guard let item = (store.prs + store.issues).first(where: { $0.id == selectedId }),
+              let repo = item.ownerRepo else {
             completion(false, nil); return
         }
+        let number = item.number
         Task { @MainActor in
             do {
                 let comment = try await addCommentUseCase(
                     owner: repo.owner, repo: repo.name, number: number, body: body)
-                if store.selectedItemId == String(number), var detail = store.selectedItemDetail {
+                if store.selectedItemId == selectedId, var detail = store.selectedItemDetail {
                     detail.comments.append(Comment(domain: comment))
                     store.selectedItemDetail = detail
                 }
@@ -289,6 +330,7 @@ final class GitHubDataController {
     func clear() {
         loadTask?.cancel(); itemsTask?.cancel(); detailTask?.cancel()
         currentRepo = nil
+        currentOrg = nil
         blockedByLoaded = []
         consecutiveUnauthorized = 0   // a fresh streak starts next session; `awaitingRevalidation`
                                       // intentionally survives (clear() runs during recovery itself)
@@ -297,6 +339,7 @@ final class GitHubDataController {
         store.orgs = []
         store.expandedOrgs = []
         store.selectedRepoKey = nil
+        store.selectedOrgId = ""
         clearItems()
         store.dataError = nil
         // Cancelled tasks won't reach their ownership-guarded clears, so reset here.
@@ -333,7 +376,7 @@ final class GitHubDataController {
             if hadCache {
                 store.prs = cachedPRs.map(Item.init(domain:))
                 store.issues = cachedIssues.map(Item.init(domain:))
-                reconcileSelection(owner: owner, name: name, preserveTab: preserveTab)
+                reconcileSelectionForScope(preserveTab: preserveTab)
             } else {
                 store.isLoadingItems = true
             }
@@ -360,7 +403,7 @@ final class GitHubDataController {
                 if !hadCache || !prDelta.isUnchanged { store.prs = prDelta.merged.map(Item.init(domain:)) }
                 if !hadCache || !issueDelta.isUnchanged { store.issues = issueDelta.merged.map(Item.init(domain:)) }
                 if !hadCache || !prDelta.isUnchanged || !issueDelta.isUnchanged {
-                    reconcileSelection(owner: owner, name: name, preserveTab: preserveTab)
+                    reconcileSelectionForScope(preserveTab: preserveTab)
                 }
                 loadBlockedByIfNeeded()   // populate the ⊘ tree when this repo opens already in that mode
             } catch {
@@ -371,12 +414,129 @@ final class GitHubDataController {
         }
     }
 
+    /// Aggregate every repo in `orgId` into the PR/issue lists: hydrate from each repo's cache first
+    /// (instant), then fetch all repos' live items concurrently, delta-and-save each, and project the
+    /// combined set — ordered by the panel's repo order so the per-repo sections line up. Reuses the
+    /// per-repo cache/delta machinery, so an item already cached from single-repo browsing shows
+    /// immediately. Repos with no open work are skipped under the default open-only filter
+    /// (`OrgItemScope`). The spinner shows only when nothing is cached for the whole org.
+    private func loadOrgItems(orgId: String, preserveTab: Bool = false) {
+        itemsTask?.cancel()
+        detailTask?.cancel()
+        store.dataError = nil
+        guard let org = store.visibleOrgs.first(where: { $0.id == orgId }) else { clearItems(); return }
+        let openOnly = store.prStates == [.open] && store.issueStates == [.open]
+        let repoKeys = org.repos
+            .filter { OrgItemScope.includesRepo(open: $0.open, openOnly: openOnly) }
+            .map { (owner: $0.owner, name: $0.name) }
+        let prStates = store.prStates
+        let issueStates = store.issueStates
+        itemsTask = Task { @MainActor in
+            // Only the task whose org is still current owns the spinner and the store, mirroring the
+            // single-repo path: a stale aggregate for a superseded org must not stomp the newer one.
+            @MainActor func isCurrent() -> Bool { currentOrg == orgId }
+
+            var cachedPRs: [GitHubItem] = []
+            var cachedIssues: [GitHubItem] = []
+            for (owner, name) in repoKeys {
+                let key = "\(owner)/\(name)"
+                cachedPRs += await cache.loadItems(repoKey: key, kind: .pullRequest)
+                cachedIssues += await cache.loadItems(repoKey: key, kind: .issue)
+            }
+            guard isCurrent() else { return }
+            let hadCache = !cachedPRs.isEmpty || !cachedIssues.isEmpty
+            if hadCache {
+                store.prs = cachedPRs.map(Item.init(domain:))
+                store.issues = cachedIssues.map(Item.init(domain:))
+                reconcileSelectionForScope(preserveTab: preserveTab)
+            } else {
+                store.isLoadingItems = true
+            }
+
+            do {
+                let (prs, issues) = try await fetchOrgItems(
+                    repoKeys: repoKeys, prStates: prStates, issueStates: issueStates)
+                sessionValidated()
+                guard isCurrent() else { return }
+                store.isLoadingItems = false
+                // The aggregate doesn't bound closed history (it's an open-work overview), so no cap.
+                store.prsTruncated = false
+                store.issuesTruncated = false
+                store.prs = prs.map(Item.init(domain:))
+                store.issues = issues.map(Item.init(domain:))
+                reconcileSelectionForScope(preserveTab: preserveTab)
+            } catch {
+                handleFetchError(error) { [weak self] in self?.loadOrgItems(orgId: orgId, preserveTab: preserveTab) }
+                if isCurrent() { store.isLoadingItems = false }
+            }
+            itemsTask = nil
+        }
+    }
+
+    /// Fetch every repo's PRs and issues concurrently (bounded), delta each against its own cache and
+    /// persist, then return the merged sets assembled in `repoKeys` order. An `unauthorized`/
+    /// `rateLimited` failure aborts the whole aggregate so it reaches the 401-recovery path; any other
+    /// per-repo failure falls back to that repo's cached copy so one flaky repo can't blank the view.
+    private func fetchOrgItems(repoKeys: [(owner: String, name: String)],
+                               prStates: Set<GitHubItemState>,
+                               issueStates: Set<GitHubItemState>)
+        async throws -> (prs: [GitHubItem], issues: [GitHubItem]) {
+        let api = self.api
+        let cache = self.cache
+        let fetchOne: @Sendable (String, String) async throws
+            -> (key: String, prs: [GitHubItem], issues: [GitHubItem]) = { owner, name in
+            let key = "\(owner)/\(name)"
+            let cachedPRs = await cache.loadItems(repoKey: key, kind: .pullRequest)
+            let cachedIssues = await cache.loadItems(repoKey: key, kind: .issue)
+            do {
+                async let prCall = api.items(owner: owner, repo: name, kind: .pullRequest, states: prStates)
+                async let issueCall = api.items(owner: owner, repo: name, kind: .issue, states: issueStates)
+                let (prRes, issueRes) = try await (prCall, issueCall)
+                let prMerged = GitHubDelta.apply(incoming: prRes.items, to: cachedPRs).merged
+                let issueMerged = GitHubDelta.apply(incoming: issueRes.items, to: cachedIssues).merged
+                await cache.saveItems(prMerged, repoKey: key, kind: .pullRequest)
+                await cache.saveItems(issueMerged, repoKey: key, kind: .issue)
+                return (key, prMerged, issueMerged)
+            } catch let error as GitHubAPIError {
+                switch error {
+                case .unauthorized, .rateLimited: throw error   // affects every repo — abort & recover
+                default:
+                    NSLog("[github-data] org item fetch \(key) failed: \(error); using cache")
+                    return (key, cachedPRs, cachedIssues)
+                }
+            }
+        }
+
+        let maxConcurrent = 6
+        var iterator = repoKeys.makeIterator()
+        var results: [String: (prs: [GitHubItem], issues: [GitHubItem])] = [:]
+        try await withThrowingTaskGroup(
+            of: (key: String, prs: [GitHubItem], issues: [GitHubItem]).self) { group in
+            for _ in 0..<maxConcurrent {
+                guard let (owner, name) = iterator.next() else { break }
+                group.addTask { try await fetchOne(owner, name) }
+            }
+            while let r = try await group.next() {
+                results[r.key] = (r.prs, r.issues)
+                if let (owner, name) = iterator.next() {
+                    group.addTask { try await fetchOne(owner, name) }
+                }
+            }
+        }
+        var prs: [GitHubItem] = []
+        var issues: [GitHubItem] = []
+        for (owner, name) in repoKeys {
+            if let r = results["\(owner)/\(name)"] { prs += r.prs; issues += r.issues }
+        }
+        return (prs, issues)
+    }
+
     /// Keep the open item valid for the freshly-loaded list: re-hydrate it if it's still present,
     /// otherwise default to the first item of the active tab (PRs, else issues). `preserveTab` keeps
     /// the user on the current tab (a status-filter reload) by suppressing the selection-follows-tab
     /// switch below — otherwise changing a PR filter while an issue is the open item yanks the view to
     /// the Issues tab.
-    private func reconcileSelection(owner: String, name: String, preserveTab: Bool = false) {
+    private func reconcileSelectionForScope(preserveTab: Bool = false) {
         // Keep the open item visible: if it lives in the other tab — e.g. an issue restored from a
         // previous session while the tab defaulted to PRs — switch to that tab so the list shows it.
         // Skipped when preserving the tab, since the open item can legitimately be in the other tab
@@ -385,32 +545,32 @@ final class GitHubDataController {
             if store.prs.contains(where: { $0.id == store.selectedItemId }) { store.tab = .prs }
             else if store.issues.contains(where: { $0.id == store.selectedItemId }) { store.tab = .issues }
         }
-        if store.listItems.contains(where: { $0.id == store.selectedItemId }),
-           let number = Int(store.selectedItemId) {
+        if let item = store.listItems.first(where: { $0.id == store.selectedItemId }) {
             store.selectedItemDetail = nil
-            loadDetail(owner: owner, name: name, number: number)
+            loadDetail(for: item)
             return
         }
         let fallback = store.listItems.first ?? store.prs.first ?? store.issues.first
         store.selectedItemDetail = nil
-        guard let first = fallback, let number = Int(first.id) else {
+        guard let first = fallback else {
             store.selectedItemId = ""
             return
         }
         store.selectedItemId = first.id
-        loadDetail(owner: owner, name: name, number: number)
+        loadDetail(for: first)
     }
 
-    private func loadDetail(owner: String, name: String, number: Int) {
+    /// Fetch the hydrated detail for `item`, routed to **its own** repo (`item.repo`) rather than a
+    /// single current repo — so an aggregate org list, whose items span repos, opens each detail
+    /// against the right repo. The still-current selection (matched on the item's unique id) owns the
+    /// spinner; a stale detail leaves it on for the newer fetch.
+    private func loadDetail(for item: Item) {
+        guard let repo = item.ownerRepo else { return }
+        let (owner, name, number, itemId) = (repo.owner, repo.name, item.number, item.id)
         detailTask?.cancel()
         store.isLoadingDetail = true
         detailTask = Task { @MainActor in
-            // The still-current selection owns the spinner; a stale detail leaves it on for the
-            // newer fetch.
-            @MainActor func isCurrent() -> Bool {
-                store.selectedItemId == String(number)
-                    && currentRepo?.owner == owner && currentRepo?.name == name
-            }
+            @MainActor func isCurrent() -> Bool { store.selectedItemId == itemId }
             do {
                 let detail = try await api.itemDetail(owner: owner, repo: name, number: number)
                 // Drop a stale detail if the selection moved on while this was in flight.

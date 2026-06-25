@@ -40,4 +40,30 @@ final class RepoSelectionTests: XCTestCase {
             available: ["acme/widgets-2", "acme/widgetsx"])
         XCTAssertEqual(outcome, .autoSelect)
     }
+
+    // MARK: - Selection (org/repo mutual exclusion)
+    // The panel highlights either an org or a repo, never both. `selectingOrg`/`selectingRepo`
+    // compute the resulting (orgId, repoKey) pair so the org-click path and the repo-select path
+    // share one definition of "only one is active".
+
+    func testSelectingOrgClearsTheRepo() {
+        XCTAssertEqual(RepoSelection.selectingOrg("acme"),
+                       RepoSelection.Selection(orgId: "acme", repoKey: nil))
+    }
+
+    func testSelectingRepoClearsTheOrg() {
+        XCTAssertEqual(RepoSelection.selectingRepo("acme/widgets"),
+                       RepoSelection.Selection(orgId: "", repoKey: "acme/widgets"))
+    }
+
+    func testSelectionIsAlwaysMutuallyExclusive() {
+        // An org selection never carries a repo key, and a repo selection never carries an org id.
+        let org = RepoSelection.selectingOrg("acme")
+        XCTAssertNil(org.repoKey)
+        XCTAssertFalse(org.orgId.isEmpty)
+
+        let repo = RepoSelection.selectingRepo("acme/widgets")
+        XCTAssertTrue(repo.orgId.isEmpty)
+        XCTAssertNotNil(repo.repoKey)
+    }
 }
