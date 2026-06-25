@@ -62,7 +62,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         win.isReleasedWhenClosed = false
         win.minSize = NSSize(width: 1100, height: 720)
         win.contentView = root
-        win.center()
+        // Persist & restore the window's position and size across launches. AppKit's frame autosave
+        // writes the frame to defaults on every move/resize, restores it here synchronously *before*
+        // the window is shown (so there's no centered-then-jump flicker), and constrains a stale
+        // off-screen frame back onto a connected display. First launch (no saved frame) falls back to
+        // centered at the default size. Window geometry is OS-window state, so it lives in AppKit's
+        // autosave rather than the app's `Preferences` blob — which is restored asynchronously after
+        // the window is already on screen (see `restoreState`) and would otherwise cause that jump.
+        if !win.setFrameUsingName("BosunMainWindow") {
+            win.center()
+        }
+        win.setFrameAutosaveName("BosunMainWindow")
         win.makeKeyAndOrderFront(nil)
         // Traffic lights sit over our custom titlebar; keep them in place.
         win.standardWindowButton(.closeButton)?.superview?.needsLayout = true
