@@ -11,6 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let ghostty = GhosttyApp.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Make hover tooltips (e.g. the truncated issue/PR titles in the right list) appear quickly
+        // instead of after AppKit's ~1.5s default. `NSInitialToolTipDelay` is an undocumented but
+        // long-stable default read in milliseconds; registering it (volatile, not persisted) before
+        // any window exists applies it app-wide.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 300])
+
         ghostty.start()
         installMenu()
         applyDockIcon()
