@@ -57,6 +57,17 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// Whether the org panel hides repos with zero open issues+PRs. `false` (show every repo) by
     /// default — the user opts in to declutter. "Empty" is open-only; see `RepoVisibility`.
     public var skipEmptyRepos: Bool
+    /// How the center column splits the detail from the terminal, as an opaque `SplitAxis` key the
+    /// App layer maps to its enum. `nil` means never customized — use the vertical (stacked) split.
+    public var splitAxis: String?
+    /// The terminal's width share in a horizontal split, in `[0, 1]`. Only the horizontal split
+    /// uses it (the vertical split keeps `terminalHeight`); clamped to a usable range by
+    /// `SplitLayout` at the boundary. Defaults to `SplitLayout.defaultFraction`.
+    public var terminalFraction: Double
+    /// Which side the terminal occupies relative to the detail pane. `false` (default) keeps it
+    /// trailing — bottom in a vertical split, right in a horizontal one; `true` moves it leading
+    /// (top/left). Applies to both axes.
+    public var terminalLeading: Bool
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -103,7 +114,10 @@ public struct Preferences: Sendable, Equatable, Codable {
         prChecksCollapsed: Bool = false,
         prFilesCollapsed: Bool = false,
         prCommentsCollapsed: Bool = false,
-        skipEmptyRepos: Bool = false
+        skipEmptyRepos: Bool = false,
+        splitAxis: String? = nil,
+        terminalFraction: Double = SplitLayout.defaultFraction,
+        terminalLeading: Bool = false
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -125,6 +139,9 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.prFilesCollapsed = prFilesCollapsed
         self.prCommentsCollapsed = prCommentsCollapsed
         self.skipEmptyRepos = skipEmptyRepos
+        self.splitAxis = splitAxis
+        self.terminalFraction = terminalFraction
+        self.terminalLeading = terminalLeading
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -155,7 +172,10 @@ public struct Preferences: Sendable, Equatable, Codable {
             prChecksCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prChecksCollapsed) ?? fallback.prChecksCollapsed,
             prFilesCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prFilesCollapsed) ?? fallback.prFilesCollapsed,
             prCommentsCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prCommentsCollapsed) ?? fallback.prCommentsCollapsed,
-            skipEmptyRepos: try container.decodeIfPresent(Bool.self, forKey: .skipEmptyRepos) ?? fallback.skipEmptyRepos
+            skipEmptyRepos: try container.decodeIfPresent(Bool.self, forKey: .skipEmptyRepos) ?? fallback.skipEmptyRepos,
+            splitAxis: try container.decodeIfPresent(String.self, forKey: .splitAxis) ?? fallback.splitAxis,
+            terminalFraction: try container.decodeIfPresent(Double.self, forKey: .terminalFraction) ?? fallback.terminalFraction,
+            terminalLeading: try container.decodeIfPresent(Bool.self, forKey: .terminalLeading) ?? fallback.terminalLeading
         )
     }
 

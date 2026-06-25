@@ -32,12 +32,28 @@ final class CenterColumnView: FlippedView {
         layer?.backgroundColor = t.win.cgColor
         let w = bounds.width, h = bounds.height
 
-        // Resizable bottom region: the docked terminal sits at the bottom with its own drag grip
-        // on its top edge, and the issue/PR detail pane fills everything above it down to that grip.
-        let maxTerm = max(120, h * 0.9)
-        let termH = min(max(120, store.terminalHeight), maxTerm)
-        detail.frame = NSRect(x: 0, y: 0, width: w, height: h - termH)
-        terminal.frame = NSRect(x: 0, y: h - termH, width: w, height: termH)
+        // `terminalLeading` puts the terminal first (top/left) instead of the default trailing
+        // (bottom/right); the detail pane takes the remaining space. The drag grip lives on the
+        // shared border either way (see TerminalContainerView).
+        let leading = store.terminalLeading
+        switch store.splitAxis {
+        case .vertical:
+            // Stacked: the terminal is sized in pixels and the detail pane fills the rest.
+            let maxTerm = max(120, h * 0.9)
+            let termH = min(max(120, store.terminalHeight), maxTerm)
+            let termY = leading ? 0 : h - termH
+            let detailY = leading ? termH : 0
+            terminal.frame = NSRect(x: 0, y: termY, width: w, height: termH)
+            detail.frame = NSRect(x: 0, y: detailY, width: w, height: max(0, h - termH))
+        case .horizontal:
+            // Side by side: the terminal is sized as a fraction of the width (clamped by SplitLayout)
+            // so it tracks the column's width as the sidebar/orgs panel collapse.
+            let termW = CGFloat(SplitLayout.terminalExtent(total: Double(w), fraction: Double(store.terminalFraction)))
+            let termX = leading ? 0 : w - termW
+            let detailX = leading ? termW : 0
+            terminal.frame = NSRect(x: termX, y: 0, width: termW, height: h)
+            detail.frame = NSRect(x: detailX, y: 0, width: max(0, w - termW), height: h)
+        }
 
         detail.apply()
         terminal.apply()
@@ -94,6 +110,11 @@ final class BosunView: NSView {
 
         titlebar.onToggleSidebar = { [weak self] in self?.store.railCollapsed.toggle() }
         titlebar.onTogglePanel = { [weak self] in self?.store.repoPanelCollapsed.toggle() }
+        titlebar.onToggleSplitAxis = { [weak self] in
+            guard let self else { return }
+            self.store.splitAxis = self.store.splitAxis.toggled
+        }
+        titlebar.onSwapSides = { [weak self] in self?.store.terminalLeading.toggle() }
         titlebar.onRefresh = { [weak self] in self?.data.refresh() }
 
         rail.onAdd = { [weak self] in self?.openSheet(editingId: nil) }

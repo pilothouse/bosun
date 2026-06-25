@@ -148,10 +148,24 @@ final class Store {
     var domainConnections: [Domain.Connection] = [] { didSet { notify() } }
     var editingConnId: String?
 
+    /// How the center column splits the detail from the terminal. A discrete toggle (not a drag),
+    /// so unlike `terminalHeight` it goes through `changed()` — it persists *and* notifies, which
+    /// relayouts the center column to the new orientation.
+    var splitAxis: Domain.SplitAxis = .vertical { didSet { if oldValue != splitAxis { changed() } } }
+
+    /// Which side the terminal occupies: `false` (default) trailing — bottom/right; `true` leading
+    /// — top/left. A discrete toggle like `splitAxis`, so it persists and relayouts via `changed()`.
+    var terminalLeading: Bool = false { didSet { if oldValue != terminalLeading { changed() } } }
+
     /// Terminal height drives layout only (no content rebuild), so it is not part of `notify`.
     /// It changes on every drag frame, so it is persisted on gesture end (see
     /// `TerminalContainerView`), not here.
     var terminalHeight: CGFloat = 240
+
+    /// The terminal's width share in a horizontal split, in `[0, 1]`. The horizontal twin of
+    /// `terminalHeight`: layout-only, changes every drag frame, so it is persisted on gesture end
+    /// (see `TerminalContainerView`), not here. `SplitLayout` clamps it to a usable range.
+    var terminalFraction: CGFloat = CGFloat(Domain.SplitLayout.defaultFraction)
 
     /// The open terminal tabs and which one is active, owned by the dock (`TerminalContainerView`):
     /// it snapshots them here on every tab change and restores them at launch. Persisted, but not
@@ -265,7 +279,10 @@ final class Store {
             prChecksCollapsed: prChecksCollapsed,
             prFilesCollapsed: prFilesCollapsed,
             prCommentsCollapsed: prCommentsCollapsed,
-            skipEmptyRepos: skipEmptyRepos)
+            skipEmptyRepos: skipEmptyRepos,
+            splitAxis: splitAxis.rawValue,
+            terminalFraction: Double(terminalFraction),
+            terminalLeading: terminalLeading)
         Task { await preferences.save(snapshot) }
     }
 
@@ -293,6 +310,9 @@ final class Store {
         prFilesCollapsed = p.prFilesCollapsed
         prCommentsCollapsed = p.prCommentsCollapsed
         skipEmptyRepos = p.skipEmptyRepos
+        splitAxis = SplitAxis(rawValue: p.splitAxis ?? "") ?? .default
+        terminalFraction = CGFloat(p.terminalFraction)
+        terminalLeading = p.terminalLeading
         isLoading = false
         onWindowAlpha?(windowAlpha)
         refresh()

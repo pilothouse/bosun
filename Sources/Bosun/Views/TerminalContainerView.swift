@@ -1,16 +1,25 @@
 import AppKit
 import Domain
 
-/// Drag-to-resize grip at the top edge of the terminal.
+/// Drag-to-resize grip between the detail pane and the terminal. Sits on the terminal's top edge
+/// in a vertical split and its left edge in a horizontal one; `onDrag` reports the signed move
+/// along that axis (window points), which the container turns into a height or a width fraction.
 final class DragHandle: FlippedView {
+    /// Which edge this grip lives on — set by the container's `layout()` from `store.splitAxis`.
+    var axis: Domain.SplitAxis = .vertical
     var onBegin: (() -> Void)?
     var onDrag: ((CGFloat) -> Void)?
     var onEnd: (() -> Void)?
-    private var startY: CGFloat = 0
+    private var start: NSPoint = .zero
 
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeUpDown) }
-    override func mouseDown(with e: NSEvent) { startY = e.locationInWindow.y; onBegin?() }
-    override func mouseDragged(with e: NSEvent) { onDrag?(e.locationInWindow.y - startY) }
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: axis == .vertical ? .resizeUpDown : .resizeLeftRight)
+    }
+    override func mouseDown(with e: NSEvent) { start = e.locationInWindow; onBegin?() }
+    override func mouseDragged(with e: NSEvent) {
+        let p = e.locationInWindow
+        onDrag?(axis == .vertical ? p.y - start.y : p.x - start.x)
+    }
     override func mouseUp(with e: NSEvent) { onEnd?() }
 }
 
@@ -79,6 +88,7 @@ final class TerminalContainerView: FlippedView {
 
     private let handle = DragHandle()
     private var startHeight: CGFloat = 240
+    private var startFraction: CGFloat = CGFloat(Domain.SplitLayout.defaultFraction)
 
     /// The theme key whose palette was last pushed to libghostty. `syncTerminalTheme` runs on every
     /// store notify (selection, data, …), so this lets it skip the config rebuild unless the theme
@@ -92,13 +102,29 @@ final class TerminalContainerView: FlippedView {
         super.init(frame: .zero)
         wantsLayer = true
         addSubview(handle)
-        handle.onBegin = { [weak self] in self?.startHeight = self?.store.terminalHeight ?? 240 }
-        handle.onDrag = { [weak self] dy in
+        handle.onBegin = { [weak self] in
             guard let self else { return }
-            self.store.terminalHeight = max(120, min(760, self.startHeight + dy))
+            self.startHeight = self.store.terminalHeight
+            self.startFraction = self.store.terminalFraction
+        }
+        handle.onDrag = { [weak self] delta in
+            guard let self else { return }
+            // The grip sits on the terminal edge facing the detail pane, so the sign that turns the
+            // drag into "grow the terminal" flips with the pane order (see SplitLayout).
+            let sign = CGFloat(Domain.SplitLayout.dragGrowsTerminal(axis: self.store.splitAxis,
+                                                                    terminalLeading: self.store.terminalLeading))
+            switch self.store.splitAxis {
+            case .vertical:
+                self.store.terminalHeight = max(120, min(760, self.startHeight + sign * delta))
+            case .horizontal:
+                // Convert the pixel move to a fraction of the whole column width.
+                let total = Double(self.superview?.bounds.width ?? self.bounds.width)
+                let fraction = Double(self.startFraction) + Double(sign * delta) / max(1, total)
+                self.store.terminalFraction = CGFloat(Domain.SplitLayout.clampFraction(fraction, total: total))
+            }
             self.onRelayout?()
         }
-        // Persist the final height once the drag ends, not on every frame.
+        // Persist the final size once the drag ends, not on every frame.
         handle.onEnd = { [weak self] in self?.store.persist() }
 
         // Seed the dock with one session. When libghostty is down, that's the error placeholder.
@@ -423,29 +449,57 @@ final class TerminalContainerView: FlippedView {
             addSubview(session.view, positioned: .below, relativeTo: handle)
         }
 
-        handle.frame = NSRect(x: 0, y: 0, width: w, height: 7)
+        // The drag grip sits on whichever terminal edge faces the detail pane — that depends on both
+        // the axis and which side the terminal is on. `content` is everything left for the tab bar +
+        // surface once the grip's `gripT` thickness is carved off that edge.
+        let gripT: CGFloat = 7
+        let vertical = store.splitAxis == .vertical
+        let leading = store.terminalLeading
+        handle.axis = store.splitAxis
+        window?.invalidateCursorRects(for: handle)
+
+        var content = NSRect(x: 0, y: 0, width: w, height: h)
+        if vertical {
+            if leading {   // terminal on top → grip on its bottom edge
+                handle.frame = NSRect(x: 0, y: h - gripT, width: w, height: gripT)
+                content = NSRect(x: 0, y: 0, width: w, height: h - gripT)
+            } else {       // terminal on bottom → grip on its top edge
+                handle.frame = NSRect(x: 0, y: 0, width: w, height: gripT)
+                content = NSRect(x: 0, y: gripT, width: w, height: h - gripT)
+            }
+        } else {
+            if leading {   // terminal on left → grip on its right edge
+                handle.frame = NSRect(x: w - gripT, y: 0, width: gripT, height: h)
+                content = NSRect(x: 0, y: 0, width: w - gripT, height: h)
+            } else {       // terminal on right → grip on its left edge
+                handle.frame = NSRect(x: 0, y: 0, width: gripT, height: h)
+                content = NSRect(x: gripT, y: 0, width: w - gripT, height: h)
+            }
+        }
         let grip = BoxView(bg: t.txt5, radius: 1.5)
-        grip.frame = NSRect(x: (w - 34) / 2, y: 2, width: 34, height: 3)
+        grip.frame = vertical ? NSRect(x: (w - 34) / 2, y: 2, width: 34, height: 3)
+                              : NSRect(x: 2, y: (h - 34) / 2, width: 3, height: 34)
         handle.subviews.forEach { $0.removeFromSuperview() }
         handle.addSubview(grip)
 
         let barH: CGFloat = 32
-        layoutTabBar(w: w, y: 7, barH: barH, priorOffset: priorTabOffset)
+        layoutTabBar(x: content.minX, w: content.width, y: content.minY, barH: barH, priorOffset: priorTabOffset)
 
-        // Active surface fills the rest; inactive sessions stay attached but hidden (so their
-        // libghostty surfaces keep their Metal layers instead of being torn down on every switch).
-        let top = 7 + barH
+        // Active surface fills the rest of the content; inactive sessions stay attached but hidden (so
+        // their libghostty surfaces keep their Metal layers instead of being torn down on every switch).
+        let surfaceTop = content.minY + barH
+        let surfaceH = max(0, content.maxY - surfaceTop)
         let activeID = tabs.activeID
         for session in views.values {
             let active = session.id == activeID
             session.view.isHidden = !active
-            if active { session.view.frame = NSRect(x: 0, y: top, width: w, height: max(0, h - top)) }
+            if active { session.view.frame = NSRect(x: content.minX, y: surfaceTop, width: content.width, height: surfaceH) }
         }
     }
 
-    private func layoutTabBar(w: CGFloat, y: CGFloat, barH: CGFloat, priorOffset: NSPoint?) {
+    private func layoutTabBar(x: CGFloat, w: CGFloat, y: CGFloat, barH: CGFloat, priorOffset: NSPoint?) {
         let t = store.theme
-        let bar = FlippedView(frame: NSRect(x: 0, y: y, width: w, height: barH))
+        let bar = FlippedView(frame: NSRect(x: x, y: y, width: w, height: barH))
         bar.wantsLayer = true
         bar.layer?.backgroundColor = t.panel.cgColor
         let topB = BoxView(bg: t.line); topB.frame = NSRect(x: 0, y: 0, width: w, height: 1); bar.addSubview(topB)
@@ -512,16 +566,37 @@ final class TerminalContainerView: FlippedView {
             nm.frame = NSRect(x: 14, y: 8, width: w - 28, height: 16); bar.addSubview(nm)
         }
 
-        // Resize chevron pinned at the far right, OUTSIDE the scroll view so it's never scrolled off.
-        // There's no duplicate status text here anymore — each tab already carries its own title, and
-        // the old right-aligned status label sat on top of the rightmost tab's × button.
-        let chevron = label(store.terminalHeight > 500 ? "⌄" : "⌃", sys(12), t.txt3, align: .center)
+        // Quick-snap chevron pinned at the far right, OUTSIDE the scroll view so it's never scrolled
+        // off. There's no duplicate status text here anymore — each tab already carries its own title,
+        // and the old right-aligned status label sat on top of the rightmost tab's × button. The glyph
+        // and the snap target follow the active split axis: grow/shrink the height in a vertical split,
+        // the width fraction in a horizontal one.
+        let wideFraction = 0.7
+        let isLarge = store.splitAxis == .vertical ? store.terminalHeight > 500 : Double(store.terminalFraction) > 0.6
+        // An SF Symbol chevron, not a Unicode arrowhead: ⌃/⌄ sit at the top/bottom of their line box
+        // (so ⌄ always reads low), whereas the symbol's glyph is centered in its own bounds and an
+        // NSImageView then centers that in the button — the same way the titlebar icons align.
+        let symbol = store.splitAxis == .vertical ? (isLarge ? "chevron.down" : "chevron.up")
+                                                  : (isLarge ? "chevron.right" : "chevron.left")
+        // Mirror the `+` new-tab button: a 22×(barH-10) hit target at y=5 with the same hover fill.
         let chevBtn = ClickRow(bg: nil)
-        chevBtn.frame = NSRect(x: w - 28, y: 6, width: 20, height: 20)
-        chevron.frame = chevBtn.bounds; chevBtn.addSubview(chevron)
+        chevBtn.hoverColor = t.hover
+        chevBtn.frame = NSRect(x: w - 30, y: 5, width: 22, height: barH - 10)
+        let chev = NSImageView(frame: chevBtn.bounds)
+        chev.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        chev.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        chev.contentTintColor = t.txt3
+        chev.imageScaling = .scaleNone            // render at the configured size, centered in the button
+        chevBtn.addSubview(chev)
         chevBtn.onClick = { [weak self] in
             guard let self else { return }
-            self.store.terminalHeight = self.store.terminalHeight > 500 ? 240 : 700
+            switch self.store.splitAxis {
+            case .vertical:
+                self.store.terminalHeight = self.store.terminalHeight > 500 ? 240 : 700
+            case .horizontal:
+                self.store.terminalFraction = Double(self.store.terminalFraction) > 0.6
+                    ? CGFloat(Domain.SplitLayout.defaultFraction) : CGFloat(wideFraction)
+            }
             self.onRelayout?()
             self.store.persist()
         }

@@ -328,4 +328,58 @@ final class PreferencesTests: XCTestCase {
 
         XCTAssertFalse(decoded.skipEmptyRepos)
     }
+
+    func testSplitAxisDefaultsToNeverCustomized() {
+        XCTAssertNil(Preferences.default.splitAxis,
+                     "nil means never customized — the App layer falls back to the vertical split")
+    }
+
+    func testTerminalFractionDefaultsToSplitLayoutDefault() {
+        XCTAssertEqual(Preferences.default.terminalFraction, SplitLayout.defaultFraction)
+    }
+
+    func testSplitStateRoundTripsThroughCodable() throws {
+        let original = Preferences(splitAxis: "horizontal", terminalFraction: 0.6)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.splitAxis, "horizontal")
+        XCTAssertEqual(decoded.terminalFraction, 0.6)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutSplitStateFallsBackToDefaults() throws {
+        // A payload written by a build before the horizontal split existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertNil(decoded.splitAxis)
+        XCTAssertEqual(decoded.terminalFraction, Preferences.default.terminalFraction)
+    }
+
+    func testTerminalLeadingDefaultsToFalse() {
+        XCTAssertFalse(Preferences.default.terminalLeading,
+                       "the terminal starts trailing — bottom/right — until the user swaps sides")
+    }
+
+    func testTerminalLeadingRoundTripsThroughCodable() throws {
+        let original = Preferences(terminalLeading: true)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertTrue(decoded.terminalLeading)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutTerminalLeadingFallsBackToFalse() throws {
+        // A payload written by a build before the swap-sides option existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertFalse(decoded.terminalLeading)
+    }
 }

@@ -1,9 +1,14 @@
 import AppKit
+import Domain
 
 final class TitlebarView: FlippedView {
     let store: Store
     var onToggleSidebar: (() -> Void)?
     var onTogglePanel: (() -> Void)?
+    /// Flip the detail/terminal split between vertical (stacked) and horizontal (side by side).
+    var onToggleSplitAxis: (() -> Void)?
+    /// Swap which side the terminal and detail occupy (top/bottom or left/right).
+    var onSwapSides: (() -> Void)?
     /// Reload all live data (orgs/repos + the selected repo's items). Wired to the data controller.
     var onRefresh: (() -> Void)?
 
@@ -102,18 +107,14 @@ final class TitlebarView: FlippedView {
             addSubview(repo)
         }
 
-        // Right group: mirror of the left sidebar toggle for the organizations panel. Anchored to
-        // the right edge so it tracks window resizes; accent tint + flipped tooltip when collapsed.
-        let panelToggle = iconButton("sidebar.right",
-                                     tint: store.repoPanelCollapsed ? t.accent : t.txt3,
-                                     frame: NSRect(x: bounds.width - 40, y: cy - 12, width: 30, height: 24), point: 15)
-        panelToggle.onClick = { [weak self] in self?.onTogglePanel?() }
-        panelToggle.toolTip = store.repoPanelCollapsed ? "Show organizations" : "Hide organizations"
-        addSubview(panelToggle)
+        // Right group, anchored to the right edge so it tracks window resizes. One icon-stride (40pt)
+        // apart, left→right: refresh-all, split-orientation, swap-sides, organizations-panel toggle.
+        // Each layout toggle accent-tints in its non-default state, mirroring the sidebar/panel ones.
+        let horizontal = store.splitAxis == .horizontal
 
-        // Global "refresh all", one icon-stride to the left of the organizations toggle. Swaps to a
-        // spinner while a refresh is in flight (clicks debounced by the controller's `isRefreshing`).
-        let refreshFrame = NSRect(x: bounds.width - 80, y: cy - 12, width: 30, height: 24)
+        // Global "refresh all" at the left of the cluster. Swaps to a spinner while a refresh is in
+        // flight (clicks debounced by the controller's `isRefreshing`).
+        let refreshFrame = NSRect(x: bounds.width - 160, y: cy - 12, width: 30, height: 24)
         if store.isRefreshing {
             let row = ClickRow(radius: 6)
             row.frame = refreshFrame
@@ -126,5 +127,31 @@ final class TitlebarView: FlippedView {
             refresh.toolTip = "Refresh all"
             addSubview(refresh)
         }
+
+        // Split-orientation toggle. The glyph previews the layout the click switches *to* (stacked
+        // vs side-by-side); accent tint marks the non-default horizontal split.
+        let splitToggle = iconButton(horizontal ? "rectangle.split.1x2" : "rectangle.split.2x1",
+                                     tint: horizontal ? t.accent : t.txt3,
+                                     frame: NSRect(x: bounds.width - 120, y: cy - 12, width: 30, height: 24), point: 15)
+        splitToggle.onClick = { [weak self] in self?.onToggleSplitAxis?() }
+        splitToggle.toolTip = horizontal ? "Stack detail and terminal" : "Split detail and terminal side by side"
+        addSubview(splitToggle)
+
+        // Swap which side the terminal and detail occupy (top/bottom when stacked, left/right when
+        // side by side). The arrow follows the active axis; accent tint marks the swapped order.
+        let swapToggle = iconButton(horizontal ? "arrow.left.arrow.right" : "arrow.up.arrow.down",
+                                    tint: store.terminalLeading ? t.accent : t.txt3,
+                                    frame: NSRect(x: bounds.width - 80, y: cy - 12, width: 30, height: 24), point: 14)
+        swapToggle.onClick = { [weak self] in self?.onSwapSides?() }
+        swapToggle.toolTip = "Swap detail and terminal"
+        addSubview(swapToggle)
+
+        // Organizations-panel collapse, mirror of the left sidebar toggle, pinned to the far right.
+        let panelToggle = iconButton("sidebar.right",
+                                     tint: store.repoPanelCollapsed ? t.accent : t.txt3,
+                                     frame: NSRect(x: bounds.width - 40, y: cy - 12, width: 30, height: 24), point: 15)
+        panelToggle.onClick = { [weak self] in self?.onTogglePanel?() }
+        panelToggle.toolTip = store.repoPanelCollapsed ? "Show organizations" : "Hide organizations"
+        addSubview(panelToggle)
     }
 }
