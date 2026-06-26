@@ -15,6 +15,15 @@ public enum SplitLayout {
     /// The terminal's share of the width the first time the user switches to a horizontal split.
     public static let defaultFraction: Double = 0.45
 
+    /// The smallest the terminal may be dragged to in a *vertical* (stacked) split (points). Stacked
+    /// panes are bounded by rows of text, not column width, so this stays far below `minPane` (the
+    /// side-by-side *width* floor) and preserves the long-standing 120pt terminal floor.
+    public static let minTerminalHeight: Double = 120
+
+    /// The smallest the detail pane may be squeezed to in a vertical split (points). The detail pane
+    /// previously had no floor and could be crushed toward zero on short windows (#65).
+    public static let minDetailHeight: Double = 120
+
     /// Clamp a terminal-width `fraction` so both panes keep at least `minPane` points. When the
     /// container is too narrow to honor that on both sides, fall back to an even split rather than
     /// pinning one pane shut. A non-positive `total` (the view isn't laid out yet) passes through
@@ -30,6 +39,23 @@ public enum SplitLayout {
     /// The terminal's pixel extent along the split for a (clamped) `fraction` of `total`.
     public static func terminalExtent(total: Double, fraction: Double, minPane: Double = minPane) -> Double {
         total * clampFraction(fraction, total: total, minPane: minPane)
+    }
+
+    /// Clamp an absolute terminal `extent` (points, along a vertical split) so the terminal keeps at
+    /// least `minTerminal` and the detail pane keeps at least `minDetail`. This is the pixel twin of
+    /// `clampFraction`: the vertical split stores a height in points, so its bound is absolute and
+    /// container-relative (the ceiling is `total - minDetail`) rather than a fixed pixel value — that
+    /// way a large display isn't capped and the detail pane can't be crushed to zero (#65). When the
+    /// container is too short to honor both floors, fall back to an even split rather than pinning one
+    /// pane shut. A non-positive `total` (the view isn't laid out yet) passes through unharmed.
+    public static func clampExtent(_ extent: Double, total: Double,
+                                   minTerminal: Double = minTerminalHeight,
+                                   minDetail: Double = minDetailHeight) -> Double {
+        guard total > 0 else { return extent }
+        let lo = minTerminal
+        let hi = total - minDetail
+        guard lo <= hi else { return total / 2 }
+        return min(max(extent, lo), hi)
     }
 
     /// Sign that turns a divider drag — a signed move along the split axis, in window space (y up,

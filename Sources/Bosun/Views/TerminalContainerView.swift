@@ -89,6 +89,10 @@ final class TerminalContainerView: FlippedView {
     private let handle = DragHandle()
     private var startHeight: CGFloat = 240
     private var startFraction: CGFloat = CGFloat(Domain.SplitLayout.defaultFraction)
+    /// The grow/shrink sign, captured once at `onBegin` and held for the whole gesture. Recomputing
+    /// it per frame let the drag direction flip mid-gesture (#65); the pane order can't change while
+    /// a drag is in flight, so capturing once is both correct and steadier.
+    private var dragSign: CGFloat = 1
 
     /// The theme key and zoom level whose config was last pushed to libghostty. `syncTerminal` runs
     /// on every store notify (selection, data, …), so these let it skip the config rebuild unless the
@@ -108,16 +112,22 @@ final class TerminalContainerView: FlippedView {
             guard let self else { return }
             self.startHeight = self.store.terminalHeight
             self.startFraction = self.store.terminalFraction
+            // The grip sits on the terminal edge facing the detail pane, so the sign that turns the
+            // drag into "grow the terminal" flips with the pane order (see SplitLayout). Capture it
+            // once for the whole gesture so the direction can't flip mid-drag (#65).
+            self.dragSign = CGFloat(Domain.SplitLayout.dragGrowsTerminal(axis: self.store.splitAxis,
+                                                                         terminalLeading: self.store.terminalLeading))
         }
         handle.onDrag = { [weak self] delta in
             guard let self else { return }
-            // The grip sits on the terminal edge facing the detail pane, so the sign that turns the
-            // drag into "grow the terminal" flips with the pane order (see SplitLayout).
-            let sign = CGFloat(Domain.SplitLayout.dragGrowsTerminal(axis: self.store.splitAxis,
-                                                                    terminalLeading: self.store.terminalLeading))
+            let sign = self.dragSign
             switch self.store.splitAxis {
             case .vertical:
-                self.store.terminalHeight = max(120, min(760, self.startHeight + sign * delta))
+                // Container-relative: the terminal grows until the detail pane hits its floor, so a
+                // tall display isn't capped by a fixed ceiling (#65).
+                let total = Double(self.superview?.bounds.height ?? self.bounds.height)
+                self.store.terminalHeight = CGFloat(Domain.SplitLayout.clampExtent(
+                    Double(self.startHeight + sign * delta), total: total))
             case .horizontal:
                 // Convert the pixel move to a fraction of the whole column width.
                 let total = Double(self.superview?.bounds.width ?? self.bounds.width)

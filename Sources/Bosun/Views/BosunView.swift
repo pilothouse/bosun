@@ -38,13 +38,14 @@ final class CenterColumnView: FlippedView {
         let leading = store.terminalLeading
         switch store.splitAxis {
         case .vertical:
-            // Stacked: the terminal is sized in pixels and the detail pane fills the rest.
-            let maxTerm = max(120, h * 0.9)
-            let termH = min(max(120, store.terminalHeight), maxTerm)
+            // Stacked: the terminal is sized in pixels and the detail pane fills the rest. The same
+            // Domain clamp the drag uses keeps both panes above their floor, so neither collapses to
+            // zero and the terminal isn't capped on a tall display (#65).
+            let termH = CGFloat(SplitLayout.clampExtent(Double(store.terminalHeight), total: Double(h)))
             let termY = leading ? 0 : h - termH
             let detailY = leading ? termH : 0
             terminal.frame = NSRect(x: 0, y: termY, width: w, height: termH)
-            detail.frame = NSRect(x: 0, y: detailY, width: w, height: max(0, h - termH))
+            detail.frame = NSRect(x: 0, y: detailY, width: w, height: h - termH)
         case .horizontal:
             // Side by side: the terminal is sized as a fraction of the width (clamped by SplitLayout)
             // so it tracks the column's width as the sidebar/orgs panel collapse.

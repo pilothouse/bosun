@@ -52,6 +52,58 @@ final class SplitLayoutTests: XCTestCase {
         XCTAssertLessThan(SplitLayout.defaultFraction, 1)
     }
 
+    // MARK: absolute extent clamp (vertical split)
+    //
+    // The vertical split sizes the terminal in points (stacked panes don't reflow with the sidebar
+    // the way side-by-side ones do), so its bound is absolute — the pixel twin of `clampFraction`.
+
+    func testExtentInRangeIsLeftUntouched() {
+        XCTAssertEqual(SplitLayout.clampExtent(400, total: 1000), 400, accuracy: 1e-9)
+    }
+
+    func testExtentTooSmallClampsUpToTheTerminalFloor() {
+        // 10px terminal — below the terminal floor; clamp up to minTerminalHeight.
+        XCTAssertEqual(SplitLayout.clampExtent(10, total: 1000),
+                       SplitLayout.minTerminalHeight, accuracy: 1e-9)
+    }
+
+    func testExtentTooLargeClampsDownSoTheDetailKeepsItsFloor() {
+        // 990px terminal → 10px detail; clamp down so the detail keeps minDetailHeight.
+        let clamped = SplitLayout.clampExtent(990, total: 1000)
+        XCTAssertEqual(clamped, 1000 - SplitLayout.minDetailHeight, accuracy: 1e-9)
+        XCTAssertGreaterThanOrEqual(1000 - clamped, SplitLayout.minDetailHeight - 1e-9)
+    }
+
+    func testExtentOnLargeDisplayIsNotCappedAt760() {
+        // Regression for #65: the old hard 760pt ceiling capped the terminal on 4K displays.
+        let total = 2000.0
+        XCTAssertEqual(SplitLayout.clampExtent(1500, total: total), 1500, accuracy: 1e-9)
+        XCTAssertEqual(SplitLayout.clampExtent(1999, total: total),
+                       total - SplitLayout.minDetailHeight, accuracy: 1e-9)
+    }
+
+    func testContainerTooShortForBothPanesFallsBackToEvenSplit() {
+        // 200px can't give both panes their 120px floor; split evenly rather than pinning one side.
+        XCTAssertEqual(SplitLayout.clampExtent(20, total: 200), 100, accuracy: 1e-9)
+        XCTAssertEqual(SplitLayout.clampExtent(180, total: 200), 100, accuracy: 1e-9)
+    }
+
+    func testZeroOrNegativeTotalLeavesExtentUntouched() {
+        // No geometry to clamp against yet (view not laid out) — pass the value through unharmed.
+        XCTAssertEqual(SplitLayout.clampExtent(240, total: 0), 240, accuracy: 1e-9)
+    }
+
+    func testNeitherPaneCollapsesToZeroAcrossTotals() {
+        // For any container height and any requested extent, both panes stay strictly positive.
+        for total in stride(from: 50.0, through: 3000.0, by: 50) {
+            for req in [-100.0, 0, 50, total / 2, total, total + 500] {
+                let term = SplitLayout.clampExtent(req, total: total)
+                XCTAssertGreaterThan(term, 0, "terminal collapsed at total=\(total) req=\(req)")
+                XCTAssertGreaterThan(total - term, 0, "detail collapsed at total=\(total) req=\(req)")
+            }
+        }
+    }
+
     // MARK: drag sign
 
     func testDragGrowsTerminalWithTheDefaultTrailingOrder() {
