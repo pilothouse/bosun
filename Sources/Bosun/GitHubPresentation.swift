@@ -78,6 +78,7 @@ extension Item {
             dotColor: status.color,
             age: GitHubRelativeAge.compact(from: it.createdAt, now: Date()),
             author: it.author.login,
+            labels: it.labels,
             createdAt: it.createdAt,
             authorColor: isAgent ? agentAccent : Status.purple,
             authorInitials: it.author.initials,

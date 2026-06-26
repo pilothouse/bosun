@@ -72,6 +72,9 @@ struct Item {
     let statusColor: NSColor
     let dotColor: NSColor
     let age, author: String
+    /// The item's label names, carried raw (not just the first, as `metaLeft` shows) so the list's
+    /// free-text search can match any label via the `GitHubItemSearch` rule.
+    var labels: [String] = []
     /// When the item was created, the raw value behind the `age` display string. Kept so the list
     /// can sort by date. See `ItemSorting`.
     let createdAt: Date
