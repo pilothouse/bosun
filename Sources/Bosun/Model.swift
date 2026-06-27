@@ -58,7 +58,7 @@ struct ConnSection {
 }
 
 struct TaskItem { let label: String; let done: Bool }
-struct Check { let name, icon: String; let color: NSColor; let dur, statusText: String; var running = false }
+struct Check { let name, icon: String; let color: NSColor; let dur, statusText: String; var running = false; var url: String? }
 /// One changed file in a PR's `FILES CHANGED` section. `glyph`/`color` encode the change type
 /// (A/M/D/R/C); `add`/`del` are the per-file line counts. Built by `FileChange.init(domain:)`.
 struct FileChange { let path, glyph: String; let color: NSColor; let add, del: Int }

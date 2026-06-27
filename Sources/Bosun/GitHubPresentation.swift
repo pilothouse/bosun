@@ -204,7 +204,7 @@ extension Check {
     init(domain c: GitHubCheck) {
         let v = Check.visual(for: c.state)
         self.init(name: c.name, icon: v.icon, color: v.color,
-                  dur: Check.duration(c.durationSeconds), statusText: v.statusText, running: v.running)
+                  dur: Check.duration(c.durationSeconds), statusText: v.statusText, running: v.running, url: c.url)
     }
 
     /// `statusText` says "passed" for success so `DetailView`'s "x/y passing" tally keeps working.

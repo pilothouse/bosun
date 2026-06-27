@@ -252,6 +252,10 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertNil(item.checks[1].durationSeconds)
         XCTAssertEqual(item.checks[2].state, .success)          // legacy StatusContext
 
+        XCTAssertEqual(item.checks[0].url, "https://github.com/acme-corp/api-gateway/runs/1")  // CheckRun detailsUrl
+        XCTAssertNil(item.checks[1].url)                         // CheckRun without a detailsUrl stays inert
+        XCTAssertEqual(item.checks[2].url, "https://ci.example.com/cla")                       // StatusContext targetUrl
+
         XCTAssertEqual(item.comments.count, 1)
         XCTAssertEqual(item.comments.first?.author.login, "raj")
         XCTAssertEqual(item.comments.first?.authorAssociation, "MEMBER")

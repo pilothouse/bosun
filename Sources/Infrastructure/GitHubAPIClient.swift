@@ -540,10 +540,12 @@ struct ContextNode: Decodable {
     let completedAt: Date?
     let context: String?
     let state: String?
+    let detailsUrl: String?   // CheckRun's link to its run page
+    let targetUrl: String?    // StatusContext's link to the integrator's status page
 
     enum CodingKeys: String, CodingKey {
         case typeName = "__typename"
-        case name, status, conclusion, startedAt, completedAt, context, state
+        case name, status, conclusion, startedAt, completedAt, context, state, detailsUrl, targetUrl
     }
 
     func toDomain() -> GitHubCheck? {
@@ -554,10 +556,12 @@ struct ContextNode: Decodable {
             return GitHubCheck(name: name,
                                state: CheckState.from(status: status?.lowercased() ?? "",
                                                       conclusion: conclusion?.lowercased()),
-                               durationSeconds: duration)
+                               durationSeconds: duration,
+                               url: detailsUrl)
         case "StatusContext":
             guard let context else { return nil }
-            return GitHubCheck(name: context, state: Self.state(fromStatus: state), durationSeconds: nil)
+            return GitHubCheck(name: context, state: Self.state(fromStatus: state),
+                               durationSeconds: nil, url: targetUrl)
         default:
             return nil
         }

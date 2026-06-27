@@ -384,7 +384,19 @@ final class DetailView: FlippedView {
                 box.frame = NSRect(x: padX, y: y, width: cw, height: rowH * CGFloat(it.checks.count))
                 var cy: CGFloat = 0
                 for (i, c) in it.checks.enumerated() {
-                    let row = FlippedView(frame: NSRect(x: 0, y: cy, width: cw, height: rowH))
+                    // Rows with a run URL become clickable (hand cursor + hover); URL-less rows stay inert.
+                    let link = (c.url?.isEmpty == false) ? c.url : nil
+                    let row: FlippedView
+                    if let link {
+                        let cr = ClickRow(bg: nil, radius: 0)
+                        cr.frame = NSRect(x: 0, y: cy, width: cw, height: rowH)
+                        cr.hoverColor = t.hover
+                        cr.cursor = .pointingHand
+                        cr.onClick = { [weak self] in self?.openItemURL(link) }
+                        row = cr
+                    } else {
+                        row = FlippedView(frame: NSRect(x: 0, y: cy, width: cw, height: rowH))
+                    }
                     let icon = BoxView(bg: .hexA(UInt32(c.color.toHex()), 0.12), radius: z(5), border: c.color)
                     icon.frame = NSRect(x: z(14), y: z(8), width: z(16), height: z(16))
                     icon.addSubview(centeredGlyph(c.icon, sys(9), c.color, in: icon.frame.size)); row.addSubview(icon)

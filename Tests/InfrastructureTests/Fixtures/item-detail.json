@@ -35,7 +35,8 @@
                         "status": "COMPLETED",
                         "conclusion": "SUCCESS",
                         "startedAt": "2026-06-02T08:16:00Z",
-                        "completedAt": "2026-06-02T08:17:42Z"
+                        "completedAt": "2026-06-02T08:17:42Z",
+                        "detailsUrl": "https://github.com/acme-corp/api-gateway/runs/1"
                       },
                       {
                         "__typename": "CheckRun",
@@ -43,12 +44,14 @@
                         "status": "IN_PROGRESS",
                         "conclusion": null,
                         "startedAt": "2026-06-02T08:16:00Z",
-                        "completedAt": null
+                        "completedAt": null,
+                        "detailsUrl": null
                       },
                       {
                         "__typename": "StatusContext",
                         "context": "license/cla",
-                        "state": "SUCCESS"
+                        "state": "SUCCESS",
+                        "targetUrl": "https://ci.example.com/cla"
                       }
                     ]
                   }

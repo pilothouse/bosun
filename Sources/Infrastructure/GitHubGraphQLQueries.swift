@@ -139,8 +139,8 @@ enum GitHubGraphQLQueries {
                     contexts(first: 50) {
                       nodes {
                         __typename
-                        ... on CheckRun { name status conclusion startedAt completedAt }
-                        ... on StatusContext { context state }
+                        ... on CheckRun { name status conclusion startedAt completedAt detailsUrl }
+                        ... on StatusContext { context state targetUrl }
                       }
                     }
                   }
