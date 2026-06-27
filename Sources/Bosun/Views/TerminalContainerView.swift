@@ -475,6 +475,15 @@ final class TerminalContainerView: FlippedView {
 
     private func focusActive() {
         guard let view = activeSurfaceView else { return }
+        // On the open-tab (#75) and restore paths the active surface is attached to the window only
+        // inside layout() (deferred to the display cycle), so it isn't in the window yet when we focus
+        // it — and makeFirstResponder on an unattached view is a no-op, leaving the window with no
+        // first responder, so the first keystroke beeps ("can't type until you click"). refresh() just
+        // armed needsLayout; run that pending layout now so the surface is added + sized
+        // (viewDidMoveToWindow) before we make it first responder. Deferring via DispatchQueue.main.async
+        // does NOT work: CFRunLoop drains the main queue before the layout/CA-commit observer, so the
+        // surface still wouldn't be installed.
+        layoutSubtreeIfNeeded()
         window?.makeFirstResponder(view)
         // The single choke point every focus path funnels through, so clearing the badge here
         // covers click / ⌘-number / next-prev / open / close / restore / rename (#74).
