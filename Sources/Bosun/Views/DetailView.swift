@@ -6,8 +6,8 @@ final class DetailView: FlippedView {
     private let scroll = NSScrollView()
     private let linkDelegate = MarkdownLinkDelegate()
     // Memoized Markdown renders so `rebuild()` (run on every `layout()` pass) doesn't re-parse.
-    // The attributed string is width-independent; only the cheap height measurement uses width.
-    private var mdCache: [String: NSAttributedString] = [:]
+    // The parsed blocks are width-independent; only the cheap per-build height measurement uses width.
+    private var blocksCache: [String: [MarkdownBlock]] = [:]
     private var mdThemeKey = ""
     /// The item id the scroll offset belongs to. `rebuild()` replaces the document view (which would
     /// reset scrolling to the top); we restore the prior offset while this stays the same item — so a
@@ -56,11 +56,33 @@ final class DetailView: FlippedView {
         rebuild()
     }
 
-    /// A read-only, non-scrolling text view rendering `text` as themed Markdown, sized to fit
-    /// `width`. Returns an `NSView` the caller positions by frame.
-    private func markdownView(_ text: String, baseFont: NSFont, width: CGFloat) -> NSTextView {
+    /// Renders `text` as themed Markdown into a vertical stack of block views sized to fit `width`,
+    /// returned in a container the caller positions by frame (its height is set to fit). Text runs
+    /// become selectable, link-aware text views; top-level fenced code blocks become padded, copyable
+    /// boxes (`codeBlockView`). Most bodies are a single text block, so the common case is one view.
+    private func markdownView(_ text: String, baseFont: NSFont, width: CGFloat) -> NSView {
+        let container = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
+        let blocks = cachedBlocks(text, baseFont: baseFont)
+        var y: CGFloat = 0
+        for (i, block) in blocks.enumerated() {
+            let v: NSView
+            switch block {
+            case .text(let attr): v = textBlockView(attr, width: width)
+            case .code(let code): v = codeBlockView(code, baseFont: baseFont, width: width)
+            }
+            v.frame.origin = NSPoint(x: 0, y: y)
+            container.addSubview(v)
+            y += v.frame.height + (i < blocks.count - 1 ? z(10) : 0)   // gap between stacked blocks
+        }
+        container.frame.size.height = y
+        return container
+    }
+
+    /// One Markdown text run (paragraphs/lists/headings/quotes/inline code) as a read-only, selectable
+    /// text view with clickable links, sized to fit `width`.
+    private func textBlockView(_ attr: NSAttributedString, width: CGFloat) -> NSTextView {
         let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
-        tv.textStorage?.setAttributedString(cachedMarkdown(text, baseFont: baseFont))
+        tv.textStorage?.setAttributedString(attr)
         tv.isEditable = false
         tv.isSelectable = true
         tv.drawsBackground = false
@@ -78,6 +100,50 @@ final class DetailView: FlippedView {
         let h = measuredHeight(of: tv, width: width)
         tv.frame = NSRect(x: 0, y: 0, width: width, height: ceil(h))
         return tv
+    }
+
+    /// A fenced code block as a padded, rounded box (themed `accentbg2`) holding the code in a
+    /// selectable monospaced text view, with a copy button floating in the top-right corner. The code
+    /// text is inset on the right by a button-clear gutter so no line slips under the button.
+    private func codeBlockView(_ code: String, baseFont: NSFont, width: CGFloat) -> NSView {
+        let t = store.theme
+        let pad = z(14), vpad = z(11), btnGutter = z(44)
+        let box = BoxView(bg: t.accentbg2, radius: z(8), border: t.cardbr)
+        let textW = max(z(40), width - pad - btnGutter)
+        let para = NSMutableParagraphStyle(); para.lineSpacing = 2
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: textW, height: 10))
+        tv.textStorage?.setAttributedString(NSAttributedString(string: code, attributes: [
+            .font: monoCodeFont(matching: baseFont),
+            .foregroundColor: t.txt,
+            .paragraphStyle: para,
+        ]))
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.drawsBackground = false
+        tv.isVerticallyResizable = false
+        tv.isHorizontallyResizable = false
+        tv.textContainerInset = .zero
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.textContainer?.widthTracksTextView = false
+        let h = ceil(measuredHeight(of: tv, width: textW))
+        tv.frame = NSRect(x: pad, y: vpad, width: textW, height: h)
+        box.addSubview(tv)
+        box.frame = NSRect(x: 0, y: 0, width: width, height: h + vpad * 2)
+
+        let copy = ClickRow(radius: z(6))
+        copy.hoverColor = t.hover
+        copy.cursor = .pointingHand
+        copy.toolTip = "Copy code"
+        copy.frame = NSRect(x: width - z(28) - z(8), y: z(7), width: z(28), height: z(22))
+        let icon = NSImageView(frame: NSRect(x: z(6), y: z(4), width: z(16), height: z(14)))
+        icon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy code")
+        icon.contentTintColor = t.txt4
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        copy.addSubview(icon)
+        copy.onClick = { [weak self] in self?.copyCode(code, icon: icon) }
+        box.addSubview(copy)
+        return box
     }
 
     /// A read-only, *selectable* text view rendering `text` as plain text in `font`/`color`, sized to
@@ -107,12 +173,12 @@ final class DetailView: FlippedView {
         return ceil(lm.usedRect(for: tc).height)
     }
 
-    private func cachedMarkdown(_ text: String, baseFont: NSFont) -> NSAttributedString {
-        if store.theme.key != mdThemeKey { mdCache.removeAll(); mdThemeKey = store.theme.key }
+    private func cachedBlocks(_ text: String, baseFont: NSFont) -> [MarkdownBlock] {
+        if store.theme.key != mdThemeKey { blocksCache.removeAll(); mdThemeKey = store.theme.key }
         let key = "\(baseFont.pointSize)\u{1}\(text)"
-        if let hit = mdCache[key] { return hit }
-        let rendered = renderMarkdown(text, theme: store.theme, baseFont: baseFont)
-        mdCache[key] = rendered
+        if let hit = blocksCache[key] { return hit }
+        let rendered = renderMarkdownBlocks(text, theme: store.theme, baseFont: baseFont)
+        blocksCache[key] = rendered
         return rendered
     }
 
@@ -494,6 +560,22 @@ final class DetailView: FlippedView {
     private func openItemURL(_ url: String) {
         guard let u = URL(string: url) else { return }
         NSWorkspace.shared.open(u)
+    }
+
+    /// Copy a fenced code block's text to the clipboard and briefly swap its button glyph to a
+    /// checkmark. Mutates the button icon in place (no relayout), so the confirmation flash isn't lost
+    /// to the rebuild a `needsLayout` would trigger; an unrelated rebuild within the window just resets
+    /// it early, which is fine for a transient cue.
+    private func copyCode(_ code: String, icon: NSImageView) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+        icon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Copied")
+        icon.contentTintColor = store.theme.accent
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self, weak icon] in
+            guard let self, let icon else { return }
+            icon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy code")
+            icon.contentTintColor = self.store.theme.txt4
+        }
     }
 
     /// Copy the selected item's web URL to the clipboard and flash a transient "Copied ✓" in the id

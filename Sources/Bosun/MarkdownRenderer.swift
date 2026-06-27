@@ -1,24 +1,63 @@
 import AppKit
 import Markdown
 
-/// Renders a GitHub-flavored Markdown string into a themed `NSAttributedString` for display in a
-/// read-only `NSTextView` (see `DetailView.markdownView`). Issue/PR/comment bodies arrive as raw
-/// Markdown; this walks the parsed tree and emits headings, emphasis, inline/fenced code, lists
+/// One top-level block of a rendered Markdown body. Everything that isn't a *fenced* code block —
+/// paragraphs, lists, headings, quotes, inline code — folds into `.text` (a themed
+/// `NSAttributedString`); a top-level fenced code block becomes `.code(raw)` so `DetailView` can
+/// render it as a padded, copyable box rather than inline tinted text. Code blocks nested inside a
+/// list/quote stay inside `.text`, rendered by `visitCodeBlock`.
+enum MarkdownBlock {
+    case text(NSAttributedString)
+    case code(String)
+}
+
+/// Splits a GitHub-flavored Markdown body into an ordered stack of blocks (see `MarkdownBlock`),
+/// pulling top-level fenced code blocks out as their own segments. Issue/PR/comment bodies arrive as
+/// raw Markdown; this walks the parsed tree and emits headings, emphasis, inline code, lists
 /// (including `- [ ]` task items), blockquotes, links, and strikethrough, all tinted from the app
-/// `Theme`. Unsupported constructs (raw HTML, tables, images) degrade to their text content.
+/// `Theme`. Consecutive non-code blocks render together so their inter-paragraph spacing stays intact,
+/// then have the dangling trailing newline(s) trimmed so a segment's height isn't padded by an empty
+/// final line.
 ///
 /// `swift-markdown` parses with the cmark-gfm extensions (strikethrough + task lists) always
-/// registered, so no `ParseOptions` flag is needed for those.
-func renderMarkdown(_ text: String, theme: Theme, baseFont: NSFont) -> NSAttributedString {
+/// registered, so no `ParseOptions` flag is needed for those. Unsupported constructs (raw HTML,
+/// tables, images) degrade to their text content.
+func renderMarkdownBlocks(_ text: String, theme: Theme, baseFont: NSFont) -> [MarkdownBlock] {
     var renderer = MarkdownRenderer(theme: theme, baseFont: baseFont)
-    let result = NSMutableAttributedString(attributedString: renderer.visit(Document(parsing: text)))
-    // Each block appends its own trailing newline; drop the dangling one(s) so the card/bubble
-    // height isn't padded by an empty final line.
-    while result.length > 0, (result.string as NSString).hasSuffix("\n") {
-        result.deleteCharacters(in: NSRange(location: result.length - 1, length: 1))
+    var blocks: [MarkdownBlock] = []
+    let pending = NSMutableAttributedString()
+    func flushText() {
+        while pending.length > 0, (pending.string as NSString).hasSuffix("\n") {
+            pending.deleteCharacters(in: NSRange(location: pending.length - 1, length: 1))
+        }
+        if pending.length > 0 {
+            blocks.append(.text(NSAttributedString(attributedString: pending)))
+            pending.setAttributedString(NSAttributedString())
+        }
     }
-    return result
+    for child in Document(parsing: text).children {
+        if let codeBlock = child as? CodeBlock {
+            flushText()
+            var code = codeBlock.code
+            if code.hasSuffix("\n") { code.removeLast() }   // cmark keeps a trailing newline
+            blocks.append(.code(code))
+        } else {
+            pending.append(renderer.visit(child))
+        }
+    }
+    flushText()
+    return blocks
 }
+
+/// A monospaced font that reads at the same *visual* size as `baseFont` for code. SF Mono and SF Pro
+/// share cap/x-height at equal point size, but mono reads optically heavier (thicker strokes) and
+/// wider (fixed advance), so we trim it to `codeFontRatio` of the body to match the perceived size
+/// (tuned by eye). `baseFont.pointSize` already has `uiScale` baked in (it's `sys(…)`), so we derive
+/// the size from it directly — NOT via `mono()`, which would re-apply `uiScale` and double-scale at zoom.
+func monoCodeFont(matching baseFont: NSFont) -> NSFont {
+    NSFont.monospacedSystemFont(ofSize: baseFont.pointSize * codeFontRatio, weight: .regular)
+}
+private let codeFontRatio: CGFloat = 0.88   // ≈ body − 1.6pt at the 13.5pt default
 
 /// Opens clicked Markdown links in the user's browser. Stateless, so `DetailView` keeps one shared
 /// instance for every (rebuilt-each-layout) text view. Mirrors `DeviceFlowSheet`'s `NSWorkspace.open`.
@@ -44,6 +83,10 @@ private struct MarkdownRenderer: MarkupVisitor {
     private var baseAttrs: [NSAttributedString.Key: Any] { [.font: baseFont, .foregroundColor: theme.txt2] }
     private var newline: NSAttributedString { NSAttributedString(string: "\n", attributes: [.font: baseFont]) }
     private var tab: NSAttributedString { NSAttributedString(string: "\t", attributes: [.font: baseFont]) }
+
+    /// Monospaced font for inline code (and code blocks nested in lists/quotes), matched to the body's
+    /// visual size. Top-level fenced blocks render outside this visitor — see `renderMarkdownBlocks`.
+    private var codeFont: NSFont { monoCodeFont(matching: baseFont) }
 
     // MARK: Tree walk
 
@@ -94,7 +137,7 @@ private struct MarkdownRenderer: MarkupVisitor {
 
     mutating func visitInlineCode(_ inlineCode: InlineCode) -> NSAttributedString {
         NSAttributedString(string: inlineCode.code, attributes: [
-            .font: mono(baseFont.pointSize - 0.5),
+            .font: codeFont,
             .foregroundColor: theme.txt,
             .backgroundColor: theme.accentbg,
         ])
@@ -150,7 +193,7 @@ private struct MarkdownRenderer: MarkupVisitor {
         s.paragraphSpacing = baseFont.pointSize * 0.5
         s.lineSpacing = 2
         let m = NSMutableAttributedString(string: code, attributes: [
-            .font: mono(baseFont.pointSize - 1),
+            .font: codeFont,
             .foregroundColor: theme.txt,
             .backgroundColor: theme.accentbg2,
         ])
