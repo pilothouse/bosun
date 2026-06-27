@@ -43,6 +43,20 @@ extension Connection {
                                         dot: Status.dim, sessionLabel: "")
 }
 
+/// A rendered band of the connection rail — the presentation projection of
+/// `Domain.ConnectionSection`. Favorites is pinned, a `.folder` carries its id+name (for the
+/// header's rename/delete/collapse and as a drag drop target), and `.ungrouped` is the catch-all.
+/// Built by `Store.connectionSections`; the rail iterates these to lay out headers and rows (#82).
+struct ConnSection {
+    enum Kind: Equatable {
+        case favorites
+        case folder(id: String, name: String)
+        case ungrouped
+    }
+    let kind: Kind
+    let connections: [Connection]
+}
+
 struct TaskItem { let label: String; let done: Bool }
 struct Check { let name, icon: String; let color: NSColor; let dur, statusText: String; var running = false }
 /// One changed file in a PR's `FILES CHANGED` section. `glyph`/`color` encode the change type

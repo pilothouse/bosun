@@ -11,12 +11,31 @@ final class ConnectionRailView: FlippedView {
     /// A drag reordered a section: (the section's ids in their pre-move display order, the moved
     /// row's old index, its new index). The App layer applies `ConnectionOrdering` and persists.
     var onReorder: (([UUID], Int, Int) -> Void)?
+    /// The footer "New folder" affordance was tapped. The App layer creates a folder and calls
+    /// `beginRenamingFolder` so the user names it inline (Finder-style).
+    var onCreateFolder: (() -> Void)?
+    /// A folder header was renamed inline: (folder id, the new trimmed name). Empty input is ignored
+    /// by the caller — the previous name stays.
+    var onRenameFolder: ((String, String) -> Void)?
+    /// A folder's Delete affordance was chosen: (folder id). The App layer shows the cascade-delete
+    /// confirm dialog and, on confirm, removes the folder and its connections.
+    var onDeleteFolder: ((String) -> Void)?
+    /// A connection moved folders, by drag onto another section's band or the row's "Move to folder…"
+    /// menu: (connection id, target folder id or nil for Ungrouped). The App layer persists it.
+    var onMoveConnection: ((String, String?) -> Void)?
 
     // Double-click is tracked here, not via the row's clickCount: selecting a connection rebuilds
     // the rail and replaces the row between the two clicks, so AppKit's native double-click
     // detection fired only intermittently ("sometimes doesn't open").
     private var lastClickId: String?
     private var lastClickAt: TimeInterval = 0
+    // Folder-header click timing (single click toggles collapse, a quick second renames), tracked
+    // here for the same reason as `lastClickId`. The id currently in inline-rename, and its live
+    // editor, mirror `TerminalContainerView`'s tab-rename state.
+    private var lastFolderClickId: String?
+    private var lastFolderClickAt: TimeInterval = 0
+    private var editingFolderId: String?
+    private weak var folderEditField: NSTextField?
 
     /// Live "Search connections" filter. The query is rail-local transient state (like the detail
     /// composer's draft), deliberately *not* in `Store`: it must not persist and must not route
@@ -30,14 +49,32 @@ final class ConnectionRailView: FlippedView {
     // Live drag-to-reorder state, mirroring `ManageOrgsSheet` but scoped to one section. Captured
     // by `makeListDocument` so a grip drag can reposition that section's live rows without a full
     // rebuild; `draggingId != nil` also blocks the rebuild so the gesture isn't torn down mid-drag.
+    // Drag state is keyed by a per-row *token* ("<section>/<connId>"), not the connection id: a
+    // favorited connection appears in both Favorites and its folder, so the same id renders twice —
+    // the token disambiguates which rendered row the grip is dragging.
     private weak var listDoc: FlippedView?
-    private var rowsById: [String: ClickRow] = [:]
-    private var sectionIdsById: [String: [String]] = [:]   // id → its section's ids, in display order
-    private var sectionTopById: [String: CGFloat] = [:]     // id → its section's first-row top-Y in doc
-    private var draggingId: String?
-    private var dragOrder: [String] = []                    // live order of the dragged row's section
+    private var rowsById: [String: ClickRow] = [:]          // token → row
+    private var sectionTokensById: [String: [String]] = [:] // token → its section's tokens, in display order
+    private var sectionConnIdsById: [String: [String]] = [:]// token → its section's connection ids, in display order
+    private var sectionTopById: [String: CGFloat] = [:]     // token → its section's first-row top-Y in doc
+    private var rowConnId: [String: String] = [:]           // token → the connection id it shows
+    private var rowFolderById: [String: String?] = [:]      // token → the folder it sits in (move origin; nil = ungrouped/favorites)
+    private var dragReorderOnlyById: [String: Bool] = [:]   // token → its section is reorder-only (Favorites / no-folders flat list)
+    private var draggingId: String?                         // the dragged row's token
+    private var draggingOriginFolderId: String?             // the dragged row's folder when the drag began
+    private var dragOrder: [String] = []                    // live order (tokens) of the dragged row's section
     private var dragGrabDY: CGFloat = 0
     private var dragSectionTop: CGFloat = 0
+    private var dragReorderOnly = false                     // a favorites-section drag: reorder, never move folders
+    private weak var dragHighlightedHeader: NSView?         // the drop-target header tinted during a move drag
+
+    // Cross-folder move targets, captured per build: each folder/Ungrouped section's drop band
+    // (`folderId == nil` is Ungrouped; Favorites is never a target) and its header view, so a drag
+    // that leaves its origin section can highlight and drop onto another section. `dragTargetActive`
+    // gates `endDrag` between a move and the within-section reorder.
+    private var dropBands: [(folderId: String?, top: CGFloat, bottom: CGFloat, header: NSView)] = []
+    private var dragTargetActive = false
+    private var dragTargetFolderId: String?
 
     init(store: Store) {
         self.store = store
@@ -52,6 +89,7 @@ final class ConnectionRailView: FlippedView {
 
     private func sectionHeader(_ title: String, accentStar: Bool, count: String?, width: CGFloat, t: Theme) -> NSView {
         let v = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: z(26)))
+        v.wantsLayer = true   // so it can tint as a drag drop target (Ungrouped)
         var x: CGFloat = z(14)
         if accentStar {
             let s = label("★", sys(11), t.accent)
@@ -67,7 +105,72 @@ final class ConnectionRailView: FlippedView {
         return v
     }
 
-    private func connRow(_ c: Connection, width: CGFloat, t: Theme, reorderable: Bool) -> ClickRow {
+    /// A footer action row: a bordered glyph box, a title, and an optional right-aligned shortcut
+    /// hint. Shared by "New folder" and "New connection" so they match (#82).
+    private func footerRow(glyph: String, title: String, hint: String?, rowH: CGFloat,
+                           width w: CGFloat, t: Theme, action: @escaping () -> Void) -> ClickRow {
+        let row = ClickRow(bg: nil)
+        row.hoverColor = t.hover
+        row.onClick = action
+        row.frame = NSRect(x: 0, y: 0, width: w, height: rowH)
+        let mid = rowH / 2
+        let boxSize: CGFloat = z(26)
+        let box = BoxView(bg: nil, radius: z(7), border: t.line2)
+        box.frame = NSRect(x: z(14), y: mid - boxSize / 2, width: boxSize, height: boxSize)
+        box.addSubview(centeredGlyph(glyph, sys(16), t.txt4, in: box.frame.size))
+        row.addSubview(box)
+        let lblH: CGFloat = z(18)
+        let lbl = label(title, sys(11.5), t.txt3)
+        lbl.frame = NSRect(x: z(49), y: mid - lblH / 2, width: w - z(49) - z(40), height: lblH)
+        row.addSubview(lbl)
+        if let hint {
+            let h = label(hint, mono(10), t.txt5, align: .right)
+            h.frame = NSRect(x: w - z(44), y: mid - lblH / 2, width: z(30), height: lblH)
+            row.addSubview(h)
+        }
+        return row
+    }
+
+    /// A collapsible folder section header: a disclosure chevron, the folder name (or its inline
+    /// rename editor when `editingFolderId` matches), and a member count. The whole header is one
+    /// `ClickRow` — a single click toggles collapse, a quick second click renames (`handleFolderClick`)
+    /// — with a right-click menu for Rename / Delete. Captured into `dropBands` so a connection drag
+    /// can drop onto it (#82).
+    private func folderHeader(id: String, name: String, count: Int, collapsed: Bool,
+                              width w: CGFloat, t: Theme) -> ClickRow {
+        let row = ClickRow(bg: nil)
+        row.hoverColor = t.hover
+        row.frame = NSRect(x: 0, y: 0, width: w, height: z(26))
+        row.onClick = { [weak self] in self?.handleFolderClick(id) }
+
+        let chevron = label(collapsed ? "▸" : "▾", sys(9), t.txt4)
+        chevron.frame = NSRect(x: z(13), y: z(7), width: z(12), height: z(12)); row.addSubview(chevron)
+
+        if editingFolderId == id {
+            let editor = folderRenameEditor(name, frame: NSRect(x: z(26), y: z(4), width: w - z(26) - z(34), height: z(18)), t: t)
+            row.addSubview(editor)
+        } else {
+            let nameLabel = label(name, sys(11, .semibold), t.txt3)
+            nameLabel.frame = NSRect(x: z(26), y: z(6), width: w - z(26) - z(34), height: z(14))
+            row.addSubview(nameLabel)
+        }
+
+        let c = label("\(count)", mono(10), t.txt5, align: .right)
+        c.frame = NSRect(x: w - z(30), y: z(6), width: z(16), height: z(14)); row.addSubview(c)
+
+        // Right-click → Rename / Delete (the cascade-delete confirm lives in the App layer).
+        let menu = NSMenu()
+        let rename = NSMenuItem(title: "Rename…", action: #selector(renameFolderMenuAction(_:)), keyEquivalent: "")
+        rename.target = self; rename.representedObject = id
+        let remove = NSMenuItem(title: "Delete…", action: #selector(deleteFolderMenuAction(_:)), keyEquivalent: "")
+        remove.target = self; remove.representedObject = id
+        menu.addItem(rename); menu.addItem(.separator()); menu.addItem(remove)
+        row.menu = menu
+        return row
+    }
+
+    private func connRow(_ c: Connection, currentFolderId: String?, token: String,
+                         width: CGFloat, t: Theme, draggable: Bool) -> ClickRow {
         let selected = store.selectedConnId == c.id
         let row = ClickRow(bg: selected ? t.accentbg : nil)
         row.hoverColor = t.hover
@@ -76,16 +179,17 @@ final class ConnectionRailView: FlippedView {
         // a folder opens a shell there).
         row.onClick = { [weak self] in self?.handleRowClick(c.id) }
 
-        // Drag-to-reorder grip: a ☰ handle in the left gutter, revealed only while the row is
-        // hovered so the resting list stays uncluttered. A drag on it moves the row within its
-        // section; a click elsewhere on the row still selects (the grip eats only its own zone).
-        if reorderable {
+        // Drag grip: a ☰ handle in the left gutter, revealed only while the row is hovered so the
+        // resting list stays uncluttered. A drag reorders the row within its section, or — for a
+        // folder/Ungrouped row — drops it onto another section to move folders; a click elsewhere on
+        // the row still selects (the grip eats only its own zone).
+        if draggable {
             let grip = DragGrip(frame: NSRect(x: 0, y: 0, width: z(14), height: z(42)))
             grip.alphaValue = 0
             let gl = label("☰", sys(11), t.txt4, align: .center)
             gl.frame = NSRect(x: 0, y: (z(42) - z(14)) / 2, width: z(14), height: z(14))
             grip.addSubview(gl)
-            grip.onDown = { [weak self] e in self?.beginDrag(c.id, event: e) }
+            grip.onDown = { [weak self] e in self?.beginDrag(token, event: e) }
             grip.onDrag = { [weak self] e in self?.updateDrag(event: e) }
             grip.onUp = { [weak self] _ in self?.endDrag() }
             row.addSubview(grip)
@@ -135,8 +239,45 @@ final class ConnectionRailView: FlippedView {
         let remove = NSMenuItem(title: "Delete", action: #selector(deleteMenuAction(_:)), keyEquivalent: "")
         remove.target = self; remove.representedObject = c.id
         menu.addItem(edit); menu.addItem(remove)
+        if let moveItem = moveToFolderMenuItem(connId: c.id, currentFolderId: currentFolderId) {
+            menu.addItem(.separator()); menu.addItem(moveItem)
+        }
         row.menu = menu
         return row
+    }
+
+    /// Holds a "Move to folder…" submenu choice for `moveToFolderMenuAction`. `folderId == nil`
+    /// means Ungrouped. A class so it rides `NSMenuItem.representedObject`.
+    private final class MoveTarget: NSObject {
+        let connId: String
+        let folderId: String?
+        init(connId: String, folderId: String?) { self.connId = connId; self.folderId = folderId }
+    }
+
+    /// A "Move to folder…" parent item whose submenu lists Ungrouped (when the row is in a folder)
+    /// plus every folder except the one the row already sits in. `nil` when there's nowhere to move
+    /// it (no folders, and already ungrouped). The drag offers the same move; this is the reliable,
+    /// always-available path (#82).
+    private func moveToFolderMenuItem(connId: String, currentFolderId: String?) -> NSMenuItem? {
+        let folders = store.domainFolders
+        let others = folders.filter { $0.id.uuidString != currentFolderId }
+        let canUngroup = currentFolderId != nil
+        guard !others.isEmpty || canUngroup else { return nil }
+
+        let submenu = NSMenu()
+        if canUngroup {
+            let item = NSMenuItem(title: "Ungrouped", action: #selector(moveToFolderMenuAction(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = MoveTarget(connId: connId, folderId: nil)
+            submenu.addItem(item); submenu.addItem(.separator())
+        }
+        for folder in others {
+            let item = NSMenuItem(title: folder.name, action: #selector(moveToFolderMenuAction(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = MoveTarget(connId: connId, folderId: folder.id.uuidString)
+            submenu.addItem(item)
+        }
+        let parent = NSMenuItem(title: "Move to folder", action: nil, keyEquivalent: "")
+        parent.submenu = submenu
+        return parent
     }
 
     /// Single click selects; a second click on the same row within the system double-click
@@ -162,6 +303,94 @@ final class ConnectionRailView: FlippedView {
     }
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String { onDelete?(id) }
+    }
+
+    // MARK: Folder header — collapse, inline rename, menu actions (#82)
+
+    /// A single click toggles the folder's collapse; a quick second click renames it. Timed on the
+    /// rail (which survives the collapse rebuild), mirroring `handleRowClick`. The double-click's
+    /// second toggle is undone so entering rename doesn't also flip the collapse state.
+    private func handleFolderClick(_ id: String) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if lastFolderClickId == id, now - lastFolderClickAt <= NSEvent.doubleClickInterval {
+            lastFolderClickId = nil
+            toggleFolderCollapse(id)   // revert the first click's toggle, then rename
+            beginFolderRename(id)
+        } else {
+            lastFolderClickId = id
+            lastFolderClickAt = now
+            toggleFolderCollapse(id)
+        }
+    }
+
+    private func toggleFolderCollapse(_ id: String) {
+        if store.collapsedFolderIds.contains(id) {
+            store.collapsedFolderIds.remove(id)
+        } else {
+            store.collapsedFolderIds.insert(id)
+        }
+    }
+
+    /// Begin inline rename of a folder header. Mirrors `TerminalContainerView.beginRename`: the rename
+    /// state is set and a rebuild swaps the name label for an editor.
+    private func beginFolderRename(_ id: String) {
+        editingFolderId = id
+        needsLayout = true
+    }
+
+    /// Public entry so the App layer can drop a freshly-created folder straight into rename
+    /// (Finder-style: "New folder" appears, already editable).
+    func beginRenamingFolder(_ id: String) { beginFolderRename(id) }
+
+    private func commitFolderRename() {
+        guard let id = editingFolderId else { return }
+        let name = folderEditField?.stringValue ?? ""
+        editingFolderId = nil
+        folderEditField = nil
+        onRenameFolder?(id, name.trimmingCharacters(in: .whitespacesAndNewlines))
+        needsLayout = true
+    }
+
+    private func cancelFolderRename() {
+        guard editingFolderId != nil else { return }
+        editingFolderId = nil
+        folderEditField = nil
+        needsLayout = true
+    }
+
+    /// The inline editor swapped in for a folder header's name label. Mirrors
+    /// `TerminalContainerView.renameEditor`: borderless, made first responder with all text selected
+    /// on the next runloop (so the field is in the view tree first).
+    private func folderRenameEditor(_ value: String, frame: NSRect, t: Theme) -> NSTextField {
+        let tf = NSTextField(string: value)
+        tf.font = sys(11, .semibold)
+        tf.isBezeled = false
+        tf.drawsBackground = false
+        tf.focusRingType = .none
+        tf.textColor = t.txt
+        tf.lineBreakMode = .byTruncatingTail
+        tf.delegate = self
+        tf.frame = frame
+        tf.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+        folderEditField = tf
+        DispatchQueue.main.async { [weak self, weak tf] in
+            guard let tf, self?.editingFolderId != nil else { return }
+            self?.window?.makeFirstResponder(tf)
+            tf.currentEditor()?.selectAll(nil)
+        }
+        return tf
+    }
+
+    @objc private func renameFolderMenuAction(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String { beginFolderRename(id) }
+    }
+    @objc private func deleteFolderMenuAction(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String { onDeleteFolder?(id) }
+    }
+    @objc private func moveToFolderMenuAction(_ sender: NSMenuItem) {
+        if let target = sender.representedObject as? MoveTarget {
+            onMoveConnection?(target.connId, target.folderId)
+        }
     }
 
     /// A muted, bordered card holding a wrapped message. With `tap` it highlights on hover and runs
@@ -228,26 +457,20 @@ final class ConnectionRailView: FlippedView {
         kbd.addSubview(kl); search.addSubview(kbd)
         addSubview(search)
 
-        // Footer.
-        let footerH: CGFloat = z(48)
-        let footer = ClickRow(bg: nil)
-        footer.hoverColor = t.hover
-        footer.onClick = { [weak self] in self?.onAdd?() }
-        footer.frame = NSRect(x: 0, y: bounds.height - footerH, width: w, height: footerH)
+        // Footer: two stacked action rows — "New folder" above "New connection" (#82).
+        let footerRowH: CGFloat = z(44)
+        let footerH = footerRowH * 2
+        let footer = FlippedView(frame: NSRect(x: 0, y: bounds.height - footerH, width: w, height: footerH))
         let ftBorder = BoxView(bg: t.line)
         ftBorder.frame = NSRect(x: 0, y: 0, width: w, height: z(1)); footer.addSubview(ftBorder)
-        // The "+" box, the label, and the ⌘N hint all share the footer's vertical midline.
-        let mid = footerH / 2
-        let plusSize: CGFloat = z(26)
-        let plus = BoxView(bg: nil, radius: z(7), border: t.line2)
-        plus.frame = NSRect(x: z(14), y: mid - plusSize / 2, width: plusSize, height: plusSize)
-        let pl = centeredGlyph("+", sys(16), t.txt4, in: plus.frame.size)
-        plus.addSubview(pl); footer.addSubview(plus)
-        let ftH: CGFloat = z(18)
-        let ftLabel = label("New connection", sys(11.5), t.txt3)
-        ftLabel.frame = NSRect(x: z(49), y: mid - ftH / 2, width: w - z(49) - z(40), height: ftH); footer.addSubview(ftLabel)
-        let cmdN = label("⌘N", mono(10), t.txt5, align: .right)
-        cmdN.frame = NSRect(x: w - z(44), y: mid - ftH / 2, width: z(30), height: ftH); footer.addSubview(cmdN)
+        let newFolder = footerRow(glyph: "⊞", title: "New folder", hint: nil, rowH: footerRowH, width: w, t: t) {
+            [weak self] in self?.onCreateFolder?()
+        }
+        newFolder.frame.origin.y = 0; footer.addSubview(newFolder)
+        let newConn = footerRow(glyph: "+", title: "New connection", hint: "⌘N", rowH: footerRowH, width: w, t: t) {
+            [weak self] in self?.onAdd?()
+        }
+        newConn.frame.origin.y = footerRowH; footer.addSubview(newConn)
         addSubview(footer)
 
         // Scrollable list. Its document is built by `makeListDocument` so a keystroke can rebuild
@@ -263,53 +486,110 @@ final class ConnectionRailView: FlippedView {
         listScroll = scroll
     }
 
-    /// Build the (filtered) connection list as a fresh document view. Each section is narrowed by the
-    /// current `searchQuery` via the pure `ConnectionSearch` rule (an empty query yields the full list).
+    /// Build the (filtered) connection list as a fresh document view. Sections come from the pure
+    /// `ConnectionGrouping` rule via `store.connectionSections` — Favorites (pinned), one collapsible
+    /// header per user folder (empty folders included as drop targets), then Ungrouped — each narrowed
+    /// by the current `searchQuery` via `ConnectionSearch`. The kind-based SSH/LOCAL split is gone (#82).
     private func makeListDocument(width w: CGFloat, minHeight: CGFloat, t: Theme) -> FlippedView {
         let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
         listDoc = doc
-        rowsById = [:]; sectionIdsById = [:]; sectionTopById = [:]
+        rowsById = [:]; sectionTokensById = [:]; sectionConnIdsById = [:]; sectionTopById = [:]
+        rowConnId = [:]; rowFolderById = [:]; dragReorderOnlyById = [:]; dropBands = []
         var y: CGFloat = z(6)
 
-        func section(_ title: String, _ items: [Connection], star: Bool, count: String?) {
-            guard !items.isEmpty else { return }   // hide a section with nothing in it
-            let head = sectionHeader(title, accentStar: star, count: count, width: w, t: t)
-            head.frame.origin.y = y; doc.addSubview(head); y += z(28)
-            // A lone row can't be reordered; only show grips (and capture drag state) for 2+.
-            let reorderable = items.count >= 2
-            let ids = items.map(\.id)
-            let firstRowTop = y
-            for c in items {
-                let r = connRow(c, width: w, t: t, reorderable: reorderable)
-                r.frame.origin.y = y; doc.addSubview(r); y += z(42)
-                if reorderable {
-                    rowsById[c.id] = r
-                    sectionIdsById[c.id] = ids
-                    sectionTopById[c.id] = firstRowTop
-                }
-            }
-            y += z(8)
-        }
         func place(_ hint: NSView) { hint.frame.origin.y = y; doc.addSubview(hint); y += hint.frame.height + z(4) }
 
-        if store.connections.isEmpty {
-            // Whole-rail empty state: one merged prompt, no section headers.
+        // Whole-rail empty state: nothing at all to organize.
+        if store.domainConnections.isEmpty, store.domainFolders.isEmpty {
             place(emptyHint("No connections yet. Press ⌘N to add an SSH remote or a local folder.",
                             width: w, t: t, tap: { [weak self] in self?.onAdd?() }))
-        } else {
-            let query = searchQuery
-            func keep(_ c: Connection) -> Bool { ConnectionSearch.matches(query: query, in: c.name, c.meta) }
-            let favs = store.favorites.filter(keep)
-            let ssh = store.sshRemotes.filter(keep)
-            let folders = store.folders.filter(keep)
-            section("FAVORITES", favs, star: true, count: "\(favs.count)")
-            section("SSH REMOTES", ssh, star: false, count: nil)
-            section("LOCAL FOLDERS", folders, star: false, count: nil)
-            if favs.isEmpty, ssh.isEmpty, folders.isEmpty {
-                // A live query that matched nothing — distinct from the no-connections state above.
-                let shown = query.trimmingCharacters(in: .whitespacesAndNewlines)
-                place(emptyHint("No connections match “\(shown)”.", width: w, t: t))
+            doc.frame.size.height = max(y, minHeight)
+            return doc
+        }
+
+        let query = searchQuery
+        func keep(_ c: Connection) -> Bool { ConnectionSearch.matches(query: query, in: c.name, c.meta) }
+
+        let sections = store.connectionSections
+        let hasFolders = sections.contains { if case .folder = $0.kind { return true }; return false }
+        // A row can be dragged when it can go *somewhere*: reorder within a 2+ section, or move when
+        // there are 2+ folder/Ungrouped bands to land on. Favorites is reorder-only.
+        let bandCount = sections.filter {
+            switch $0.kind { case .folder, .ungrouped: return true; case .favorites: return false }
+        }.count
+
+        // Lay out one section's connection rows, registering each for drag under a per-row token.
+        // `folderId` is the move origin (nil = Ungrouped/Favorites); `reorderOnly` blocks cross-folder
+        // moves (Favorites and the no-folders flat list).
+        func rows(_ items: [Connection], folderId: String?, sectionTag: String,
+                  draggable: Bool, reorderOnly: Bool) {
+            let connIds = items.map(\.id)
+            let tokens = items.map { "\(sectionTag)/\($0.id)" }
+            let firstRowTop = y
+            for (i, c) in items.enumerated() {
+                let token = tokens[i]
+                let r = connRow(c, currentFolderId: folderId, token: token, width: w, t: t, draggable: draggable)
+                r.frame.origin.y = y; doc.addSubview(r); y += z(42)
+                if draggable {
+                    rowsById[token] = r
+                    sectionTokensById[token] = tokens
+                    sectionConnIdsById[token] = connIds
+                    sectionTopById[token] = firstRowTop
+                    rowConnId[token] = c.id
+                    rowFolderById[token] = folderId
+                    dragReorderOnlyById[token] = reorderOnly
+                }
             }
+        }
+
+        var shownAnyRow = false
+        for section in sections {
+            let items = section.connections.filter(keep)
+            switch section.kind {
+            case .favorites:
+                guard !items.isEmpty else { continue }
+                let head = sectionHeader("FAVORITES", accentStar: true, count: "\(items.count)", width: w, t: t)
+                head.frame.origin.y = y; doc.addSubview(head); y += z(28)
+                rows(items, folderId: nil, sectionTag: "fav", draggable: items.count >= 2, reorderOnly: true)
+                y += z(8); shownAnyRow = true
+
+            case let .folder(id, name):
+                let collapsed = store.collapsedFolderIds.contains(id)
+                let header = folderHeader(id: id, name: name, count: section.connections.count,
+                                          collapsed: collapsed, width: w, t: t)
+                let bandTop = y
+                header.frame.origin.y = y; doc.addSubview(header); y += z(28)
+                if !collapsed {
+                    let draggable = items.count >= 2 || bandCount >= 2
+                    rows(items, folderId: id, sectionTag: id, draggable: draggable, reorderOnly: false)
+                    shownAnyRow = shownAnyRow || !items.isEmpty
+                }
+                dropBands.append((folderId: id, top: bandTop, bottom: y, header: header))
+                y += z(8)
+
+            case .ungrouped:
+                if hasFolders {
+                    // A named catch-all section alongside the folders.
+                    let header = sectionHeader("UNGROUPED", accentStar: false, count: "\(section.connections.count)", width: w, t: t)
+                    let bandTop = y
+                    header.frame.origin.y = y; doc.addSubview(header); y += z(28)
+                    let draggable = items.count >= 2 || bandCount >= 2
+                    rows(items, folderId: nil, sectionTag: "ung", draggable: draggable, reorderOnly: false)
+                    dropBands.append((folderId: nil, top: bandTop, bottom: y, header: header))
+                    y += z(8)
+                } else {
+                    // No folders yet: a flat list, no header (the no-folders default, #82).
+                    rows(items, folderId: nil, sectionTag: "ung", draggable: items.count >= 2, reorderOnly: true)
+                    y += z(8)
+                }
+                shownAnyRow = shownAnyRow || !items.isEmpty
+            }
+        }
+
+        if !shownAnyRow, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // A live query that matched nothing — distinct from the no-connections state above.
+            let shown = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            place(emptyHint("No connections match “\(shown)”.", width: w, t: t))
         }
 
         doc.frame.size.height = max(y, minHeight)
@@ -331,14 +611,18 @@ final class ConnectionRailView: FlippedView {
         window?.makeFirstResponder(field)
     }
 
-    // MARK: Drag-to-reorder (within a section)
+    // MARK: Drag — reorder within a section, or move a connection across folders (#82)
 
-    private func beginDrag(_ id: String, event: NSEvent) {
-        guard let doc = listDoc, let row = rowsById[id],
-              let sectionIds = sectionIdsById[id], let top = sectionTopById[id] else { return }
-        draggingId = id
-        dragOrder = sectionIds
+    private func beginDrag(_ token: String, event: NSEvent) {
+        guard let doc = listDoc, let row = rowsById[token],
+              let sectionTokens = sectionTokensById[token], let top = sectionTopById[token] else { return }
+        draggingId = token
+        dragOrder = sectionTokens
         dragSectionTop = top
+        dragReorderOnly = dragReorderOnlyById[token] ?? false
+        draggingOriginFolderId = rowFolderById[token] ?? nil
+        dragTargetActive = false
+        dragTargetFolderId = nil
         let p = doc.convert(event.locationInWindow, from: nil)
         dragGrabDY = p.y - row.frame.origin.y
         doc.addSubview(row)                 // raise above siblings
@@ -351,38 +635,70 @@ final class ConnectionRailView: FlippedView {
     }
 
     private func updateDrag(event: NSEvent) {
-        guard let id = draggingId, let doc = listDoc, let row = rowsById[id],
-              let from = dragOrder.firstIndex(of: id) else { return }
+        guard let token = draggingId, let doc = listDoc, let row = rowsById[token] else { return }
         let n = dragOrder.count
         let h = z(42)
         let p = doc.convert(event.locationInWindow, from: nil)
-        let minY = dragSectionTop, maxY = dragSectionTop + CGFloat(n - 1) * h
-        let newTop = max(minY, min(maxY, p.y - dragGrabDY))
-        row.frame.origin.y = newTop
+        let withinOrigin = p.y >= dragSectionTop && p.y <= dragSectionTop + CGFloat(n) * h
 
-        var target = Int(((newTop + h / 2) - dragSectionTop) / h)
-        target = max(0, min(n - 1, target))
-        if target != from { dragOrder.insert(dragOrder.remove(at: from), at: target) }
-
-        // Reflow the non-dragged rows into their slots so the gap follows the cursor.
-        for (i, rid) in dragOrder.enumerated() where rid != id {
-            rowsById[rid]?.frame.origin.y = dragSectionTop + CGFloat(i) * h
+        if dragReorderOnly || withinOrigin {
+            // Reorder within the section (#79): clamp the row to the section's slots and reflow.
+            clearDropHighlight()
+            guard let from = dragOrder.firstIndex(of: token) else { return }
+            let minY = dragSectionTop, maxY = dragSectionTop + CGFloat(n - 1) * h
+            let newTop = max(minY, min(maxY, p.y - dragGrabDY))
+            row.frame.origin.y = newTop
+            var target = Int(((newTop + h / 2) - dragSectionTop) / h)
+            target = max(0, min(n - 1, target))
+            if target != from { dragOrder.insert(dragOrder.remove(at: from), at: target) }
+            for (i, rid) in dragOrder.enumerated() where rid != token {
+                rowsById[rid]?.frame.origin.y = dragSectionTop + CGFloat(i) * h
+            }
+        } else {
+            // Outside the origin section: the row follows the cursor and we hunt for a drop band on
+            // another folder / Ungrouped section to move into.
+            row.frame.origin.y = p.y - dragGrabDY
+            for (i, rid) in dragOrder.enumerated() where rid != token {
+                rowsById[rid]?.frame.origin.y = dragSectionTop + CGFloat(i) * h   // settle origin rows
+            }
+            if let band = dropBands.first(where: { $0.top <= p.y && p.y < $0.bottom && $0.folderId != draggingOriginFolderId }) {
+                if !dragTargetActive || dragTargetFolderId != band.folderId {
+                    clearDropHighlight()
+                    dragTargetActive = true
+                    dragTargetFolderId = band.folderId
+                    band.header.layer?.backgroundColor = store.theme.accentbg.cgColor
+                    dragHighlightedHeader = band.header
+                }
+            } else {
+                clearDropHighlight()
+            }
         }
     }
 
     private func endDrag() {
-        guard let id = draggingId else { return }
+        guard let token = draggingId else { return }
         draggingId = nil
-        // A move is a single element shifting from its old slot to its new one: report that as
-        // (original section order, from, to) and let the App layer persist it — the store update
-        // triggers the settling rebuild. A no-op (or a plain grip click) just settles the visuals.
-        if let original = sectionIdsById[id],
-           let from = original.firstIndex(of: id),
-           let to = dragOrder.firstIndex(of: id), from != to {
+        clearDropHighlight()
+        // A move across folders wins when the drop landed on another section's band; otherwise it's
+        // a within-section reorder (a single element shifting slots). Either way the App layer
+        // persists and the resulting store update triggers the settling rebuild; a no-op just settles.
+        if dragTargetActive, let connId = rowConnId[token] {
+            onMoveConnection?(connId, dragTargetFolderId)
+        } else if let original = sectionConnIdsById[token],
+                  let from = sectionTokensById[token]?.firstIndex(of: token),
+                  let to = dragOrder.firstIndex(of: token), from != to {
             onReorder?(original.compactMap(UUID.init(uuidString:)), from, to)
         } else {
             repopulateList()
         }
+        dragTargetActive = false
+        dragTargetFolderId = nil
+    }
+
+    private func clearDropHighlight() {
+        dragHighlightedHeader?.layer?.backgroundColor = nil
+        dragHighlightedHeader = nil
+        dragTargetActive = false
     }
 }
 
@@ -395,13 +711,28 @@ extension ConnectionRailView: NSTextFieldDelegate {
         repopulateList()
     }
 
-    /// Esc clears an active filter (and the field) instead of AppKit's default "revert" behavior.
+    /// Folder rename: Return commits, Esc cancels. Search field: Esc clears an active filter
+    /// instead of AppKit's default "revert" behavior.
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        if control === folderEditField {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)): commitFolderRename(); return true
+            case #selector(NSResponder.cancelOperation(_:)): cancelFolderRename(); return true
+            default: return false
+            }
+        }
         guard control === searchField, selector == #selector(NSResponder.cancelOperation(_:)),
               !(searchField?.stringValue.isEmpty ?? true) else { return false }
         searchField?.stringValue = ""
         searchQuery = ""
         repopulateList()
         return true
+    }
+
+    /// Clicking away (focus loss) commits a folder rename. Guarded by `editingFolderId` so the
+    /// commit-then-rebuild that clears the field can't re-enter. Mirrors `TerminalContainerView`.
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard editingFolderId != nil, (obj.object as? NSTextField) === folderEditField else { return }
+        commitFolderRename()
     }
 }

@@ -174,7 +174,15 @@ final class Store {
     /// Persisted connections (source of truth), loaded from the store at launch and mutated by
     /// the New-connection flow. The id of the connection the sheet is editing (nil = adding).
     var domainConnections: [Domain.Connection] = [] { didSet { notify() } }
+    /// Persisted user folders (source of truth), loaded from the store at launch beside
+    /// `domainConnections`. Their array order is their rail order; `Connection.folderId` ties a
+    /// connection to one of these (#82).
+    var domainFolders: [Domain.Folder] = [] { didSet { notify() } }
     var editingConnId: String?
+    /// Folder ids (uuid strings) whose rail section is collapsed. Persisted (the `prChecksCollapsed`
+    /// precedent) so the collapse survives relaunch; a toggle repaints the rail and saves. A stored
+    /// id whose folder no longer exists is simply ignored on render (#82).
+    var collapsedFolderIds: Set<String> = [] { didSet { if oldValue != collapsedFolderIds { changed() } } }
 
     /// How the center column splits the detail from the terminal. A discrete toggle (not a drag),
     /// so unlike `terminalHeight` it goes through `changed()` — it persists *and* notifies, which
@@ -223,9 +231,21 @@ final class Store {
 
     /// Presentation projections the rail/header read from.
     var connections: [Connection] { domainConnections.map(Connection.init(domain:)) }
-    var favorites: [Connection] { connections.filter { $0.isFavorite } }
-    var sshRemotes: [Connection] { connections.filter { $0.kind == .ssh } }
-    var folders: [Connection] { connections.filter { $0.kind == .folder } }
+
+    /// The rail's sections — Favorites (pinned), one per user folder (in order, empty folders
+    /// included as drop targets), then Ungrouped — via the pure `ConnectionGrouping` rule, mapped to
+    /// presentation models. Replaces the old type-based (SSH / local-folder) projections (#82).
+    var connectionSections: [ConnSection] {
+        ConnectionGrouping.sections(connections: domainConnections, folders: domainFolders).map { section in
+            let kind: ConnSection.Kind
+            switch section.kind {
+            case .favorites: kind = .favorites
+            case let .folder(folder): kind = .folder(id: folder.id.uuidString, name: folder.name)
+            case .ungrouped: kind = .ungrouped
+            }
+            return ConnSection(kind: kind, connections: section.connections.map(Connection.init(domain:)))
+        }
+    }
 
     var selectedConn: Connection {
         connections.first { $0.id == selectedConnId } ?? connections.first ?? .placeholder
@@ -341,7 +361,8 @@ final class Store {
             terminalFraction: Double(terminalFraction),
             terminalLeading: terminalLeading,
             uiZoomPercent: uiZoom.percent,
-            terminalBellBadge: terminalBellBadge)
+            terminalBellBadge: terminalBellBadge,
+            collapsedFolders: collapsedFolderIds.sorted())
         Task { await preferences.save(snapshot) }
     }
 
@@ -375,6 +396,7 @@ final class Store {
         terminalFraction = CGFloat(p.terminalFraction)
         terminalLeading = p.terminalLeading
         terminalBellBadge = p.terminalBellBadge
+        collapsedFolderIds = Set(p.collapsedFolders ?? [])
         // Seats the saved zoom: the didSet mirrors it into the `Controls` global via `setUIScale`
         // even now (it's not gated on `isLoading`), so the final `refresh()` below lays the whole
         // tree out at the restored scale and `syncTerminal` pushes the matching terminal font size.

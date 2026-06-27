@@ -23,6 +23,11 @@ final class SaveConnectionUseCaseTests: XCTestCase {
                 (orderedIDs.firstIndex(of: a.id) ?? .max) < (orderedIDs.firstIndex(of: b.id) ?? .max)
             }
         }
+        // Folders are unused by these connection-save tests; conform with no-ops.
+        func folders() -> [Folder] { [] }
+        func saveFolder(_ folder: Folder) {}
+        func deleteFolder(id: UUID) {}
+        func reorderFolders(_ orderedIDs: [UUID]) {}
     }
 
     func testValidNewDraftIsSavedWithFreshID() async throws {

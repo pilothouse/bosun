@@ -27,6 +27,11 @@ final class ReorderConnectionsUseCaseTests: XCTestCase {
                 (orderedIDs.firstIndex(of: a.id) ?? .max) < (orderedIDs.firstIndex(of: b.id) ?? .max)
             }
         }
+        // Folders are unused by these connection-reorder tests; conform with no-ops.
+        func folders() -> [Folder] { [] }
+        func saveFolder(_ folder: Folder) {}
+        func deleteFolder(id: UUID) {}
+        func reorderFolders(_ orderedIDs: [UUID]) {}
     }
 
     private func ssh(_ name: String) -> Connection {

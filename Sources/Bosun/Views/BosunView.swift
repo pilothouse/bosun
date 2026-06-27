@@ -124,6 +124,10 @@ final class BosunView: NSView {
         rail.onToggleFavorite = { [weak self] id in self?.toggleFavorite(id) }
         rail.onConnect = { [weak self] id in self?.connect(id) }
         rail.onReorder = { [weak self] ids, from, to in self?.reorderConnections(ids, from, to) }
+        rail.onCreateFolder = { [weak self] in self?.createFolder() }
+        rail.onRenameFolder = { [weak self] id, name in self?.renameFolder(id, name) }
+        rail.onDeleteFolder = { [weak self] id in self?.deleteFolder(id) }
+        rail.onMoveConnection = { [weak self] id, folderId in self?.moveConnection(id, folderId) }
 
         repoPanel.onSelectRepo = { [weak self] owner, name in self?.data.selectRepo(owner: owner, name: name) }
         repoPanel.onSelectOrg = { [weak self] id in self?.data.selectOrg(id: id) }
@@ -193,6 +197,85 @@ final class BosunView: NSView {
                                     kind: connection.kind, isFavorite: connection.isFavorite,
                                     customCommand: connection.customCommand)
         Task { _ = try? await save(draft) }
+    }
+
+    // MARK: Folder flow (#82)
+
+    /// Create a folder with a de-duplicated default name, optimistically show it, persist it, then
+    /// drop the user straight into inline rename of its header (Finder-style).
+    private func createFolder() {
+        let base = "New Folder"
+        let existing = Set(store.domainFolders.map(\.name))
+        var name = base
+        var n = 2
+        while existing.contains(name) { name = "\(base) \(n)"; n += 1 }
+        let folder = Domain.Folder(id: UUID(), name: name)
+        store.domainFolders.append(folder)   // optimistic → rail rebuild
+        let save = connections.saveFolder
+        Task { _ = try? await save(FolderDraft(id: folder.id, name: name)) }
+        rail.beginRenamingFolder(folder.id.uuidString)
+    }
+
+    /// Commit an inline folder rename. Empty input is ignored (the previous name stays); a no-op
+    /// change writes nothing. Optimistic store update first, best-effort persist after.
+    private func renameFolder(_ id: String, _ name: String) {
+        guard !name.isEmpty, let uuid = UUID(uuidString: id),
+              let idx = store.domainFolders.firstIndex(where: { $0.id == uuid }),
+              store.domainFolders[idx].name != name else { return }
+        var folder = store.domainFolders[idx]
+        folder.name = name
+        store.domainFolders[idx] = folder
+        let save = connections.saveFolder
+        Task { _ = try? await save(FolderDraft(id: uuid, name: name)) }
+    }
+
+    /// Delete a folder. Per the confirmed behavior (overriding the issue's move-to-Ungrouped),
+    /// this cascades: an `NSAlert` warns that the folder's connections go too, and on confirm both
+    /// the folder and its members are removed. A no-member folder still confirms (it's a delete).
+    private func deleteFolder(_ id: String) {
+        guard let uuid = UUID(uuidString: id),
+              let folder = store.domainFolders.first(where: { $0.id == uuid }) else { return }
+        let members = store.domainConnections.filter { $0.folderId == uuid }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete folder “\(folder.name)”?"
+        if members.isEmpty {
+            alert.informativeText = "This folder is empty. This cannot be undone."
+        } else {
+            let n = members.count
+            alert.informativeText =
+                "This will also delete its \(n) connection\(n == 1 ? "" : "s"). This cannot be undone."
+        }
+        alert.addButton(withTitle: "Delete")   // first button = default (Return)
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        // Optimistic cascade: drop the members and the folder, reconcile a dangling selection.
+        let memberIds = Set(members.map(\.id))
+        store.domainConnections.removeAll { memberIds.contains($0.id) }
+        store.domainFolders.removeAll { $0.id == uuid }
+        store.collapsedFolderIds.remove(id)
+        if let selected = UUID(uuidString: store.selectedConnId), memberIds.contains(selected) {
+            store.selectedConnId = store.domainConnections.first?.id.uuidString ?? ""
+        }
+        let removeFolder = connections.removeFolder
+        Task { _ = try? await removeFolder(id: uuid) }
+    }
+
+    /// Move a connection into a folder (or out to Ungrouped with `folderId == nil`), from a drag or
+    /// the row's "Move to folder…" menu. Optimistic `folderId` update first, persist after — mirrors
+    /// `toggleFavorite`.
+    private func moveConnection(_ id: String, _ folderId: String?) {
+        guard let uuid = UUID(uuidString: id),
+              let idx = store.domainConnections.firstIndex(where: { $0.id == uuid }) else { return }
+        let target = folderId.flatMap { UUID(uuidString: $0) }
+        guard store.domainConnections[idx].folderId != target else { return }
+        var connection = store.domainConnections[idx]
+        connection.folderId = target
+        store.domainConnections[idx] = connection   // optimistic → rail rebuild
+        let move = connections.moveToFolder
+        Task { try? await move(connectionId: uuid, folderId: target) }
     }
 
     private func applyTheme() {

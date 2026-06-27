@@ -17,13 +17,18 @@ public struct Connection: Sendable, Equatable, Identifiable, Codable {
     /// An optional command run after connecting (SSH only today, e.g. `tmux new -n dev`).
     /// Synthesized `Codable` decodes a missing key as `nil`, so older stores load unchanged.
     public var customCommand: String?
+    /// The user folder this connection belongs to, or `nil` when ungrouped. Like `customCommand`,
+    /// a missing key decodes to `nil`, so an existing `connections.json` (written before folders)
+    /// loads with every connection ungrouped — the folders migration. See `ConnectionGrouping`.
+    public var folderId: UUID?
 
     public init(id: UUID, name: String, kind: ConnectionKind, isFavorite: Bool = false,
-                customCommand: String? = nil) {
+                customCommand: String? = nil, folderId: UUID? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
         self.isFavorite = isFavorite
         self.customCommand = customCommand
+        self.folderId = folderId
     }
 }

@@ -85,6 +85,10 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// rings the bell or posts a desktop notification. `true` (opt-out) by default — the active tab
     /// never flags; see `TerminalBellPolicy` (#74).
     public var terminalBellBadge: Bool
+    /// The ids (`Folder.id` uuid strings) of connection-rail folders the user has collapsed, stored
+    /// as a sorted array (a `Set` in memory). `nil` means never customized — every folder expanded.
+    /// A stored id whose folder no longer exists is simply ignored on render. See #82.
+    public var collapsedFolders: [String]?
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -138,7 +142,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         terminalFraction: Double = SplitLayout.defaultFraction,
         terminalLeading: Bool = false,
         uiZoomPercent: Int = 100,
-        terminalBellBadge: Bool = true
+        terminalBellBadge: Bool = true,
+        collapsedFolders: [String]? = nil
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -167,6 +172,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.terminalLeading = terminalLeading
         self.uiZoomPercent = uiZoomPercent
         self.terminalBellBadge = terminalBellBadge
+        self.collapsedFolders = collapsedFolders
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -204,7 +210,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             terminalFraction: try container.decodeIfPresent(Double.self, forKey: .terminalFraction) ?? fallback.terminalFraction,
             terminalLeading: try container.decodeIfPresent(Bool.self, forKey: .terminalLeading) ?? fallback.terminalLeading,
             uiZoomPercent: try container.decodeIfPresent(Int.self, forKey: .uiZoomPercent) ?? fallback.uiZoomPercent,
-            terminalBellBadge: try container.decodeIfPresent(Bool.self, forKey: .terminalBellBadge) ?? fallback.terminalBellBadge
+            terminalBellBadge: try container.decodeIfPresent(Bool.self, forKey: .terminalBellBadge) ?? fallback.terminalBellBadge,
+            collapsedFolders: try container.decodeIfPresent([String].self, forKey: .collapsedFolders) ?? fallback.collapsedFolders
         )
     }
 

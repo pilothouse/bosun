@@ -19,10 +19,12 @@ public enum RunEvent: Sendable {
     case rejected(runID: UUID, reason: String)
 }
 
-/// Persistence seam for saved connections. The use cases talk to this port; a concrete
-/// adapter (a JSON file, later a database) lives in Infrastructure and is wired in
-/// `CompositionRoot`. `save` upserts by id; `reorder` sets the persisted order — the stored
-/// order is the rail's display order, so a drag-reorder writes it through here.
+/// Persistence seam for saved connections and the user folders that group them. The use cases talk
+/// to this port; a concrete adapter (a JSON file, later a database) lives in Infrastructure and is
+/// wired in `CompositionRoot`. `save` upserts by id; `reorder` sets the persisted order — the stored
+/// order is the rail's display order, so a drag-reorder writes it through here. Folders are a
+/// parallel collection on the same store (so they persist in one file alongside connections);
+/// `Connection.folderId` ties a connection to a folder.
 public protocol ConnectionStore: Sendable {
     func all() async throws -> [Connection]
     func save(_ connection: Connection) async throws
@@ -30,6 +32,16 @@ public protocol ConnectionStore: Sendable {
     /// Re-sort the stored connections into `orderedIDs`. Ids not present are ignored; any stored
     /// connection the list omits keeps its current relative position at the end.
     func reorder(_ orderedIDs: [UUID]) async throws
+    /// The user folders, in their persisted (display) order.
+    func folders() async throws -> [Folder]
+    /// Upsert a folder by id.
+    func saveFolder(_ folder: Folder) async throws
+    /// Remove a folder record. Member connections are *not* touched here — the cascade (deleting a
+    /// folder's connections) is the use case's job, so the port stays a dumb persistence seam.
+    func deleteFolder(id: UUID) async throws
+    /// Re-sort the stored folders into `orderedIDs`, with the same omitted-keeps-its-place rule as
+    /// `reorder`.
+    func reorderFolders(_ orderedIDs: [UUID]) async throws
 }
 
 /// Persistence seam for UI preferences. The App layer loads once at launch and saves a

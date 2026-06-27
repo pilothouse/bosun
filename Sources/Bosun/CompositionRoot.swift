@@ -11,6 +11,10 @@ struct ConnectionServices {
     let save: SaveConnectionUseCase
     let remove: RemoveConnectionUseCase
     let reorder: ReorderConnectionsUseCase
+    let saveFolder: SaveFolderUseCase
+    let removeFolder: RemoveFolderUseCase
+    let moveToFolder: MoveConnectionToFolderUseCase
+    let reorderFolders: ReorderFoldersUseCase
 }
 
 /// The GitHub-auth seam, bundled so the App layer gets a ready-made sign-in use case plus the
@@ -45,7 +49,11 @@ enum CompositionRoot {
             store: store,
             save: SaveConnectionUseCase(store: store),
             remove: RemoveConnectionUseCase(store: store),
-            reorder: ReorderConnectionsUseCase(store: store)
+            reorder: ReorderConnectionsUseCase(store: store),
+            saveFolder: SaveFolderUseCase(store: store),
+            removeFolder: RemoveFolderUseCase(store: store),
+            moveToFolder: MoveConnectionToFolderUseCase(store: store),
+            reorderFolders: ReorderFoldersUseCase(store: store)
         )
     }
 
