@@ -70,4 +70,14 @@ public enum SplitLayout {
         case .horizontal: return terminalLeading ? 1 : -1
         }
     }
+
+    /// The seam's coordinate along the split axis (points from the leading edge), where the divider
+    /// grip is centered. The terminal occupies the leading edge when `terminalLeading`, so the seam
+    /// is at its far edge; otherwise the terminal is trailing and the seam sits one terminal-extent
+    /// in from the trailing edge. The view straddles this line with a fat hit-zone so the resize
+    /// target is centered on the seam rather than carved off one pane (#84). The `extent` is the
+    /// terminal's already-clamped size along the axis (`clampExtent` / `terminalExtent`).
+    public static func seamPosition(total: Double, terminalExtent: Double, terminalLeading: Bool) -> Double {
+        terminalLeading ? terminalExtent : total - terminalExtent
+    }
 }

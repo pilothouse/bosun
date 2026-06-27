@@ -118,4 +118,32 @@ final class SplitLayoutTests: XCTestCase {
         XCTAssertEqual(SplitLayout.dragGrowsTerminal(axis: .vertical, terminalLeading: true), -1)
         XCTAssertEqual(SplitLayout.dragGrowsTerminal(axis: .horizontal, terminalLeading: true), 1)
     }
+
+    // MARK: seam position (#84)
+    //
+    // The seam is the divider line where the two panes meet, measured from the leading edge. The
+    // view centers a fat hit-zone on this coordinate so the resize target straddles the seam rather
+    // than being carved off one pane.
+
+    func testSeamIsAtTheTerminalsFarEdgeWhenLeading() {
+        // Terminal leading (top/left): it occupies [0, extent], so the seam sits at `extent`.
+        XCTAssertEqual(SplitLayout.seamPosition(total: 1000, terminalExtent: 300, terminalLeading: true),
+                       300, accuracy: 1e-9)
+    }
+
+    func testSeamIsOneExtentFromTheTrailingEdgeWhenTrailing() {
+        // Terminal trailing (bottom/right, the default): the terminal occupies [total-extent, total],
+        // so the seam sits one terminal-extent in from the trailing edge.
+        XCTAssertEqual(SplitLayout.seamPosition(total: 1000, terminalExtent: 300, terminalLeading: false),
+                       700, accuracy: 1e-9)
+    }
+
+    func testSeamIsSymmetricAcrossThePaneOrder() {
+        // Flipping the pane order mirrors the seam about the container's midpoint, so the two
+        // positions for a given extent always sum to the container size.
+        let total = 1340.0, extent = 420.0
+        let leading = SplitLayout.seamPosition(total: total, terminalExtent: extent, terminalLeading: true)
+        let trailing = SplitLayout.seamPosition(total: total, terminalExtent: extent, terminalLeading: false)
+        XCTAssertEqual(leading + trailing, total, accuracy: 1e-9)
+    }
 }

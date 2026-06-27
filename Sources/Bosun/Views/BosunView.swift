@@ -2,12 +2,44 @@ import AppKit
 import Application
 import Domain
 
+/// Drag-to-resize grip centered on the detail↔terminal seam. It straddles the boundary with a fat
+/// hit-zone that sits above *both* panes, so the resize target is centered on the seam rather than
+/// carved off one pane and a press from either side starts a drag (#84). `onDrag` reports the signed
+/// move along the split axis (window points), which the container turns into a height or a fraction.
+final class DragHandle: FlippedView {
+    /// Which edge this grip lives on — set by the container's `layout()` from `store.splitAxis`.
+    var axis: Domain.SplitAxis = .vertical
+    var onBegin: (() -> Void)?
+    var onDrag: ((CGFloat) -> Void)?
+    var onEnd: (() -> Void)?
+    private var start: NSPoint = .zero
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: axis == .vertical ? .resizeUpDown : .resizeLeftRight)
+    }
+    override func mouseDown(with e: NSEvent) { start = e.locationInWindow; onBegin?() }
+    override func mouseDragged(with e: NSEvent) {
+        let p = e.locationInWindow
+        onDrag?(axis == .vertical ? p.y - start.y : p.x - start.x)
+    }
+    override func mouseUp(with e: NSEvent) { onEnd?() }
+}
+
 /// Center column: scrollable detail + docked terminal. Connection name/type live in the
 /// macOS titlebar (see TitlebarView), so the center column carries no header of its own.
 final class CenterColumnView: FlippedView {
     let store: Store
     let detail: DetailView
     let terminal: TerminalContainerView
+
+    /// The resize grip lives here, on the split container, not inside the terminal — only a sibling
+    /// of both panes can host a hit-zone that straddles the seam and catches a press that lands on
+    /// the detail side (#84). Drag state is captured at `onBegin` and held for the whole gesture so
+    /// the direction can't flip mid-drag (#65).
+    private let handle = DragHandle()
+    private var startHeight: CGFloat = 240
+    private var startFraction: CGFloat = CGFloat(SplitLayout.defaultFraction)
+    private var dragSign: CGFloat = 1
 
     init(store: Store, ghostty: GhosttyApp) {
         self.store = store
@@ -20,7 +52,39 @@ final class CenterColumnView: FlippedView {
         wantsLayer = true
         addSubview(detail)
         addSubview(terminal)
+        addSubview(handle)   // last → frontmost, so its seam-centered hit-zone wins hit-testing (#84)
         terminal.onRelayout = { [weak self] in self?.needsLayout = true }
+
+        handle.onBegin = { [weak self] in
+            guard let self else { return }
+            self.startHeight = self.store.terminalHeight
+            self.startFraction = self.store.terminalFraction
+            // The sign that turns the drag into "grow the terminal" flips with the pane order (see
+            // SplitLayout). Capture it once for the whole gesture so the direction can't flip
+            // mid-drag (#65).
+            self.dragSign = CGFloat(SplitLayout.dragGrowsTerminal(axis: self.store.splitAxis,
+                                                                  terminalLeading: self.store.terminalLeading))
+        }
+        handle.onDrag = { [weak self] delta in
+            guard let self else { return }
+            let sign = self.dragSign
+            switch self.store.splitAxis {
+            case .vertical:
+                // Container-relative: the terminal grows until the detail pane hits its floor, so a
+                // tall display isn't capped by a fixed ceiling (#65).
+                let total = Double(self.bounds.height)
+                self.store.terminalHeight = CGFloat(SplitLayout.clampExtent(
+                    Double(self.startHeight + sign * delta), total: total))
+            case .horizontal:
+                // Convert the pixel move to a fraction of the whole column width.
+                let total = Double(self.bounds.width)
+                let fraction = Double(self.startFraction) + Double(sign * delta) / max(1, total)
+                self.store.terminalFraction = CGFloat(SplitLayout.clampFraction(fraction, total: total))
+            }
+            self.needsLayout = true
+        }
+        // Persist the final size once the drag ends, not on every frame.
+        handle.onEnd = { [weak self] in self?.store.persist() }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -33,15 +97,17 @@ final class CenterColumnView: FlippedView {
         let w = bounds.width, h = bounds.height
 
         // `terminalLeading` puts the terminal first (top/left) instead of the default trailing
-        // (bottom/right); the detail pane takes the remaining space. The drag grip lives on the
-        // shared border either way (see TerminalContainerView).
+        // (bottom/right); the detail pane takes the remaining space. The drag grip straddles the
+        // shared seam either way (positioned below).
         let leading = store.terminalLeading
+        var terminalExtent: CGFloat = 0
         switch store.splitAxis {
         case .vertical:
             // Stacked: the terminal is sized in pixels and the detail pane fills the rest. The same
             // Domain clamp the drag uses keeps both panes above their floor, so neither collapses to
             // zero and the terminal isn't capped on a tall display (#65).
             let termH = CGFloat(SplitLayout.clampExtent(Double(store.terminalHeight), total: Double(h)))
+            terminalExtent = termH
             let termY = leading ? 0 : h - termH
             let detailY = leading ? termH : 0
             terminal.frame = NSRect(x: 0, y: termY, width: w, height: termH)
@@ -50,11 +116,30 @@ final class CenterColumnView: FlippedView {
             // Side by side: the terminal is sized as a fraction of the width (clamped by SplitLayout)
             // so it tracks the column's width as the sidebar/orgs panel collapse.
             let termW = CGFloat(SplitLayout.terminalExtent(total: Double(w), fraction: Double(store.terminalFraction)))
+            terminalExtent = termW
             let termX = leading ? 0 : w - termW
             let detailX = leading ? termW : 0
             terminal.frame = NSRect(x: termX, y: 0, width: termW, height: h)
             detail.frame = NSRect(x: detailX, y: 0, width: max(0, w - termW), height: h)
         }
+
+        // The drag grip: a fat, seam-centered hit-zone straddling the detail↔terminal boundary, above
+        // both panes, so a press near the seam starts a drag from either side (#84). The visible pill
+        // stays as thin as before and centered on the seam; the wider catch zone is invisible.
+        let gripT: CGFloat = z(14)
+        let vertical = store.splitAxis == .vertical
+        handle.axis = store.splitAxis
+        let seam = CGFloat(SplitLayout.seamPosition(total: Double(vertical ? h : w),
+                                                    terminalExtent: Double(terminalExtent),
+                                                    terminalLeading: leading))
+        handle.frame = vertical ? NSRect(x: 0, y: seam - gripT / 2, width: w, height: gripT)
+                                : NSRect(x: seam - gripT / 2, y: 0, width: gripT, height: h)
+        window?.invalidateCursorRects(for: handle)   // re-query the cursor rect against the new frame
+        let grip = BoxView(bg: t.txt5, radius: z(1.5))
+        grip.frame = vertical ? NSRect(x: (w - z(34)) / 2, y: (gripT - z(3)) / 2, width: z(34), height: z(3))
+                              : NSRect(x: (gripT - z(3)) / 2, y: (h - z(34)) / 2, width: z(3), height: z(34))
+        handle.subviews.forEach { $0.removeFromSuperview() }
+        handle.addSubview(grip)
 
         detail.apply()
         terminal.apply()

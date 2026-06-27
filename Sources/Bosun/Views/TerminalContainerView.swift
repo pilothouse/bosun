@@ -1,28 +1,6 @@
 import AppKit
 import Domain
 
-/// Drag-to-resize grip between the detail pane and the terminal. Sits on the terminal's top edge
-/// in a vertical split and its left edge in a horizontal one; `onDrag` reports the signed move
-/// along that axis (window points), which the container turns into a height or a width fraction.
-final class DragHandle: FlippedView {
-    /// Which edge this grip lives on — set by the container's `layout()` from `store.splitAxis`.
-    var axis: Domain.SplitAxis = .vertical
-    var onBegin: (() -> Void)?
-    var onDrag: ((CGFloat) -> Void)?
-    var onEnd: (() -> Void)?
-    private var start: NSPoint = .zero
-
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: axis == .vertical ? .resizeUpDown : .resizeLeftRight)
-    }
-    override func mouseDown(with e: NSEvent) { start = e.locationInWindow; onBegin?() }
-    override func mouseDragged(with e: NSEvent) {
-        let p = e.locationInWindow
-        onDrag?(axis == .vertical ? p.y - start.y : p.x - start.x)
-    }
-    override func mouseUp(with e: NSEvent) { onEnd?() }
-}
-
 /// What a tab represents, so it can be reopened on relaunch: a plain local shell, or a saved
 /// connection (keyed by `Connection.id`, re-resolved at restore). See `TerminalTabState`.
 enum TabOrigin: Equatable {
@@ -57,10 +35,11 @@ final class TerminalSession {
     var surfaceView: GhosttySurfaceView? { view as? GhosttySurfaceView }
 }
 
-/// Terminal dock: drag handle + live tab strip + the active libghostty surface. Order and active
-/// selection are delegated to the pure `TerminalTabs` model (unit-tested in Domain); this view
-/// only owns the id→surface mapping and the AppKit chrome. Closing the last tab opens a fresh
-/// local one so the dock is never empty and `exit` never quits the app.
+/// Terminal dock: live tab strip + the active libghostty surface. Order and active selection are
+/// delegated to the pure `TerminalTabs` model (unit-tested in Domain); this view only owns the
+/// id→surface mapping and the AppKit chrome. The detail↔terminal resize grip is owned by the split
+/// container (`CenterColumnView`), not this view (#84). Closing the last tab opens a fresh local one
+/// so the dock is never empty and `exit` never quits the app.
 final class TerminalContainerView: FlippedView {
     let store: Store
     private let ghostty: GhosttyApp
@@ -93,14 +72,6 @@ final class TerminalContainerView: FlippedView {
     /// retitle the window (#73). Lighter than `onRelayout` — it never triggers a parent relayout.
     var onActiveTitleChange: (() -> Void)?
 
-    private let handle = DragHandle()
-    private var startHeight: CGFloat = 240
-    private var startFraction: CGFloat = CGFloat(Domain.SplitLayout.defaultFraction)
-    /// The grow/shrink sign, captured once at `onBegin` and held for the whole gesture. Recomputing
-    /// it per frame let the drag direction flip mid-gesture (#65); the pane order can't change while
-    /// a drag is in flight, so capturing once is both correct and steadier.
-    private var dragSign: CGFloat = 1
-
     /// The theme key and zoom level whose config was last pushed to libghostty. `syncTerminal` runs
     /// on every store notify (selection, data, …), so these let it skip the config rebuild unless the
     /// theme or the UI zoom actually changed. Seeded to the defaults the first surface is created
@@ -114,37 +85,6 @@ final class TerminalContainerView: FlippedView {
         self.available = ghostty.availability.isReady
         super.init(frame: .zero)
         wantsLayer = true
-        addSubview(handle)
-        handle.onBegin = { [weak self] in
-            guard let self else { return }
-            self.startHeight = self.store.terminalHeight
-            self.startFraction = self.store.terminalFraction
-            // The grip sits on the terminal edge facing the detail pane, so the sign that turns the
-            // drag into "grow the terminal" flips with the pane order (see SplitLayout). Capture it
-            // once for the whole gesture so the direction can't flip mid-drag (#65).
-            self.dragSign = CGFloat(Domain.SplitLayout.dragGrowsTerminal(axis: self.store.splitAxis,
-                                                                         terminalLeading: self.store.terminalLeading))
-        }
-        handle.onDrag = { [weak self] delta in
-            guard let self else { return }
-            let sign = self.dragSign
-            switch self.store.splitAxis {
-            case .vertical:
-                // Container-relative: the terminal grows until the detail pane hits its floor, so a
-                // tall display isn't capped by a fixed ceiling (#65).
-                let total = Double(self.superview?.bounds.height ?? self.bounds.height)
-                self.store.terminalHeight = CGFloat(Domain.SplitLayout.clampExtent(
-                    Double(self.startHeight + sign * delta), total: total))
-            case .horizontal:
-                // Convert the pixel move to a fraction of the whole column width.
-                let total = Double(self.superview?.bounds.width ?? self.bounds.width)
-                let fraction = Double(self.startFraction) + Double(sign * delta) / max(1, total)
-                self.store.terminalFraction = CGFloat(Domain.SplitLayout.clampFraction(fraction, total: total))
-            }
-            self.onRelayout?()
-        }
-        // Persist the final size once the drag ends, not on every frame.
-        handle.onEnd = { [weak self] in self?.store.persist() }
 
         // Seed the dock with one session. When libghostty is down, that's the error placeholder.
         // Persisted tabs (if any) replace this seed once connections load, via `restoreTabs`.
@@ -511,45 +451,17 @@ final class TerminalContainerView: FlippedView {
         // below removes the old bar (and its scroll view) — mirrors `RepoPanelView`'s `priorListOffset`.
         let priorTabOffset = tabScroll?.contentView.bounds.origin
 
-        // Keep the handle + every session view; rebuild only the chrome (strip, status, grip).
-        let keep = Set(views.values.map { ObjectIdentifier($0.view) }).union([ObjectIdentifier(handle)])
+        // Keep every session view; rebuild only the chrome (strip, status). The resize grip is no
+        // longer a child here — it lives on the split container so it can straddle the seam (#84).
+        let keep = Set(views.values.map { ObjectIdentifier($0.view) })
         subviews.filter { !keep.contains(ObjectIdentifier($0)) }.forEach { $0.removeFromSuperview() }
         for session in views.values where session.view.superview !== self {
-            addSubview(session.view, positioned: .below, relativeTo: handle)
+            addSubview(session.view)   // the tab bar is re-added every layout, so it stays above the surfaces
         }
 
-        // The drag grip sits on whichever terminal edge faces the detail pane — that depends on both
-        // the axis and which side the terminal is on. `content` is everything left for the tab bar +
-        // surface once the grip's `gripT` thickness is carved off that edge.
-        let gripT: CGFloat = z(7)
-        let vertical = store.splitAxis == .vertical
-        let leading = store.terminalLeading
-        handle.axis = store.splitAxis
-        window?.invalidateCursorRects(for: handle)
-
-        var content = NSRect(x: 0, y: 0, width: w, height: h)
-        if vertical {
-            if leading {   // terminal on top → grip on its bottom edge
-                handle.frame = NSRect(x: 0, y: h - gripT, width: w, height: gripT)
-                content = NSRect(x: 0, y: 0, width: w, height: h - gripT)
-            } else {       // terminal on bottom → grip on its top edge
-                handle.frame = NSRect(x: 0, y: 0, width: w, height: gripT)
-                content = NSRect(x: 0, y: gripT, width: w, height: h - gripT)
-            }
-        } else {
-            if leading {   // terminal on left → grip on its right edge
-                handle.frame = NSRect(x: w - gripT, y: 0, width: gripT, height: h)
-                content = NSRect(x: 0, y: 0, width: w - gripT, height: h)
-            } else {       // terminal on right → grip on its left edge
-                handle.frame = NSRect(x: 0, y: 0, width: gripT, height: h)
-                content = NSRect(x: gripT, y: 0, width: w - gripT, height: h)
-            }
-        }
-        let grip = BoxView(bg: t.txt5, radius: z(1.5))
-        grip.frame = vertical ? NSRect(x: (w - z(34)) / 2, y: z(2), width: z(34), height: z(3))
-                              : NSRect(x: z(2), y: (h - z(34)) / 2, width: z(3), height: z(34))
-        handle.subviews.forEach { $0.removeFromSuperview() }
-        handle.addSubview(grip)
+        // The dock fills its whole frame: tab bar across the top, active surface below. The detail↔
+        // terminal divider is owned and drawn by `CenterColumnView` (#84), not carved off here.
+        let content = NSRect(x: 0, y: 0, width: w, height: h)
 
         let barH: CGFloat = z(32)
         layoutTabBar(x: content.minX, w: content.width, y: content.minY, barH: barH, priorOffset: priorTabOffset)
