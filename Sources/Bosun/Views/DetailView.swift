@@ -320,6 +320,20 @@ final class DetailView: FlippedView {
         }
         y += z(30)
 
+        // Metadata section: labels, assignees, milestone. Each row renders only when it has
+        // content, so an item with no metadata looks exactly as before (the body card follows
+        // straight after the author row). The item's *state* is already shown by the type badge
+        // above. Built from the reusable `metaRow`/chip helpers — the PR-reviewers feature (#70)
+        // adds its row through the same calls.
+        y = metaRow("LABELS", it.labels.map { labelPill($0, color: it.labelColors[$0], t: t) },
+                    into: doc, t: t, x: padX, y: y, width: cw)
+        y = metaRow("ASSIGNEES", it.assignees.map { assigneeChip($0, t: t) },
+                    into: doc, t: t, x: padX, y: y, width: cw)
+        if let milestone = it.milestone, !milestone.isEmpty {
+            y = metaRow("MILESTONE", [milestonePill(milestone, t: t)],
+                        into: doc, t: t, x: padX, y: y, width: cw)
+        }
+
         // Body card.
         let bodyText = markdownView(it.body, baseFont: sys(13.5), width: cw - z(34))
         var cardH = bodyText.frame.height + z(30)
@@ -527,6 +541,57 @@ final class DetailView: FlippedView {
             scroll.reflectScrolledClipView(scroll.contentView)
         }
         lastScrollItemId = it.id
+    }
+
+    // MARK: Metadata section (reusable)
+
+    /// Lay out one metadata row — an uppercase caption in a fixed left gutter, then a left-to-right
+    /// flow of already-sized value views that wraps within `width` — into `doc` starting at `y`.
+    /// Returns the new `y`; unchanged when `values` is empty, so callers skip empty rows for free.
+    /// The reusable primitive behind the LABELS/ASSIGNEES/MILESTONE rows; the PR-reviewers feature
+    /// renders its row through the same call.
+    private func metaRow(_ caption: String, _ values: [NSView], into doc: NSView,
+                         t: Theme, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        guard !values.isEmpty else { return y }
+        let capW = z(80), gap = z(6), lineGap = z(7)
+        let cap = label(caption, mono(9.5, .semibold), t.txt4)
+        cap.frame = NSRect(x: x, y: y + z(4), width: capW - z(8), height: z(13)); doc.addSubview(cap)
+        let startX = x + capW, maxX = x + width
+        var cx = startX, cy = y, lineH: CGFloat = 0
+        for v in values {
+            if cx > startX && cx + v.frame.width > maxX { cx = startX; cy += lineH + lineGap; lineH = 0 }
+            v.frame.origin = NSPoint(x: cx, y: cy); doc.addSubview(v)
+            cx += v.frame.width + gap; lineH = max(lineH, v.frame.height)
+        }
+        return cy + lineH + z(11)
+    }
+
+    /// A label pill: GitHub-tinted (the label's color on a faint wash + matching border, mirroring
+    /// the check/file icon chips) when a color is known, else a neutral theme chip.
+    private func labelPill(_ name: String, color: NSColor?, t: Theme) -> BoxView {
+        if let color {
+            return badge(name, fg: color, bg: .hexA(UInt32(color.toHex()), 0.15), border: color, mono: false)
+        }
+        return badge(name, fg: t.txt3, bg: t.hover, border: t.cardbr, mono: false)
+    }
+
+    /// The milestone shown as a neutral chip with a diamond glyph.
+    private func milestonePill(_ title: String, t: Theme) -> BoxView {
+        badge("◇ \(title)", fg: t.txt3, bg: t.hover, border: t.cardbr, mono: false)
+    }
+
+    /// An assignee chip: a small avatar (reusing `AvatarView`/`AvatarLoader`) followed by the login,
+    /// sized to fit so `metaRow` can flow it like any other value view.
+    private func assigneeChip(_ a: Assignee, t: Theme) -> NSView {
+        let nameW = fitW(a.login, sys(11.5))
+        let chip = FlippedView(frame: NSRect(x: 0, y: 0, width: z(22) + nameW, height: z(20)))
+        let av = AvatarView(size: z(18), cornerRadius: z(9), url: a.avatarURL,
+                            placeholderColor: a.color, initials: a.initials,
+                            initialsFont: sys(8, .bold), initialsColor: .hex(0x0d0f13))
+        av.frame.origin = NSPoint(x: 0, y: z(1)); chip.addSubview(av)
+        let name = label(a.login, sys(11.5), t.txt2)
+        name.frame = NSRect(x: z(22), y: z(3), width: nameW, height: z(14)); chip.addSubview(name)
+        return chip
     }
 
     /// Post the current composer text. Shared by the Send button and the Return key. No-ops while a

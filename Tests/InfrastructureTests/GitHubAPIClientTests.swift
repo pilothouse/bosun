@@ -101,6 +101,12 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(first.number, 482)
         XCTAssertEqual(first.state, .open)
         XCTAssertEqual(first.labels, ["bug", "p1"])
+        // The list fetch carries label colors, assignees and milestone too, so the instantly-shown
+        // lead row already has the full metadata section (colored pills, no body jump when the
+        // detail lands). Only labels with a color appear in the map.
+        XCTAssertEqual(first.labelColors, ["bug": "d73a4a"])
+        XCTAssertEqual(first.assignees?.map(\.login), ["alex"])
+        XCTAssertEqual(first.milestone, "v2.0")
         XCTAssertEqual(first.author.login, "maya")
         XCTAssertEqual(first.repositoryNameWithOwner, "acme-corp/api-gateway")
         // tasks are derived from the markdown body by the Domain rule.
@@ -267,6 +273,23 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(files.map(\.change), [.modified, .added, .removed, .renamed])  // DELETED → removed
         XCTAssertEqual(files[0].additions, 80)
         XCTAssertEqual(files[0].deletions, 10)
+    }
+
+    func testItemDetailMapsAssigneesMilestoneAndLabelColors() async throws {
+        StubURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            if path.contains("/graphql") { return (self.ok(request), try fixture("item-detail")) }
+            return (self.ok(request), try fixture("comments"))
+        }
+        let item = try await makeClient().itemDetail(owner: "acme-corp", repo: "api-gateway", number: 482)
+
+        XCTAssertEqual(item.assignees?.map(\.login), ["alex", "sam"])
+        XCTAssertEqual(item.assignees?.first?.avatarURL?.host, "avatars.githubusercontent.com")
+        XCTAssertEqual(item.milestone, "v2.0")
+        // Labels stay name-only; colors ride a parallel name→hex map, populated only for the
+        // labels that carry one (the colorless "p1" is absent from the map).
+        XCTAssertEqual(item.labels, ["bug", "p1"])
+        XCTAssertEqual(item.labelColors, ["bug": "d73a4a"])
     }
 
     func testCommentsPaginationFollowsLinkHeader() async throws {

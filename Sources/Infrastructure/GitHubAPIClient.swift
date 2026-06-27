@@ -470,13 +470,18 @@ struct ItemNode: Decodable {
     let commits: CommitConnection?
     let files: FilesConnection?
     let parent: ParentRef?
+    let assignees: ActorConnection?
+    let milestone: MilestoneRef?
 
     /// The sub-issue parent, when this issue is one — only its `number` is needed to group locally.
     struct ParentRef: Decodable { let number: Int }
+    /// The item's milestone — only its `title` is surfaced.
+    struct MilestoneRef: Decodable { let title: String }
 
     enum CodingKeys: String, CodingKey {
         case id, number, title, body, createdAt, state, author, labels
         case isDraft, additions, deletions, headRefName, commits, files, parent
+        case assignees, milestone
         case typeName = "__typename"
     }
 
@@ -501,21 +506,19 @@ struct ItemNode: Decodable {
             labels: labels?.nodes.map(\.name) ?? [], isDraft: isDraft ?? false,
             branch: headRefName, additions: additions, deletions: deletions,
             comments: comments, checks: checks, files: files,
-            tasks: GitHubTask.parse(markdownBody: body), parentNumber: parent?.number)
+            tasks: GitHubTask.parse(markdownBody: body), parentNumber: parent?.number,
+            assignees: assignees?.nodes.map { $0.toDomain() },
+            milestone: milestone?.title,
+            labelColors: labelColorMap)
     }
-}
 
-struct AuthorDTO: Decodable {
-    let login: String
-    let avatarUrl: String?
-    func toDomain() -> GitHubActor {
-        GitHubActor(login: login, avatarURL: avatarUrl.flatMap(URL.init(string:)))
+    /// Label name → hex color for the labels that carry one. Nil when none does — keeps items
+    /// (and the cache) from gaining an empty dictionary. Both the list and detail queries select
+    /// `color`, so a lead row carries it too.
+    private var labelColorMap: [String: String]? {
+        let pairs = labels?.nodes.compactMap { node in node.color.map { (node.name, $0) } } ?? []
+        return pairs.isEmpty ? nil : Dictionary(pairs, uniquingKeysWith: { first, _ in first })
     }
-}
-
-struct LabelConnection: Decodable {
-    let nodes: [Label]
-    struct Label: Decodable { let name: String }
 }
 
 struct CommitConnection: Decodable {

@@ -79,6 +79,12 @@ extension Item {
             age: GitHubRelativeAge.compact(from: it.createdAt, now: Date()),
             author: it.author.login,
             labels: it.labels,
+            labelColors: (it.labelColors ?? [:]).compactMapValues(NSColor.hex(string:)),
+            assignees: (it.assignees ?? []).map { actor in
+                Assignee(login: actor.login, initials: actor.initials,
+                         color: actor.isBot ? agentAccent : Status.purple, avatarURL: actor.avatarURL)
+            },
+            milestone: it.milestone,
             createdAt: it.createdAt,
             authorColor: isAgent ? agentAccent : Status.purple,
             authorInitials: it.author.initials,

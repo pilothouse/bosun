@@ -71,7 +71,9 @@ enum GitHubGraphQLQueries {
             createdAt
             state
             author { login avatarUrl }
-            labels(first: 20) { nodes { name } }
+            labels(first: 20) { nodes { name color } }
+            assignees(first: 10) { nodes { login avatarUrl } }
+            milestone { title }
             parent { number }
           }
         }
@@ -99,7 +101,9 @@ enum GitHubGraphQLQueries {
             deletions
             headRefName
             author { login avatarUrl }
-            labels(first: 20) { nodes { name } }
+            labels(first: 20) { nodes { name color } }
+            assignees(first: 10) { nodes { login avatarUrl } }
+            milestone { title }
           }
         }
       }
@@ -116,14 +120,18 @@ enum GitHubGraphQLQueries {
           ... on Issue {
             id number title body createdAt state
             author { login avatarUrl }
-            labels(first: 20) { nodes { name } }
+            labels(first: 20) { nodes { name color } }
+            assignees(first: 10) { nodes { login avatarUrl } }
+            milestone { title }
             parent { number }
           }
           ... on PullRequest {
             id number title body createdAt state
             isDraft additions deletions headRefName
             author { login avatarUrl }
-            labels(first: 20) { nodes { name } }
+            labels(first: 20) { nodes { name color } }
+            assignees(first: 10) { nodes { login avatarUrl } }
+            milestone { title }
             commits(last: 1) {
               nodes {
                 commit {
@@ -182,7 +190,9 @@ enum GitHubGraphQLQueries {
                     state
                     \(extraFields)
                     author { login avatarUrl }
-                    labels(first: 20) { nodes { name } }
+                    labels(first: 20) { nodes { name color } }
+                    assignees(first: 10) { nodes { login avatarUrl } }
+                    milestone { title }
                   }
                 }
               }

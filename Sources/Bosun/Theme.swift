@@ -12,6 +12,14 @@ extension NSColor {
                 green: CGFloat((v >> 8) & 0xff) / 255,
                 blue: CGFloat(v & 0xff) / 255, alpha: a)
     }
+    /// Parse a `"rrggbb"` / `"#rrggbb"` hex string (e.g. GitHub's `Label.color`) into a color, or
+    /// nil if it isn't six hex digits. Complements `hex(_ v: UInt32)`.
+    static func hex(string: String) -> NSColor? {
+        let s = string.hasPrefix("#") ? String(string.dropFirst()) : string
+        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        return .hex(v)
+    }
+
     static func whiteA(_ a: CGFloat) -> NSColor { NSColor(srgbRed: 1, green: 1, blue: 1, alpha: a) }
     static func blackA(_ a: CGFloat) -> NSColor { NSColor(srgbRed: 0, green: 0, blue: 0, alpha: a) }
 

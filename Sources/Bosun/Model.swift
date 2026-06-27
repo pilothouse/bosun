@@ -68,6 +68,10 @@ struct Comment { let author, initials: String; let color: NSColor; let time, bad
 /// placeholder the `AvatarView` shows until `avatarURL` (the viewer's real avatar) loads.
 struct CurrentUser { let initials: String; let color: NSColor; let avatarURL: URL? }
 
+/// A person assigned to an item, projected for the detail pane's metadata section. Like `Comment`,
+/// `color`/`initials` are the `AvatarView` placeholder shown until `avatarURL` loads.
+struct Assignee { let login, initials: String; let color: NSColor; let avatarURL: URL? }
+
 /// Presentation projection of a GitHub issue/PR. Built from `Domain.GitHubItem` by the mapper in
 /// `GitHubPresentation.swift` (colors, glyphs, and relative-time strings live there); the views
 /// render straight off these fields. `tasks`/`checks`/`comments` are populated by the detail fetch.
@@ -89,6 +93,17 @@ struct Item {
     /// The item's label names, carried raw (not just the first, as `metaLeft` shows) so the list's
     /// free-text search can match any label via the `GitHubItemSearch` rule.
     var labels: [String] = []
+    /// Label name → display color, for labels that ship a color. Carried on both list and detail
+    /// items, so the detail pane shows colored pills the instant a row is selected (no recolor when
+    /// the detail lands). The pane tints each pill via this map, falling back to a neutral chip.
+    var labelColors: [String: NSColor] = [:]
+    /// The people assigned to this item, shown in the detail pane's metadata section. Carried on
+    /// both list and detail items so the section is complete on the lead row (no body jump when the
+    /// detail lands). Empty when none.
+    var assignees: [Assignee] = []
+    /// The item's milestone title, or nil when it has none. Carried on the list row too, like
+    /// `assignees`, so the metadata section doesn't grow when the detail lands.
+    var milestone: String? = nil
     /// When the item was created, the raw value behind the `age` display string. Kept so the list
     /// can sort by date. See `ItemSorting`.
     let createdAt: Date
