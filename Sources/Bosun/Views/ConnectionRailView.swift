@@ -199,10 +199,6 @@ final class ConnectionRailView: FlippedView {
         meta.frame = NSRect(x: z(34), y: z(22), width: width - z(34) - z(40), height: z(13))
         row.addSubview(meta)
 
-        let dot = Dot(c.dot, z(7))
-        dot.frame.origin = NSPoint(x: width - z(38), y: z(18))
-        row.addSubview(dot)
-
         // The whole row is the drag handle (no visible grip). A transparent catcher over the row
         // turns a press-and-move past a small threshold into a drag — reorder within the section, or
         // drop onto another folder/Ungrouped band to move it — while a press that doesn't move

@@ -17,16 +17,13 @@ struct Connection {
     let id, name: String
     let kind: ConnKind
     let meta: String
-    let dot: NSColor
-    let sessionLabel: String
     var isFavorite = false
     var glyph: String { kind == .ssh ? "⧉" : "▦" }
     var kindLabel: String { kind == .ssh ? "SSH" : "FOLDER" }
 }
 
 extension Connection {
-    /// Presentation projection of a persisted `Domain.Connection`. Live status (dot color,
-    /// session label) isn't persisted yet, so a fresh connection reads as idle/dim.
+    /// Presentation projection of a persisted `Domain.Connection`.
     init(domain c: Domain.Connection) {
         let kind: ConnKind
         let meta: String
@@ -35,12 +32,11 @@ extension Connection {
         case let .localFolder(path): kind = .folder; meta = path
         }
         self.init(id: c.id.uuidString, name: c.name, kind: kind, meta: meta,
-                  dot: Status.dim, sessionLabel: "idle", isFavorite: c.isFavorite)
+                  isFavorite: c.isFavorite)
     }
 
     /// Shown only in the brief window before the persisted list loads (or if it's empty).
-    static let placeholder = Connection(id: "", name: "—", kind: .folder, meta: "",
-                                        dot: Status.dim, sessionLabel: "")
+    static let placeholder = Connection(id: "", name: "—", kind: .folder, meta: "")
 }
 
 /// A rendered band of the connection rail — the presentation projection of
