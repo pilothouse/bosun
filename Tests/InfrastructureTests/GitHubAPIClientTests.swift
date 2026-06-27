@@ -41,6 +41,33 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(gateway.nameWithOwner, "acme-corp/api-gateway")
     }
 
+    func testOrganizationsDropNullNodesForInaccessibleReposAndOrgs() async throws {
+        // GitHub returns `null` for a connection node the token can't read (a restricted/archived/
+        // transferred repo or org) instead of omitting it. A non-optional element used to abort the
+        // whole decode, so one unreadable repo silently froze the org panel at its cache (#81).
+        respond { (self.ok($0), try fixture("organizations-null-nodes")) }
+        let orgs = try await makeClient().organizations()
+
+        XCTAssertEqual(orgs.map(\.login), ["acme-corp", "beta-inc"], "the null org node is dropped")
+        let acme = try XCTUnwrap(orgs.first)
+        XCTAssertEqual(acme.repositories.map(\.name), ["api-gateway", "web-dashboard"],
+                       "the null repo node is dropped; the readable repos around it still decode")
+    }
+
+    func testOrganizationsPaginatesAcrossCursorPages() async throws {
+        // The org page size is kept small to stay under GitHub's GraphQL query-cost limit, so real
+        // accounts span several pages — the cursor loop must stitch them together (#81).
+        let calls = CallCounter()
+        StubURLProtocol.handler = { request in
+            let n = calls.bump()
+            return (self.ok(request), try fixture(n == 1 ? "organizations-page1" : "organizations-page2"))
+        }
+        let orgs = try await makeClient().organizations()
+
+        XCTAssertEqual(calls.count, 2, "follows the cursor for a second page while hasNextPage is true")
+        XCTAssertEqual(orgs.map(\.login), ["acme-corp", "beta-inc"], "both pages aggregate, in order")
+    }
+
     func testViewerRepositoriesDecodesOwnedReposAndCounts() async throws {
         respond { (self.ok($0), try fixture("viewer-repositories")) }
         let repos = try await makeClient().viewerRepositories()
@@ -51,6 +78,14 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(dotfiles.openIssues, 4)
         XCTAssertEqual(dotfiles.openPullRequests, 1)
         XCTAssertEqual(dotfiles.nameWithOwner, "octocat/dotfiles")
+    }
+
+    func testViewerRepositoriesDropsNullNodes() async throws {
+        respond { (self.ok($0), try fixture("viewer-repositories-null-node")) }
+        let repos = try await makeClient().viewerRepositories()
+
+        XCTAssertEqual(repos.map(\.name), ["dotfiles", "side-project"],
+                       "a null (inaccessible) repo node is dropped rather than failing the decode (#81)")
     }
 
     func testIssuesListMapsFieldsAndParsesTasksFromBody() async throws {

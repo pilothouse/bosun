@@ -9,6 +9,13 @@ import Domain
 final class ManageOrgsSheet: FlippedView {
     private let store: Store
     var onClose: (() -> Void)?
+    /// Open the GitHub page where the user grants/revokes this OAuth App's org access (#81).
+    var onChangeAccess: (() -> Void)?
+    /// Re-fetch the accessible org set with the current token and re-project the panel — no restart.
+    var onSyncOrgs: (() -> Void)?
+    /// Re-run the device flow to obtain a token that sees freshly-granted access (the escape hatch
+    /// for when a plain Sync can't surface a newly-authorized org).
+    var onReconnect: (() -> Void)?
 
     private let rowH: CGFloat = z(34)
 
@@ -24,6 +31,9 @@ final class ManageOrgsSheet: FlippedView {
     /// Whether the "Order:" repo-ordering dropdown is open. Local to the sheet (a modal), so the
     /// panel's window-level dismissal machinery isn't involved — a click elsewhere on the card closes it.
     private var orderMenuOpen = false
+    /// True while a "Sync organizations" is showing its 2-second loading state — gates re-clicks and
+    /// swaps the link for a spinner. Survives the sheet's per-`notify()` rebuilds (it's stored state).
+    private var isSyncing = false
 
     init(store: Store) {
         self.store = store
@@ -71,8 +81,9 @@ final class ManageOrgsSheet: FlippedView {
         let unfollowed = orgs.filter { !followedSet.contains($0.id) }
 
         let cardW: CGFloat = z(380)
-        // The header holds the title, subtitle, and the repo-ordering dropdown row.
-        let headerH: CGFloat = z(104), footerH: CGFloat = z(56)
+        // The header holds the title, subtitle, and the repo-ordering dropdown row. The footer holds
+        // two rows: the org-access actions (Sync / Change access / Reconnect) and the Reset / Done bar.
+        let headerH: CGFloat = z(104), footerH: CGFloat = z(96)
         // Each org gets a row; the "not shown" caption gets a half-row when both sections exist.
         let captionH: CGFloat = (!followed.isEmpty && !unfollowed.isEmpty) ? z(24) : 0
         let contentH = CGFloat(orgs.count) * rowH + captionH + z(12)
@@ -140,7 +151,33 @@ final class ManageOrgsSheet: FlippedView {
                       followed: followed, unfollowed: unfollowed)
         }
 
-        // Footer: Reset (back to show-all) on the left, Done on the right.
+        // Footer row 1 — org-access actions: re-sync the set with the current token, or jump to GitHub
+        // to change which orgs the app may see. These don't touch the followed set; they refresh which
+        // orgs *exist* to follow (#81). Each link is sized to its text so the hover highlight hugs it.
+        let actionsY = h - z(78), actionsH: CGFloat = z(26)
+        if isSyncing {
+            // While syncing, the link is replaced by a non-clickable spinner so it can't be spammed.
+            let cy = actionsY + (actionsH - z(14)) / 2
+            let spin = makeSpinner(size: z(14))
+            spin.frame = NSRect(x: pad + z(7), y: cy, width: z(14), height: z(14)); card.addSubview(spin)
+            let lbl = label("Syncing…", sys(11.5, .semibold), t.txt4)
+            lbl.frame = NSRect(x: pad + z(27), y: cy, width: fitW("Syncing…", sys(11.5, .semibold)), height: z(14))
+            card.addSubview(lbl)
+        } else {
+            let sync = linkRow("↻ Sync organizations", t: t, color: t.accent, y: actionsY, height: actionsH) { [weak self] in
+                self?.startSync()
+            }
+            sync.frame.origin.x = pad
+            card.addSubview(sync)
+        }
+        let access = linkRow("Change access on GitHub ↗", t: t, color: t.accent, y: actionsY, height: actionsH) { [weak self] in
+            self?.onChangeAccess?()
+        }
+        access.frame.origin.x = pad + innerW - access.frame.width   // right-anchored, hugging its text
+        card.addSubview(access)
+
+        // Footer row 2 — Reset (back to show-all) on the left, Done on the right, with the low-emphasis
+        // Reconnect escape hatch centered between them (for when a plain Sync can't surface new access).
         let btnW: CGFloat = z(84), btnH: CGFloat = z(30), btnY = h - z(44)
         let reset = textButton("Reset", t: t, accent: false,
                                frame: NSRect(x: pad, y: btnY, width: btnW, height: btnH)) { [weak self] in
@@ -150,7 +187,11 @@ final class ManageOrgsSheet: FlippedView {
                               frame: NSRect(x: pad + innerW - btnW, y: btnY, width: btnW, height: btnH)) { [weak self] in
             self?.onClose?()
         }
-        card.addSubview(reset); card.addSubview(done)
+        let reconnect = linkRow("Reconnect GitHub", t: t, color: t.txt4, y: btnY + z(2), height: actionsH) { [weak self] in
+            self?.onReconnect?()
+        }
+        reconnect.frame.origin.x = pad + (innerW - reconnect.frame.width) / 2
+        card.addSubview(reset); card.addSubview(done); card.addSubview(reconnect)
 
         // Order menu overlay — added last so it floats above the list. Mirrors the panel's
         // View-options dropdown (RepoPanelView): a ✓ on the active mode, label, row per case.
@@ -262,6 +303,38 @@ final class ManageOrgsSheet: FlippedView {
         nm.frame = NSRect(x: z(84), y: (rowH - z(4) - z(16)) / 2, width: w - z(16) - z(84) - z(12), height: z(16))
         row.addSubview(nm)
         return row
+    }
+
+    /// A borderless, hoverable text link — the footer's org-access actions. Same shape as the sidebar's
+    /// "manage" link (`RepoPanelView`): a `ClickRow` wrapping a single label, no background or border.
+    /// Sized to hug its text (via `fitW`) so the hover highlight doesn't extend past the label; the
+    /// caller positions it by setting `frame.origin.x`.
+    private func linkRow(_ title: String, t: Theme, color: NSColor, y: CGFloat, height: CGFloat,
+                         action: @escaping () -> Void) -> ClickRow {
+        let font = sys(11.5, .semibold)
+        let tw = fitW(title, font), padX = z(7)
+        let r = ClickRow(bg: nil, radius: z(5))
+        r.hoverColor = t.hover
+        r.frame = NSRect(x: 0, y: y, width: tw + padX * 2, height: height)
+        r.onClick = action
+        let l = label(title, font, color)
+        l.frame = NSRect(x: padX, y: (height - z(14)) / 2, width: tw, height: z(14))
+        r.addSubview(l)
+        return r
+    }
+
+    /// Run a re-sync and show a 2-second loading state in its place, so the action can't be spammed and
+    /// the user gets clear feedback even when the fetch returns instantly. Re-clicks are ignored while
+    /// the spinner is up. Matches the transient-state idiom used elsewhere (`DetailView`/`DeviceFlowSheet`).
+    private func startSync() {
+        guard !isSyncing else { return }
+        isSyncing = true
+        needsLayout = true
+        onSyncOrgs?()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.isSyncing = false
+            self?.needsLayout = true
+        }
     }
 
     private func textButton(_ title: String, t: Theme, accent: Bool, frame: NSRect, action: @escaping () -> Void) -> ClickRow {

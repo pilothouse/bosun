@@ -1,0 +1,18 @@
+{
+  "data": {
+    "viewer": {
+      "organizations": {
+        "pageInfo": { "hasNextPage": true, "endCursor": "CURSOR_P2" },
+        "nodes": [
+          {
+            "id": "O_1",
+            "login": "acme-corp",
+            "name": "Acme Corp",
+            "avatarUrl": null,
+            "repositories": { "nodes": [] }
+          }
+        ]
+      }
+    }
+  }
+}

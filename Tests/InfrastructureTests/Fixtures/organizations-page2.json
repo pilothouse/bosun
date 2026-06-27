@@ -1,0 +1,18 @@
+{
+  "data": {
+    "viewer": {
+      "organizations": {
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "id": "O_2",
+            "login": "beta-inc",
+            "name": "Beta Inc",
+            "avatarUrl": null,
+            "repositories": { "nodes": [] }
+          }
+        ]
+      }
+    }
+  }
+}

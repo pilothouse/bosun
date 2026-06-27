@@ -1,0 +1,26 @@
+{
+  "data": {
+    "viewer": {
+      "repositories": {
+        "pageInfo": { "hasNextPage": false, "endCursor": "Y3Vyc29yOjE=" },
+        "nodes": [
+          {
+            "id": "R_1",
+            "name": "dotfiles",
+            "owner": { "login": "octocat" },
+            "issues": { "totalCount": 4 },
+            "pullRequests": { "totalCount": 1 }
+          },
+          null,
+          {
+            "id": "R_2",
+            "name": "side-project",
+            "owner": { "login": "octocat" },
+            "issues": { "totalCount": 0 },
+            "pullRequests": { "totalCount": 2 }
+          }
+        ]
+      }
+    }
+  }
+}

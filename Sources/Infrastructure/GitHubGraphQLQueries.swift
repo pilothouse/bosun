@@ -6,10 +6,15 @@ import Foundation
 /// the client supplies (`$cursor` for keyset pagination, `$owner`/`$repo`/`$number` for scope).
 enum GitHubGraphQLQueries {
     /// Viewer's organizations with their repositories and open-work counts. Paged via `$cursor`.
+    /// `first: 10` (not 50) is deliberate: each org pulls `repositories(first: 100)` with two
+    /// per-repo open-count aggregations, and GitHub scores a page's cost from the `first:` arguments
+    /// (not the rows actually returned). Empirically a page of 13 orgs trips "Resource limits for
+    /// this query exceeded" (12 is the ceiling); 10 keeps a margin and just costs one extra round-trip
+    /// per 10 orgs. A too-large page failed the *whole* fetch, freezing the org panel at its cache (#81).
     static let organizations = """
     query($cursor: String) {
       viewer {
-        organizations(first: 50, after: $cursor) {
+        organizations(first: 10, after: $cursor) {
           pageInfo { hasNextPage endCursor }
           nodes {
             id

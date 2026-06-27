@@ -47,7 +47,7 @@ public actor GitHubAPIClient: GitHubAPI {
                 query: GitHubGraphQLQueries.organizations,
                 variables: ["cursor": cursor.map(GraphQLValue.string) ?? .null])
             let page = payload.viewer.organizations
-            orgs += page.nodes.map { $0.toDomain() }
+            orgs += page.nodes.compactMap { $0?.toDomain() }
             cursor = page.pageInfo.next
         } while cursor != nil
         return orgs
@@ -61,7 +61,7 @@ public actor GitHubAPIClient: GitHubAPI {
                 query: GitHubGraphQLQueries.viewerRepositories,
                 variables: ["cursor": cursor.map(GraphQLValue.string) ?? .null])
             let page = payload.viewer.repositories
-            repos += page.nodes.map { $0.toDomain() }
+            repos += page.nodes.compactMap { $0?.toDomain() }
             cursor = page.pageInfo.next
         } while cursor != nil
         return repos
@@ -388,13 +388,17 @@ private struct UserRefDTO: Decodable {
 private struct OrgsResponse: Decodable {
     let viewer: Viewer
     struct Viewer: Decodable { let organizations: Connection }
-    struct Connection: Decodable { let pageInfo: PageInfo; let nodes: [OrgNode] }
+    // GitHub returns `null` for a connection node the token can't read (a restricted/archived/
+    // transferred org or repo) instead of omitting it, so node arrays are decoded as optionals and
+    // the nulls are dropped by the callers. A non-optional element would abort the *entire* decode —
+    // one unreadable repo then silently froze the whole org panel at its last-good cache (#81).
+    struct Connection: Decodable { let pageInfo: PageInfo; let nodes: [OrgNode?] }
 }
 
 private struct ViewerReposResponse: Decodable {
     let viewer: Viewer
     struct Viewer: Decodable { let repositories: Connection }
-    struct Connection: Decodable { let pageInfo: PageInfo; let nodes: [RepoNode] }
+    struct Connection: Decodable { let pageInfo: PageInfo; let nodes: [RepoNode?] }   // null = inaccessible; dropped
 }
 
 private struct OrgNode: Decodable {
@@ -403,12 +407,12 @@ private struct OrgNode: Decodable {
     let name: String?
     let avatarUrl: String?
     let repositories: RepoConnection
-    struct RepoConnection: Decodable { let nodes: [RepoNode] }
+    struct RepoConnection: Decodable { let nodes: [RepoNode?] }   // null = inaccessible repo; dropped
 
     func toDomain() -> GitHubOrg {
         GitHubOrg(id: id, login: login, name: name,
                   avatarURL: avatarUrl.flatMap(URL.init(string:)),
-                  repositories: repositories.nodes.map { $0.toDomain() })
+                  repositories: repositories.nodes.compactMap { $0?.toDomain() })
     }
 }
 

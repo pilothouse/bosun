@@ -86,6 +86,13 @@ enum CompositionRoot {
     private static func githubClientID() -> String {
         ProcessInfo.processInfo.environment["BOSUN_GITHUB_CLIENT_ID"] ?? "Ov23liOrAKfzcXed8ucm"
     }
+
+    /// The GitHub page where the user grants/revokes this OAuth App's org access, built from the
+    /// *resolved* client id so an overridden app (`BOSUN_GITHUB_CLIENT_ID`) points at the right page.
+    /// The Manage-organizations sheet opens this so the user can change access without leaving Bosun.
+    static func githubConnectionsURL() -> URL {
+        GitHubOAuthApp.connectionsURL(clientID: githubClientID())
+    }
 }
 
 /// A token store backed by a fixed string — only the `BOSUN_GITHUB_TOKEN` smoke path uses it.

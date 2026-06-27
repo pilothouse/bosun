@@ -315,6 +315,23 @@ final class GitHubDataController {
         }
     }
 
+    /// Re-fetch just the accessible organization *set* (and the viewer's repos) with the current
+    /// token and re-project the panel — leaving the open item/repo selection alone, since `load()`
+    /// only re-establishes a selection on a cold start. Surfaced by the Manage sheet's "Sync
+    /// organizations" so a newly-granted org appears (or a revoked one disappears) without a restart
+    /// (#81). Narrower than `refresh()` — it skips the current repo's items — but shares the
+    /// `isRefreshing` debounce + spinner.
+    func syncOrgs() {
+        guard !store.isRefreshing else { return }
+        store.isRefreshing = true
+        load()                 // sets loadTask; re-fetches api.organizations() and applies the delta
+        let orgsLoad = loadTask
+        Task { @MainActor in
+            await orgsLoad?.value
+            store.isRefreshing = false
+        }
+    }
+
     /// Select a list item: show its lead content immediately (the store already has it) and
     /// fetch the hydrated detail (body tasks, comments, PR checks) to upgrade it. Re-clicking the
     /// already-open item is a no-op (`DetailReselectionPolicy`) — no flash, no refetch, scroll kept.

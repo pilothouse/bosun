@@ -85,7 +85,22 @@ final class GitHubAuthController {
     /// guard. Wired from `GitHubDataController.onUnauthorized`.
     func handleSessionExpired() {
         guard case .signedIn = store.authState else { return }
-        let reason = "Your GitHub session expired — sign in again."
+        reauth(reason: "Your GitHub session expired — sign in again.")
+    }
+
+    /// User-initiated reconnect: drop the current token and re-run the device flow to obtain one that
+    /// sees freshly-granted org access. The fallback for when a plain same-token re-fetch (Sync) can't
+    /// surface a newly-authorized org. Reuses the same recovery path as an expiry, just a different
+    /// reason. Wired from the Manage-organizations sheet (#81).
+    func reconnect() {
+        guard case .signedIn = store.authState else { return }
+        reauth(reason: "Reconnect to GitHub to apply changed organization access.")
+    }
+
+    /// Drop the token and reopen the device flow with `reason` shown as the sheet's subtitle. Shared
+    /// by the 401-recovery path and the explicit reconnect. The synchronous flip out of `.signedIn`
+    /// (no `await` before it) is what makes the callers' guards collapse a burst into one recovery.
+    private func reauth(reason: String) {
         store.signInReason = reason
         store.authState = .authenticatingPending
         let tokenStore = services.tokenStore

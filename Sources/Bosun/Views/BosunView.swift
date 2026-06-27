@@ -295,6 +295,15 @@ final class BosunView: NSView {
         if store.manageOrgsOpen, manageOrgs == nil {
             let sheet = ManageOrgsSheet(store: store)
             sheet.onClose = { [weak self] in self?.store.manageOrgsOpen = false }
+            // Open the OAuth app's connections page so the user can grant/revoke org access (#81).
+            sheet.onChangeAccess = { NSWorkspace.shared.open(CompositionRoot.githubConnectionsURL()) }
+            // Re-fetch the org set with the current token; the open sheet repaints from store.orgs.
+            sheet.onSyncOrgs = { [weak self] in self?.data.syncOrgs() }
+            // Reconnect closes the sheet first so the device-flow sheet takes over cleanly.
+            sheet.onReconnect = { [weak self] in
+                self?.store.manageOrgsOpen = false
+                self?.auth.reconnect()
+            }
             sheet.frame = bounds
             addSubview(sheet)
             manageOrgs = sheet
