@@ -334,32 +334,14 @@ final class DetailView: FlippedView {
                         into: doc, t: t, x: padX, y: y, width: cw)
         }
 
-        // Body card.
+        // Body card. Task-list checkboxes (`- [ ]` / `- [x]`) render inline in the body via
+        // swift-markdown's native checkbox handling (see MarkdownRenderer.visitUnorderedList);
+        // `it.tasks` is intentionally left unread here so they aren't drawn a second time (#86).
         let bodyText = markdownView(it.body, baseFont: sys(13.5), width: cw - z(34))
-        var cardH = bodyText.frame.height + z(30)
-        var taskViews: [NSView] = []
-        if !it.tasks.isEmpty {
-            cardH += z(20)
-            for task in it.tasks {
-                let row = FlippedView(frame: NSRect(x: z(17), y: 0, width: cw - z(34), height: z(22)))
-                let box = BoxView(bg: task.done ? t.accent : nil, radius: z(4), border: task.done ? t.accent : t.txt4)
-                box.frame = NSRect(x: 0, y: z(3), width: z(15), height: z(15))
-                if task.done { box.addSubview(centeredGlyph("✓", sys(9, .bold), .hex(0x0d0f13), in: box.frame.size)) }
-                row.addSubview(box)
-                let tl = label(task.label, sys(12.5), task.done ? t.txt4 : t.txt2)
-                tl.frame = NSRect(x: z(24), y: z(3), width: cw - z(34) - z(24), height: z(16)); row.addSubview(tl)
-                taskViews.append(row)
-                cardH += z(26)
-            }
-        }
+        let cardH = bodyText.frame.height + z(30)
         let card = BoxView(bg: t.card, radius: z(11), border: t.cardbr)
         card.frame = NSRect(x: padX, y: y, width: cw, height: cardH)
         bodyText.frame.origin = NSPoint(x: z(17), y: z(15)); card.addSubview(bodyText)
-        var ty = bodyText.frame.maxY + z(13)
-        if !taskViews.isEmpty {
-            let lbl = label("TASKS", mono(9.5, .semibold), t.txt4); lbl.frame = NSRect(x: z(17), y: ty, width: z(200), height: z(13)); card.addSubview(lbl); ty += z(18)
-            for tv in taskViews { tv.frame.origin.y = ty; card.addSubview(tv); ty += z(26) }
-        }
         doc.addSubview(card); y += cardH + z(20)
 
         // PR checks. The ACTIONS header is a disclosure: clicking it toggles the global,
