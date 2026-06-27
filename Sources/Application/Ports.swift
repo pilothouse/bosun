@@ -21,11 +21,15 @@ public enum RunEvent: Sendable {
 
 /// Persistence seam for saved connections. The use cases talk to this port; a concrete
 /// adapter (a JSON file, later a database) lives in Infrastructure and is wired in
-/// `CompositionRoot`. `save` upserts by id.
+/// `CompositionRoot`. `save` upserts by id; `reorder` sets the persisted order — the stored
+/// order is the rail's display order, so a drag-reorder writes it through here.
 public protocol ConnectionStore: Sendable {
     func all() async throws -> [Connection]
     func save(_ connection: Connection) async throws
     func delete(id: UUID) async throws
+    /// Re-sort the stored connections into `orderedIDs`. Ids not present are ignored; any stored
+    /// connection the list omits keeps its current relative position at the end.
+    func reorder(_ orderedIDs: [UUID]) async throws
 }
 
 /// Persistence seam for UI preferences. The App layer loads once at launch and saves a

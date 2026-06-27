@@ -8,6 +8,9 @@ final class ConnectionRailView: FlippedView {
     var onDelete: ((String) -> Void)?
     var onToggleFavorite: ((String) -> Void)?
     var onConnect: ((String) -> Void)?
+    /// A drag reordered a section: (the section's ids in their pre-move display order, the moved
+    /// row's old index, its new index). The App layer applies `ConnectionOrdering` and persists.
+    var onReorder: (([UUID], Int, Int) -> Void)?
 
     // Double-click is tracked here, not via the row's clickCount: selecting a connection rebuilds
     // the rail and replaces the row between the two clicks, so AppKit's native double-click
@@ -23,6 +26,18 @@ final class ConnectionRailView: FlippedView {
     private var searchQuery = ""
     private weak var searchField: NSTextField?
     private weak var listScroll: NSScrollView?
+
+    // Live drag-to-reorder state, mirroring `ManageOrgsSheet` but scoped to one section. Captured
+    // by `makeListDocument` so a grip drag can reposition that section's live rows without a full
+    // rebuild; `draggingId != nil` also blocks the rebuild so the gesture isn't torn down mid-drag.
+    private weak var listDoc: FlippedView?
+    private var rowsById: [String: ClickRow] = [:]
+    private var sectionIdsById: [String: [String]] = [:]   // id → its section's ids, in display order
+    private var sectionTopById: [String: CGFloat] = [:]     // id → its section's first-row top-Y in doc
+    private var draggingId: String?
+    private var dragOrder: [String] = []                    // live order of the dragged row's section
+    private var dragGrabDY: CGFloat = 0
+    private var dragSectionTop: CGFloat = 0
 
     init(store: Store) {
         self.store = store
@@ -52,7 +67,7 @@ final class ConnectionRailView: FlippedView {
         return v
     }
 
-    private func connRow(_ c: Connection, width: CGFloat, t: Theme) -> ClickRow {
+    private func connRow(_ c: Connection, width: CGFloat, t: Theme, reorderable: Bool) -> ClickRow {
         let selected = store.selectedConnId == c.id
         let row = ClickRow(bg: selected ? t.accentbg : nil)
         row.hoverColor = t.hover
@@ -60,6 +75,22 @@ final class ConnectionRailView: FlippedView {
         // Single click selects; a quick second click on the same row opens a console (SSH connects,
         // a folder opens a shell there).
         row.onClick = { [weak self] in self?.handleRowClick(c.id) }
+
+        // Drag-to-reorder grip: a ☰ handle in the left gutter, revealed only while the row is
+        // hovered so the resting list stays uncluttered. A drag on it moves the row within its
+        // section; a click elsewhere on the row still selects (the grip eats only its own zone).
+        if reorderable {
+            let grip = DragGrip(frame: NSRect(x: 0, y: 0, width: z(14), height: z(42)))
+            grip.alphaValue = 0
+            let gl = label("☰", sys(11), t.txt4, align: .center)
+            gl.frame = NSRect(x: 0, y: (z(42) - z(14)) / 2, width: z(14), height: z(14))
+            grip.addSubview(gl)
+            grip.onDown = { [weak self] e in self?.beginDrag(c.id, event: e) }
+            grip.onDrag = { [weak self] e in self?.updateDrag(event: e) }
+            grip.onUp = { [weak self] _ in self?.endDrag() }
+            row.addSubview(grip)
+            row.onHoverChange = { [weak grip] hovering in grip?.alphaValue = hovering ? 1 : 0 }
+        }
 
         if selected {
             let bar = BoxView(bg: t.accent)
@@ -157,6 +188,8 @@ final class ConnectionRailView: FlippedView {
     }
 
     private func rebuild() {
+        // Never tear the rows down mid-drag — the gesture repositions the live views directly.
+        if draggingId != nil { return }
         subviews.forEach { $0.removeFromSuperview() }
         let t = store.theme
         layer?.backgroundColor = t.panel.cgColor
@@ -234,15 +267,26 @@ final class ConnectionRailView: FlippedView {
     /// current `searchQuery` via the pure `ConnectionSearch` rule (an empty query yields the full list).
     private func makeListDocument(width w: CGFloat, minHeight: CGFloat, t: Theme) -> FlippedView {
         let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
+        listDoc = doc
+        rowsById = [:]; sectionIdsById = [:]; sectionTopById = [:]
         var y: CGFloat = z(6)
 
         func section(_ title: String, _ items: [Connection], star: Bool, count: String?) {
             guard !items.isEmpty else { return }   // hide a section with nothing in it
             let head = sectionHeader(title, accentStar: star, count: count, width: w, t: t)
             head.frame.origin.y = y; doc.addSubview(head); y += z(28)
+            // A lone row can't be reordered; only show grips (and capture drag state) for 2+.
+            let reorderable = items.count >= 2
+            let ids = items.map(\.id)
+            let firstRowTop = y
             for c in items {
-                let r = connRow(c, width: w, t: t)
+                let r = connRow(c, width: w, t: t, reorderable: reorderable)
                 r.frame.origin.y = y; doc.addSubview(r); y += z(42)
+                if reorderable {
+                    rowsById[c.id] = r
+                    sectionIdsById[c.id] = ids
+                    sectionTopById[c.id] = firstRowTop
+                }
             }
             y += z(8)
         }
@@ -285,6 +329,60 @@ final class ConnectionRailView: FlippedView {
     func focusSearch() {
         guard let field = searchField else { return }
         window?.makeFirstResponder(field)
+    }
+
+    // MARK: Drag-to-reorder (within a section)
+
+    private func beginDrag(_ id: String, event: NSEvent) {
+        guard let doc = listDoc, let row = rowsById[id],
+              let sectionIds = sectionIdsById[id], let top = sectionTopById[id] else { return }
+        draggingId = id
+        dragOrder = sectionIds
+        dragSectionTop = top
+        let p = doc.convert(event.locationInWindow, from: nil)
+        dragGrabDY = p.y - row.frame.origin.y
+        doc.addSubview(row)                 // raise above siblings
+        row.layer?.shadowColor = NSColor.black.cgColor
+        row.layer?.shadowOpacity = 0.35
+        row.layer?.shadowRadius = z(8)
+        row.layer?.shadowOffset = CGSize(width: 0, height: z(2))
+        row.layer?.masksToBounds = false
+        row.setBase(store.theme.card)       // show the row as "picked up"
+    }
+
+    private func updateDrag(event: NSEvent) {
+        guard let id = draggingId, let doc = listDoc, let row = rowsById[id],
+              let from = dragOrder.firstIndex(of: id) else { return }
+        let n = dragOrder.count
+        let h = z(42)
+        let p = doc.convert(event.locationInWindow, from: nil)
+        let minY = dragSectionTop, maxY = dragSectionTop + CGFloat(n - 1) * h
+        let newTop = max(minY, min(maxY, p.y - dragGrabDY))
+        row.frame.origin.y = newTop
+
+        var target = Int(((newTop + h / 2) - dragSectionTop) / h)
+        target = max(0, min(n - 1, target))
+        if target != from { dragOrder.insert(dragOrder.remove(at: from), at: target) }
+
+        // Reflow the non-dragged rows into their slots so the gap follows the cursor.
+        for (i, rid) in dragOrder.enumerated() where rid != id {
+            rowsById[rid]?.frame.origin.y = dragSectionTop + CGFloat(i) * h
+        }
+    }
+
+    private func endDrag() {
+        guard let id = draggingId else { return }
+        draggingId = nil
+        // A move is a single element shifting from its old slot to its new one: report that as
+        // (original section order, from, to) and let the App layer persist it — the store update
+        // triggers the settling rebuild. A no-op (or a plain grip click) just settles the visuals.
+        if let original = sectionIdsById[id],
+           let from = original.firstIndex(of: id),
+           let to = dragOrder.firstIndex(of: id), from != to {
+            onReorder?(original.compactMap(UUID.init(uuidString:)), from, to)
+        } else {
+            repopulateList()
+        }
     }
 }
 

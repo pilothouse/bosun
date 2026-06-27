@@ -50,6 +50,16 @@ public actor JSONFileConnectionStore: ConnectionStore {
         try persist(list)
     }
 
+    public func reorder(_ orderedIDs: [UUID]) throws {
+        let list = try all()
+        let byID = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result = orderedIDs.compactMap { byID[$0] }
+        // Defensive: keep any stored connection the order omits, in its current relative order.
+        let named = Set(orderedIDs)
+        result.append(contentsOf: list.filter { !named.contains($0.id) })
+        try persist(result)
+    }
+
     private func persist(_ list: [Connection]) throws {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

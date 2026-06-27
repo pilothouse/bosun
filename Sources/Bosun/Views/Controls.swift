@@ -83,6 +83,10 @@ final class BoxView: FlippedView {
 final class ClickRow: FlippedView {
     var onClick: (() -> Void)?
     var hoverColor: NSColor?
+    /// Fired as the cursor enters (`true`) and leaves (`false`) the row — used to reveal a row's
+    /// drag grip only on hover, so reorderable rows stay uncluttered at rest. Default nil: rows
+    /// that don't set it behave exactly as before.
+    var onHoverChange: ((Bool) -> Void)?
     /// When set, the row shows this cursor on hover (e.g. a pointing hand for link-like rows).
     var cursor: NSCursor?
     private var baseColor: CGColor?
@@ -111,10 +115,29 @@ final class ClickRow: FlippedView {
         addTrackingArea(t)
         tracking = t
     }
-    override func mouseEntered(with event: NSEvent) { if let h = hoverColor { layer?.backgroundColor = h.cgColor } }
-    override func mouseExited(with event: NSEvent) { layer?.backgroundColor = baseColor }
+    override func mouseEntered(with event: NSEvent) {
+        if let h = hoverColor { layer?.backgroundColor = h.cgColor }
+        onHoverChange?(true)
+    }
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = baseColor
+        onHoverChange?(false)
+    }
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func resetCursorRects() { if let cursor { addCursorRect(bounds, cursor: cursor) } }
+}
+
+/// A bare view that forwards its mouse-tracking events; used as a ☰ reorder grip so a drag on it
+/// moves the row while a click elsewhere on the row does the row's normal action. Shared by the
+/// connection rail and the Manage-organizations sheet.
+final class DragGrip: NSView {
+    var onDown: ((NSEvent) -> Void)?
+    var onDrag: ((NSEvent) -> Void)?
+    var onUp: ((NSEvent) -> Void)?
+    override var isFlipped: Bool { true }
+    override func mouseDown(with event: NSEvent) { onDown?(event) }
+    override func mouseDragged(with event: NSEvent) { onDrag?(event) }
+    override func mouseUp(with event: NSEvent) { onUp?(event) }
 }
 
 /// A horizontal scroll view (the terminal tab strip, #21) that floats its own thin scroll indicator

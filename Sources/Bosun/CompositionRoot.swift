@@ -10,6 +10,7 @@ struct ConnectionServices {
     let store: ConnectionStore
     let save: SaveConnectionUseCase
     let remove: RemoveConnectionUseCase
+    let reorder: ReorderConnectionsUseCase
 }
 
 /// The GitHub-auth seam, bundled so the App layer gets a ready-made sign-in use case plus the
@@ -43,7 +44,8 @@ enum CompositionRoot {
         return ConnectionServices(
             store: store,
             save: SaveConnectionUseCase(store: store),
-            remove: RemoveConnectionUseCase(store: store)
+            remove: RemoveConnectionUseCase(store: store),
+            reorder: ReorderConnectionsUseCase(store: store)
         )
     }
 

@@ -281,7 +281,7 @@ final class ManageOrgsSheet: FlippedView {
         row.onClick = { [weak self] in self?.toggle(org.id) }
 
         if draggable {
-            let handle = OrgDragGrip(frame: NSRect(x: z(6), y: 0, width: z(24), height: rowH - z(4)))
+            let handle = DragGrip(frame: NSRect(x: z(6), y: 0, width: z(24), height: rowH - z(4)))
             let hl = label("☰", sys(13), t.txt4, align: .center)
             hl.frame = NSRect(x: 0, y: (rowH - z(4) - z(16)) / 2, width: z(24), height: z(16)); handle.addSubview(hl)
             handle.onDown = { [weak self] e in self?.beginDrag(org.id, event: e) }
@@ -389,16 +389,4 @@ final class ManageOrgsSheet: FlippedView {
         draggingId = nil
         setFollowed(dragOrder)   // persists + triggers the settling rebuild
     }
-}
-
-/// A bare view that forwards its mouse-tracking events; used as the ☰ reorder grip so a drag
-/// there moves the row while a click elsewhere on the row toggles follow.
-private final class OrgDragGrip: NSView {
-    var onDown: ((NSEvent) -> Void)?
-    var onDrag: ((NSEvent) -> Void)?
-    var onUp: ((NSEvent) -> Void)?
-    override var isFlipped: Bool { true }
-    override func mouseDown(with event: NSEvent) { onDown?(event) }
-    override func mouseDragged(with event: NSEvent) { onDrag?(event) }
-    override func mouseUp(with event: NSEvent) { onUp?(event) }
 }

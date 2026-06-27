@@ -123,6 +123,7 @@ final class BosunView: NSView {
         rail.onDelete = { [weak self] id in self?.deleteConnection(id) }
         rail.onToggleFavorite = { [weak self] id in self?.toggleFavorite(id) }
         rail.onConnect = { [weak self] id in self?.connect(id) }
+        rail.onReorder = { [weak self] ids, from, to in self?.reorderConnections(ids, from, to) }
 
         repoPanel.onSelectRepo = { [weak self] owner, name in self?.data.selectRepo(owner: owner, name: name) }
         repoPanel.onSelectOrg = { [weak self] id in self?.data.selectOrg(id: id) }
@@ -165,6 +166,20 @@ final class BosunView: NSView {
         }
         let remove = connections.remove
         Task { try? await remove(id: uuid) }
+    }
+
+    /// Persist a drag-reorder of one rail section. The rail repositions its live rows during the
+    /// drag and reports the move; here we apply the same pure rule to `domainConnections` so the
+    /// settling rebuild lands in the new order, then write it through the use case. Mirrors
+    /// `toggleFavorite`: optimistic store update first, best-effort persist after.
+    private func reorderConnections(_ sectionIDs: [UUID], _ from: Int, _ to: Int) {
+        let current = store.domainConnections.map(\.id)
+        let next = ConnectionOrdering.reorder(current, sectionIDs: sectionIDs, from: from, to: to)
+        guard next != current else { return }
+        let byID = Dictionary(store.domainConnections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        store.domainConnections = next.compactMap { byID[$0] }   // triggers notify → rail rebuild
+        let reorder = connections.reorder
+        Task { try? await reorder(sectionIDs: sectionIDs, from: from, to: to) }
     }
 
     private func toggleFavorite(_ id: String) {

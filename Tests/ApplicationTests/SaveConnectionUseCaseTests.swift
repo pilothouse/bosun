@@ -18,6 +18,11 @@ final class SaveConnectionUseCaseTests: XCTestCase {
             }
         }
         func delete(id: UUID) { connections.removeAll { $0.id == id } }
+        func reorder(_ orderedIDs: [UUID]) {
+            connections.sort { a, b in
+                (orderedIDs.firstIndex(of: a.id) ?? .max) < (orderedIDs.firstIndex(of: b.id) ?? .max)
+            }
+        }
     }
 
     func testValidNewDraftIsSavedWithFreshID() async throws {
