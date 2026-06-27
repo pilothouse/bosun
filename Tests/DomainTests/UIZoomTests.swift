@@ -3,7 +3,7 @@ import XCTest
 
 /// Contract tests for `UIZoom`, the pure UI/terminal zoom rule persisted in
 /// `Preferences.uiZoomPercent`. They describe what it promises outward — its 100% default, its
-/// `[50, 200]%` range in 10% steps, the clamped in/out/reset transitions, and the percent→scale
+/// `[50, 200]%` range in 5% steps, the clamped in/out/reset transitions, and the percent→scale
 /// conversion the App layer multiplies fonts and layout geometry by — not how it works inside.
 /// Mirrors `SplitAxisTests`/`SplitLayoutTests`. Don't edit a contract test to make an
 /// implementation pass; if the contract is wrong, flag it.
@@ -20,14 +20,14 @@ final class UIZoomTests: XCTestCase {
         XCTAssertEqual(UIZoom(percent: 200).scale, 2.0)
     }
 
-    func testZoomInStepsUpByTen() {
-        XCTAssertEqual(UIZoom.default.zoomedIn().percent, 110)
-        XCTAssertEqual(UIZoom(percent: 110).zoomedIn().percent, 120)
+    func testZoomInStepsUpByFive() {
+        XCTAssertEqual(UIZoom.default.zoomedIn().percent, 105)
+        XCTAssertEqual(UIZoom(percent: 105).zoomedIn().percent, 110)
     }
 
-    func testZoomOutStepsDownByTen() {
-        XCTAssertEqual(UIZoom.default.zoomedOut().percent, 90)
-        XCTAssertEqual(UIZoom(percent: 90).zoomedOut().percent, 80)
+    func testZoomOutStepsDownByFive() {
+        XCTAssertEqual(UIZoom.default.zoomedOut().percent, 95)
+        XCTAssertEqual(UIZoom(percent: 95).zoomedOut().percent, 90)
     }
 
     func testZoomInClampsAtMaximum() {
@@ -52,16 +52,17 @@ final class UIZoomTests: XCTestCase {
         XCTAssertEqual(UIZoom(percent: -10).percent, 50, "a corrupt low value clamps to the min")
     }
 
-    func testInitSnapsToTenStep() {
-        // The persisted percent is always on the 10% grid (it only ever comes from these
+    func testInitSnapsToFiveStep() {
+        // The persisted percent is always on the 5% grid (it only ever comes from these
         // transitions), but a stray off-grid value snaps to the nearest step rather than yielding
         // an odd scale.
-        XCTAssertEqual(UIZoom(percent: 94).percent, 90)
-        XCTAssertEqual(UIZoom(percent: 96).percent, 100)
+        XCTAssertEqual(UIZoom(percent: 92).percent, 90)
+        XCTAssertEqual(UIZoom(percent: 93).percent, 95)
+        XCTAssertEqual(UIZoom(percent: 94).percent, 95)
     }
 
     func testCodableRoundTrip() throws {
-        for percent in stride(from: 50, through: 200, by: 10) {
+        for percent in stride(from: 50, through: 200, by: 5) {
             let zoom = UIZoom(percent: percent)
             let data = try JSONEncoder().encode(zoom)
             XCTAssertEqual(try JSONDecoder().decode(UIZoom.self, from: data), zoom)

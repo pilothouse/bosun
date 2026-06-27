@@ -76,7 +76,7 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// trailing — bottom in a vertical split, right in a horizontal one; `true` moves it leading
     /// (top/left). Applies to both axes.
     public var terminalLeading: Bool
-    /// The app-wide zoom level as a whole percent on a 10% grid in `[50, 200]` (see `UIZoom`). The
+    /// The app-wide zoom level as a whole percent on a 5% grid in `[50, 200]` (see `UIZoom`). The
     /// App layer scales both the UI fonts/geometry and the terminal font by `percent / 100`. `100`
     /// (1:1) by default, so an upgrade — and a saved blob from a build without this field — looks
     /// unchanged.
