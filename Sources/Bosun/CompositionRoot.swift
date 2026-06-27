@@ -15,6 +15,10 @@ struct ConnectionServices {
     let removeFolder: RemoveFolderUseCase
     let moveToFolder: MoveConnectionToFolderUseCase
     let reorderFolders: ReorderFoldersUseCase
+    /// The iCloud sync decorator wrapping `store`, present only when the user is signed into iCloud
+    /// (#83). The App layer drives it: `start` wires the remote-change reload, `setEnabled` follows
+    /// the Settings toggle. `nil` means local-only — no iCloud, no behavior change.
+    let icloud: UbiquitousConnectionStore?
 }
 
 /// The GitHub-auth seam, bundled so the App layer gets a ready-made sign-in use case plus the
@@ -44,7 +48,15 @@ enum CompositionRoot {
     }
 
     static func makeConnectionServices() -> ConnectionServices {
-        let store = JSONFileConnectionStore(url: JSONFileConnectionStore.defaultURL())
+        // Local JSON stays the offline source of truth. When the user is signed into iCloud, wrap it
+        // in the syncing decorator and let every use case write through that — otherwise the use cases
+        // talk to local directly (local-only, no iCloud touched). See `UbiquitousConnectionStore` (#83).
+        let local = JSONFileConnectionStore(url: JSONFileConnectionStore.defaultURL())
+        let icloud: UbiquitousConnectionStore? = FileManager.default.ubiquityIdentityToken != nil
+            ? UbiquitousConnectionStore(local: local)
+            : nil
+        let store: ConnectionStore
+        if let icloud { store = icloud } else { store = local }
         return ConnectionServices(
             store: store,
             save: SaveConnectionUseCase(store: store),
@@ -53,7 +65,8 @@ enum CompositionRoot {
             saveFolder: SaveFolderUseCase(store: store),
             removeFolder: RemoveFolderUseCase(store: store),
             moveToFolder: MoveConnectionToFolderUseCase(store: store),
-            reorderFolders: ReorderFoldersUseCase(store: store)
+            reorderFolders: ReorderFoldersUseCase(store: store),
+            icloud: icloud
         )
     }
 

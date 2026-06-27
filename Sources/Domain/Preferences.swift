@@ -89,6 +89,10 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// as a sorted array (a `Set` in memory). `nil` means never customized — every folder expanded.
     /// A stored id whose folder no longer exists is simply ignored on render. See #82.
     public var collapsedFolders: [String]?
+    /// Whether connections + folders sync across the user's devices via iCloud (#83). `false`
+    /// (opt-in) by default — nothing leaves the device until the user enables the Settings toggle.
+    /// Honored only when the user is signed into iCloud; otherwise the app runs local-only.
+    public var syncConnectionsViaICloud: Bool
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -143,7 +147,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         terminalLeading: Bool = false,
         uiZoomPercent: Int = 100,
         terminalBellBadge: Bool = true,
-        collapsedFolders: [String]? = nil
+        collapsedFolders: [String]? = nil,
+        syncConnectionsViaICloud: Bool = false
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -173,6 +178,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.uiZoomPercent = uiZoomPercent
         self.terminalBellBadge = terminalBellBadge
         self.collapsedFolders = collapsedFolders
+        self.syncConnectionsViaICloud = syncConnectionsViaICloud
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -211,7 +217,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             terminalLeading: try container.decodeIfPresent(Bool.self, forKey: .terminalLeading) ?? fallback.terminalLeading,
             uiZoomPercent: try container.decodeIfPresent(Int.self, forKey: .uiZoomPercent) ?? fallback.uiZoomPercent,
             terminalBellBadge: try container.decodeIfPresent(Bool.self, forKey: .terminalBellBadge) ?? fallback.terminalBellBadge,
-            collapsedFolders: try container.decodeIfPresent([String].self, forKey: .collapsedFolders) ?? fallback.collapsedFolders
+            collapsedFolders: try container.decodeIfPresent([String].self, forKey: .collapsedFolders) ?? fallback.collapsedFolders,
+            syncConnectionsViaICloud: try container.decodeIfPresent(Bool.self, forKey: .syncConnectionsViaICloud) ?? fallback.syncConnectionsViaICloud
         )
     }
 

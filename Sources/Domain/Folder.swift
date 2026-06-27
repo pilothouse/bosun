@@ -7,9 +7,13 @@ import Foundation
 public struct Folder: Sendable, Equatable, Identifiable, Codable {
     public let id: UUID
     public var name: String
+    /// When this folder was last written, stamped by the persistence layer for the per-record iCloud
+    /// merge (see `Connection.updatedAt` and `ConnectionSyncMerge`). A missing key decodes to `nil`.
+    public var updatedAt: Date?
 
-    public init(id: UUID, name: String) {
+    public init(id: UUID, name: String, updatedAt: Date? = nil) {
         self.id = id
         self.name = name
+        self.updatedAt = updatedAt
     }
 }

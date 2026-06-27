@@ -148,19 +148,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               connections services: ConnectionServices,
                               preferences: PreferencesStore,
                               then auth: GitHubAuthController) {
+        let connectionStore = services.store
         Task { @MainActor in
             store.applyPersisted(await preferences.load())
-            if let list = try? await services.store.all() {
-                store.domainConnections = list
-                if !list.contains(where: { $0.id.uuidString == store.selectedConnId }) {
-                    store.selectedConnId = list.first?.id.uuidString ?? ""
+            await Self.loadConnections(into: store, from: connectionStore)
+            if let icloud = services.icloud {
+                // iCloud sync (#83): a remote merge (another device wrote) re-reads the merged store
+                // into the rail via `notify`; the Settings toggle flips sync on/off; the persisted
+                // enabled state is applied once here so a returning user resumes syncing at launch.
+                await icloud.start { [weak store] in
+                    guard let store else { return }
+                    Task { @MainActor in await Self.loadConnections(into: store, from: connectionStore) }
                 }
+                store.onSyncEnabledChanged = { enabled in Task { await icloud.setEnabled(enabled) } }
+                await icloud.setEnabled(store.syncConnectionsICloud)
             }
-            store.domainFolders = (try? await services.store.folders()) ?? []
             // Reopen the saved terminal tabs now that the connections they reference are loaded.
             self.root?.restoreTerminalTabs()
             auth.restore()   // recompute signed-in state from the Keychain
         }
+    }
+
+    /// Load (or reload) persisted connections + folders into the rail, keeping the selected connection
+    /// valid (a removed one falls back to the first). Shared by launch restore and the iCloud
+    /// remote-change handler (#83); a `static` so the `@Sendable` handler captures no `self`.
+    @MainActor
+    private static func loadConnections(into store: Store, from connectionStore: ConnectionStore) async {
+        if let list = try? await connectionStore.all() {
+            store.domainConnections = list
+            if !list.contains(where: { $0.id.uuidString == store.selectedConnId }) {
+                store.selectedConnId = list.first?.id.uuidString ?? ""
+            }
+        }
+        store.domainFolders = (try? await connectionStore.folders()) ?? []
     }
 
     @objc private func newConnection() {

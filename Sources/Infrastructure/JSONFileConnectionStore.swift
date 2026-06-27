@@ -92,6 +92,15 @@ public actor JSONFileConnectionStore: ConnectionStore {
                     folders: Self.applyOrder(orderedIDs, to: list, id: \.id))
     }
 
+    // MARK: Bulk
+
+    /// Overwrite both collections wholesale, bypassing the per-record upsert. The iCloud sync
+    /// decorator (`UbiquitousConnectionStore`) uses this to apply a merge result in one atomic write
+    /// — the normal use cases never call it (they go through `save`/`delete`/`reorder`).
+    public func replaceAll(connections: [Connection], folders: [Folder]) throws {
+        try persist(connections: connections, folders: folders)
+    }
+
     // MARK: Storage
 
     /// Re-sort `items` into `orderedIDs`; any item the order omits keeps its current relative

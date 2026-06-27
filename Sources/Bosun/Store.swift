@@ -197,6 +197,21 @@ final class Store {
     /// Global, persisted; the dock reads it in `bellRang` via `TerminalBellPolicy`. On by default.
     var terminalBellBadge = true { didSet { if oldValue != terminalBellBadge { changed() } } }
 
+    /// Whether connections + folders sync via iCloud (#83). Opt-in (off by default). Persisted via
+    /// `changed()` like `terminalBellBadge`; `onSyncEnabledChanged` lets the App layer flip the
+    /// underlying iCloud store, which runs an initial sync when turned on. Guarded by `isLoading`
+    /// (the `windowAlpha` precedent) so restoring the saved value at launch doesn't re-fire the hook —
+    /// `AppDelegate` applies the persisted state to the store explicitly.
+    var syncConnectionsICloud = false {
+        didSet {
+            guard !isLoading, oldValue != syncConnectionsICloud else { return }
+            onSyncEnabledChanged?(syncConnectionsICloud)
+            changed()
+        }
+    }
+    /// Set by the App layer to enable/disable the iCloud connection store when the toggle flips.
+    var onSyncEnabledChanged: ((Bool) -> Void)?
+
     /// Terminal height drives layout only (no content rebuild), so it is not part of `notify`.
     /// It changes on every drag frame, so it is persisted on gesture end (see
     /// `TerminalContainerView`), not here.
@@ -362,7 +377,8 @@ final class Store {
             terminalLeading: terminalLeading,
             uiZoomPercent: uiZoom.percent,
             terminalBellBadge: terminalBellBadge,
-            collapsedFolders: collapsedFolderIds.sorted())
+            collapsedFolders: collapsedFolderIds.sorted(),
+            syncConnectionsViaICloud: syncConnectionsICloud)
         Task { await preferences.save(snapshot) }
     }
 
@@ -397,6 +413,7 @@ final class Store {
         terminalLeading = p.terminalLeading
         terminalBellBadge = p.terminalBellBadge
         collapsedFolderIds = Set(p.collapsedFolders ?? [])
+        syncConnectionsICloud = p.syncConnectionsViaICloud
         // Seats the saved zoom: the didSet mirrors it into the `Controls` global via `setUIScale`
         // even now (it's not gated on `isLoading`), so the final `refresh()` below lays the whole
         // tree out at the restored scale and `syncTerminal` pushes the matching terminal font size.

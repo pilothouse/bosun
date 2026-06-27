@@ -50,7 +50,9 @@ final class SettingsSheet: FlippedView {
         let repoRowY = repoY + z(30)      // the skip-empty checkbox row
         let consoleY = repoY + z(72)      // Console section, below Repositories
         let consoleRowY = consoleY + z(30) // the activity-badge checkbox row
-        let accY = consoleY + z(72)       // Account section, shifted down to make room for Console
+        let connY = consoleY + z(72)      // Connections section (iCloud sync), below Console
+        let connRowY = connY + z(30)      // the sync checkbox row
+        let accY = connY + z(72)          // Account section, shifted down to make room for Connections
         let accRowY = accY + z(34)
         let btnH: CGFloat = z(30)
         let btnY = accRowY + z(46)
@@ -158,6 +160,26 @@ final class SettingsSheet: FlippedView {
         let bellName = label("Show activity badge on background tabs", sys(12.5), t.txt)
         bellName.frame = NSRect(x: z(34), y: z(6), width: rowW - z(60), height: z(16)); bellRow.addSubview(bellName)
         card.addSubview(bellRow)
+
+        // ── Connections: sync across the user's devices via iCloud (#83). Opt-in; disabled (with a
+        // hint) when the user isn't signed into iCloud. A toggle flips `syncConnectionsICloud`, which
+        // enables/disables the iCloud store and rebuilds this sheet so the glyph restates — the
+        // skip-empty/bell pattern above.
+        let connDiv = BoxView(bg: t.line2); connDiv.frame = NSRect(x: pad, y: connY, width: innerW, height: 1); card.addSubview(connDiv)
+        let connHdr = label("CONNECTIONS", mono(9.5, .semibold), t.txt4)
+        connHdr.frame = NSRect(x: pad, y: connY + z(12), width: z(200), height: z(14)); card.addSubview(connHdr)
+        let iCloudOn = FileManager.default.ubiquityIdentityToken != nil
+        let syncRow = ClickRow(bg: nil, radius: z(9))
+        syncRow.hoverColor = iCloudOn ? t.hover : nil
+        syncRow.frame = NSRect(x: pad - z(9), y: connRowY, width: rowW, height: z(28))
+        if iCloudOn { syncRow.onClick = { [weak self] in self?.store.syncConnectionsICloud.toggle() } }
+        let synced = iCloudOn && store.syncConnectionsICloud
+        let syncCheck = label(synced ? "☑" : "☐", sys(13), synced ? t.accent : t.txt4)
+        syncCheck.frame = NSRect(x: z(10), y: z(6), width: z(16), height: z(16)); syncRow.addSubview(syncCheck)
+        let syncName = label(iCloudOn ? "Sync connections via iCloud" : "Sign in to iCloud to sync connections",
+                             sys(12.5), iCloudOn ? t.txt : t.txt4)
+        syncName.frame = NSRect(x: z(34), y: z(6), width: rowW - z(60), height: z(16)); syncRow.addSubview(syncName)
+        card.addSubview(syncRow)
 
         // ── Account: GitHub sign-in. ──
         let accDiv = BoxView(bg: t.line2); accDiv.frame = NSRect(x: pad, y: accY, width: innerW, height: 1); card.addSubview(accDiv)

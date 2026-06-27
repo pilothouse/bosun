@@ -3,7 +3,7 @@
 <!--
   Hardened-runtime entitlements for Bosun (required by notarization).
 
-  Intentionally EMPTY (no exception entitlements). Why nothing is needed:
+  One capability entitlement, no hardened-runtime exceptions. Why nothing else is needed:
     - libghostty is *statically* linked into the Bosun Mach-O, not a separate
       dylib, so there is nothing to validate against — `disable-library-validation`
       is unnecessary.
@@ -11,6 +11,12 @@
       allows without any entitlement.
     - Metal shaders are precompiled at build time (the Metal Toolchain step), so
       no runtime JIT / writable-executable memory is required.
+
+  iCloud key-value sync (#83): connections + folders sync via NSUbiquitousKeyValueStore,
+  which requires the ubiquity-kvstore entitlement below. `$(TeamIdentifierPrefix)` is
+  expanded by codesign from the signing identity's team; the value pairs with an App ID
+  that has the iCloud (key-value store) capability + provisioning. Carries no secrets —
+  the synced payload is connection metadata only (SSH auth stays in ssh-agent/keys).
 
   If a hardened-runtime launch ever faults with a code-signing error (e.g. an
   EXC_BAD_ACCESS in a JIT/W^X path), add the *minimal* exception here and re-test:
@@ -21,5 +27,7 @@
 -->
 <plist version="1.0">
 <dict>
+	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
+	<string>$(TeamIdentifierPrefix)com.jeckerson.bosun</string>
 </dict>
 </plist>
