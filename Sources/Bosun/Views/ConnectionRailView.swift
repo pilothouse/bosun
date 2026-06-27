@@ -67,6 +67,12 @@ final class ConnectionRailView: FlippedView {
     private var dragSectionTop: CGFloat = 0
     private var dragReorderOnly = false                     // a favorites-section drag: reorder, never move folders
     private weak var dragHighlightedHeader: NSView?         // the drop-target header tinted during a move drag
+    // Whole-row drag gesture (no visible grip): a press that moves past `dragThreshold` becomes a
+    // drag, otherwise it selects on release. Lets the entire row act as the drag handle.
+    private var rowDownToken: String?
+    private var rowDownPoint: NSPoint = .zero
+    private var rowDragging = false
+    private let dragThreshold: CGFloat = 4
 
     // Cross-folder move targets, captured per build: each folder/Ungrouped section's drop band
     // (`folderId == nil` is Ungrouped; Favorites is never a target) and its header view, so a drag
@@ -170,31 +176,11 @@ final class ConnectionRailView: FlippedView {
     }
 
     private func connRow(_ c: Connection, currentFolderId: String?, token: String,
-                         width: CGFloat, t: Theme, draggable: Bool) -> ClickRow {
+                         width: CGFloat, t: Theme) -> ClickRow {
         let selected = store.selectedConnId == c.id
         let row = ClickRow(bg: selected ? t.accentbg : nil)
         row.hoverColor = t.hover
         row.frame = NSRect(x: 0, y: 0, width: width, height: z(42))
-        // Single click selects; a quick second click on the same row opens a console (SSH connects,
-        // a folder opens a shell there).
-        row.onClick = { [weak self] in self?.handleRowClick(c.id) }
-
-        // Drag grip: a ☰ handle in the left gutter, revealed only while the row is hovered so the
-        // resting list stays uncluttered. A drag reorders the row within its section, or — for a
-        // folder/Ungrouped row — drops it onto another section to move folders; a click elsewhere on
-        // the row still selects (the grip eats only its own zone).
-        if draggable {
-            let grip = DragGrip(frame: NSRect(x: 0, y: 0, width: z(14), height: z(42)))
-            grip.alphaValue = 0
-            let gl = label("☰", sys(11), t.txt4, align: .center)
-            gl.frame = NSRect(x: 0, y: (z(42) - z(14)) / 2, width: z(14), height: z(14))
-            grip.addSubview(gl)
-            grip.onDown = { [weak self] e in self?.beginDrag(token, event: e) }
-            grip.onDrag = { [weak self] e in self?.updateDrag(event: e) }
-            grip.onUp = { [weak self] _ in self?.endDrag() }
-            row.addSubview(grip)
-            row.onHoverChange = { [weak grip] hovering in grip?.alphaValue = hovering ? 1 : 0 }
-        }
 
         if selected {
             let bar = BoxView(bg: t.accent)
@@ -217,7 +203,18 @@ final class ConnectionRailView: FlippedView {
         dot.frame.origin = NSPoint(x: width - z(38), y: z(18))
         row.addSubview(dot)
 
-        // Clickable star toggles favorite (independent of the row's select-on-click).
+        // The whole row is the drag handle (no visible grip). A transparent catcher over the row
+        // turns a press-and-move past a small threshold into a drag — reorder within the section, or
+        // drop onto another folder/Ungrouped band to move it — while a press that doesn't move
+        // selects on release (a quick second select opens). It sits above the labels so the gesture
+        // works anywhere on the row; the star hit-zone is added after it so favoriting still works.
+        let drag = DragGrip(frame: NSRect(x: 0, y: 0, width: width, height: z(42)))
+        drag.onDown = { [weak self] e in self?.rowMouseDown(token, event: e) }
+        drag.onDrag = { [weak self] e in self?.rowMouseDragged(event: e) }
+        drag.onUp = { [weak self] _ in self?.rowMouseUp(c.id) }
+        row.addSubview(drag)
+
+        // Clickable star toggles favorite (independent of the row's select/drag), above the catcher.
         let starHit = ClickRow(radius: z(5))
         starHit.frame = NSRect(x: width - z(30), y: z(8), width: z(24), height: z(26))
         starHit.hoverColor = t.hover
@@ -243,6 +240,8 @@ final class ConnectionRailView: FlippedView {
             menu.addItem(.separator()); menu.addItem(moveItem)
         }
         row.menu = menu
+        drag.menu = menu        // the catcher covers most of the row, so it carries the menu too
+        starHit.menu = menu
         return row
     }
 
@@ -512,33 +511,25 @@ final class ConnectionRailView: FlippedView {
 
         let sections = store.connectionSections
         let hasFolders = sections.contains { if case .folder = $0.kind { return true }; return false }
-        // A row can be dragged when it can go *somewhere*: reorder within a 2+ section, or move when
-        // there are 2+ folder/Ungrouped bands to land on. Favorites is reorder-only.
-        let bandCount = sections.filter {
-            switch $0.kind { case .folder, .ungrouped: return true; case .favorites: return false }
-        }.count
 
         // Lay out one section's connection rows, registering each for drag under a per-row token.
-        // `folderId` is the move origin (nil = Ungrouped/Favorites); `reorderOnly` blocks cross-folder
-        // moves (Favorites and the no-folders flat list).
-        func rows(_ items: [Connection], folderId: String?, sectionTag: String,
-                  draggable: Bool, reorderOnly: Bool) {
+        // Every connection is draggable; `folderId` is the move origin (nil = Ungrouped/Favorites),
+        // and `reorderOnly` blocks cross-folder moves (Favorites and the no-folders flat list).
+        func rows(_ items: [Connection], folderId: String?, sectionTag: String, reorderOnly: Bool) {
             let connIds = items.map(\.id)
             let tokens = items.map { "\(sectionTag)/\($0.id)" }
             let firstRowTop = y
             for (i, c) in items.enumerated() {
                 let token = tokens[i]
-                let r = connRow(c, currentFolderId: folderId, token: token, width: w, t: t, draggable: draggable)
+                let r = connRow(c, currentFolderId: folderId, token: token, width: w, t: t)
                 r.frame.origin.y = y; doc.addSubview(r); y += z(42)
-                if draggable {
-                    rowsById[token] = r
-                    sectionTokensById[token] = tokens
-                    sectionConnIdsById[token] = connIds
-                    sectionTopById[token] = firstRowTop
-                    rowConnId[token] = c.id
-                    rowFolderById[token] = folderId
-                    dragReorderOnlyById[token] = reorderOnly
-                }
+                rowsById[token] = r
+                sectionTokensById[token] = tokens
+                sectionConnIdsById[token] = connIds
+                sectionTopById[token] = firstRowTop
+                rowConnId[token] = c.id
+                rowFolderById[token] = folderId
+                dragReorderOnlyById[token] = reorderOnly
             }
         }
 
@@ -550,7 +541,7 @@ final class ConnectionRailView: FlippedView {
                 guard !items.isEmpty else { continue }
                 let head = sectionHeader("FAVORITES", accentStar: true, count: "\(items.count)", width: w, t: t)
                 head.frame.origin.y = y; doc.addSubview(head); y += z(28)
-                rows(items, folderId: nil, sectionTag: "fav", draggable: items.count >= 2, reorderOnly: true)
+                rows(items, folderId: nil, sectionTag: "fav", reorderOnly: true)
                 y += z(8); shownAnyRow = true
 
             case let .folder(id, name):
@@ -560,8 +551,7 @@ final class ConnectionRailView: FlippedView {
                 let bandTop = y
                 header.frame.origin.y = y; doc.addSubview(header); y += z(28)
                 if !collapsed {
-                    let draggable = items.count >= 2 || bandCount >= 2
-                    rows(items, folderId: id, sectionTag: id, draggable: draggable, reorderOnly: false)
+                    rows(items, folderId: id, sectionTag: id, reorderOnly: false)
                     shownAnyRow = shownAnyRow || !items.isEmpty
                 }
                 dropBands.append((folderId: id, top: bandTop, bottom: y, header: header))
@@ -573,13 +563,12 @@ final class ConnectionRailView: FlippedView {
                     let header = sectionHeader("UNGROUPED", accentStar: false, count: "\(section.connections.count)", width: w, t: t)
                     let bandTop = y
                     header.frame.origin.y = y; doc.addSubview(header); y += z(28)
-                    let draggable = items.count >= 2 || bandCount >= 2
-                    rows(items, folderId: nil, sectionTag: "ung", draggable: draggable, reorderOnly: false)
+                    rows(items, folderId: nil, sectionTag: "ung", reorderOnly: false)
                     dropBands.append((folderId: nil, top: bandTop, bottom: y, header: header))
                     y += z(8)
                 } else {
                     // No folders yet: a flat list, no header (the no-folders default, #82).
-                    rows(items, folderId: nil, sectionTag: "ung", draggable: items.count >= 2, reorderOnly: true)
+                    rows(items, folderId: nil, sectionTag: "ung", reorderOnly: true)
                     y += z(8)
                 }
                 shownAnyRow = shownAnyRow || !items.isEmpty
@@ -612,6 +601,30 @@ final class ConnectionRailView: FlippedView {
     }
 
     // MARK: Drag — reorder within a section, or move a connection across folders (#82)
+
+    /// The whole connection row is a drag handle. A press records the start; a drag past the
+    /// threshold begins the gesture; a release without a drag is a plain select/open click.
+    private func rowMouseDown(_ token: String, event: NSEvent) {
+        rowDownToken = token
+        rowDownPoint = event.locationInWindow
+        rowDragging = false
+    }
+    private func rowMouseDragged(event: NSEvent) {
+        guard let token = rowDownToken else { return }
+        if !rowDragging {
+            let moved = max(abs(event.locationInWindow.x - rowDownPoint.x),
+                            abs(event.locationInWindow.y - rowDownPoint.y))
+            guard moved >= dragThreshold else { return }
+            rowDragging = true
+            beginDrag(token, event: event)
+        }
+        updateDrag(event: event)
+    }
+    private func rowMouseUp(_ connId: String) {
+        if rowDragging { endDrag() } else { handleRowClick(connId) }
+        rowDownToken = nil
+        rowDragging = false
+    }
 
     private func beginDrag(_ token: String, event: NSEvent) {
         guard let doc = listDoc, let row = rowsById[token],
@@ -678,12 +691,17 @@ final class ConnectionRailView: FlippedView {
     private func endDrag() {
         guard let token = draggingId else { return }
         draggingId = nil
+        // Snapshot the drop target *before* clearing the highlight — `clearDropHighlight` resets
+        // `dragTargetActive`, so reading it after would always miss the move.
+        let movedToFolder = dragTargetActive
+        let targetFolderId = dragTargetFolderId
         clearDropHighlight()
+        dragTargetFolderId = nil
         // A move across folders wins when the drop landed on another section's band; otherwise it's
         // a within-section reorder (a single element shifting slots). Either way the App layer
         // persists and the resulting store update triggers the settling rebuild; a no-op just settles.
-        if dragTargetActive, let connId = rowConnId[token] {
-            onMoveConnection?(connId, dragTargetFolderId)
+        if movedToFolder, let connId = rowConnId[token] {
+            onMoveConnection?(connId, targetFolderId)
         } else if let original = sectionConnIdsById[token],
                   let from = sectionTokensById[token]?.firstIndex(of: token),
                   let to = dragOrder.firstIndex(of: token), from != to {
@@ -691,8 +709,6 @@ final class ConnectionRailView: FlippedView {
         } else {
             repopulateList()
         }
-        dragTargetActive = false
-        dragTargetFolderId = nil
     }
 
     private func clearDropHighlight() {
