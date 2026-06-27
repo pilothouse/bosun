@@ -85,6 +85,9 @@ final class TerminalContainerView: FlippedView {
     private var lastFocusedTabId: UUID?
 
     var onRelayout: (() -> Void)?
+    /// Fired when the active tab changes or the active tab's label changes, so the App layer can
+    /// retitle the window (#73). Lighter than `onRelayout` — it never triggers a parent relayout.
+    var onActiveTitleChange: (() -> Void)?
 
     private let handle = DragHandle()
     private var startHeight: CGFloat = 240
@@ -170,6 +173,11 @@ final class TerminalContainerView: FlippedView {
 
     var activeSurfaceView: GhosttySurfaceView? {
         tabs.activeID.flatMap { views[$0]?.surfaceView }
+    }
+
+    /// The active tab's current label, for the macOS window title (#73). `nil` when the dock is empty.
+    var activeTabTitle: String? {
+        tabs.activeID.flatMap { views[$0]?.title }
     }
 
     /// Console-only font zoom (⌥⌘+ / ⌥⌘− / ⌥⌘0): adjust just the focused terminal's font via
@@ -352,6 +360,7 @@ final class TerminalContainerView: FlippedView {
                                                           locked: session.lockTitle) else { return }
         session.title = resolved
         needsLayout = true   // relabel the tab strip; no surface churn
+        if id == tabs.activeID { onActiveTitleChange?() }   // visible tab's server title changed → retitle window
     }
 
     private func requestClose(id: UUID, processAlive: Bool) {
@@ -451,6 +460,7 @@ final class TerminalContainerView: FlippedView {
     private func refresh() {
         needsLayout = true
         onRelayout?()
+        onActiveTitleChange?()   // active tab may have changed (open/close/select/goto/restore) → retitle window
     }
 
     // MARK: Layout

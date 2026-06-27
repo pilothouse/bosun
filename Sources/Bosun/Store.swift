@@ -166,6 +166,10 @@ final class Store {
     }
     /// Set by the App layer to apply opacity to the live `NSWindow`.
     var onWindowAlpha: ((CGFloat) -> Void)?
+    /// Set by the App layer to apply the active console tab's title to the live `NSWindow.title` (#73).
+    /// Pushed directly like `onWindowAlpha`, not via `notify`, since the title is derived from the
+    /// terminal dock (not store state) and recomputed by `BosunView` when the active tab changes.
+    var onWindowTitle: ((String) -> Void)?
 
     /// Persisted connections (source of truth), loaded from the store at launch and mutated by
     /// the New-connection flow. The id of the connection the sheet is editing (nil = adding).
@@ -278,6 +282,11 @@ final class Store {
         if isOrgScope { return visibleOrgs.first { $0.id == selectedOrgId }?.name ?? selectedOrgId }
         return selectedRepoTitle
     }
+
+    /// The active console tab's title (#73), mirrored here by the App layer so the titlebar breadcrumb
+    /// can show it as its last segment. Plain state, not part of `notify`: the App layer relayouts the
+    /// titlebar directly when it changes, avoiding a full UI rebuild on every shell-title update.
+    var activeConsoleTitle = ""
 
     /// `owner/name` of the selected org's repos in panel order — the section order for the aggregate
     /// org view. Empty when no org is selected.

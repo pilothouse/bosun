@@ -82,6 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.window = win
         // Opacity is applied straight to the live window; restoring prefs (below) fires this once.
         store.onWindowAlpha = { [weak win] alpha in win?.alphaValue = alpha }
+        // The window title tracks the active console tab (#73); BosunView pushes the new title here
+        // whenever the active tab or its label changes.
+        store.onWindowTitle = { [weak win] title in win?.title = title }
         // Restore prefs first, then recompute signed-in state from the Keychain. The order matters:
         // `auth.restore()` can fire `data.load()`, which reconciles the *restored* `selectedRepoKey`
         // against the live orgs — so the key must be applied before the data load can run.

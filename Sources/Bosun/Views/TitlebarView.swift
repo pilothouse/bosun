@@ -85,7 +85,12 @@ final class TitlebarView: FlippedView {
         addSubview(toggle)
         x += z(40)
 
-        let name = label(store.selectedConn.name, sys(12.5, .semibold), t.txt)
+        // First segment: the active console tab — the terminal you're in (#73) — so switching or
+        // renaming a console is visible in the always-on chrome (`NSWindow.title` tracks the same value
+        // for Mission Control). Falls back to the selected connection's name until a console title
+        // exists (briefly, at launch).
+        let primary = store.activeConsoleTitle.isEmpty ? store.selectedConn.name : store.activeConsoleTitle
+        let name = label(primary, sys(12.5, .semibold), t.txt)
         name.frame = NSRect(x: x, y: textY, width: fitW(name), height: z(16))
         addSubview(name)
         x += name.frame.width + z(7)

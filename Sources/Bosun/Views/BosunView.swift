@@ -133,6 +133,9 @@ final class BosunView: NSView {
         center.detail.onSubmitComment = { [weak self] body, done in self?.data.submitComment(body: body, completion: done) }
         center.detail.onRefreshDetail = { [weak self] in self?.data.refreshDetail() }
 
+        // Reflect the active console tab — or its label — wherever it's shown whenever it changes (#73).
+        center.terminal.onActiveTitleChange = { [weak self] in self?.updateActiveConsoleTitle() }
+
         store.observe { [weak self] in self?.onChange() }
         applyTheme()
     }
@@ -307,6 +310,19 @@ final class BosunView: NSView {
         // Only the live libghostty surface takes keystrokes; the error placeholder must not grab focus.
         guard let term = center.terminal.activeSurfaceView else { return }
         window?.makeFirstResponder(term)
+    }
+
+    /// Reflect the active console tab's label (#73) in both places it shows: the macOS window title
+    /// (`NSWindow.title`, for Mission Control / the Dock window list) and the titlebar breadcrumb's
+    /// last segment. The label already identifies the console — the connection name for a connection
+    /// tab (locked, so the server's OSC title can't overwrite it, per `TerminalTitlePolicy` / #29), or
+    /// the shell/cwd for a local tab — so switching or renaming the active tab updates both. The
+    /// titlebar is relaid out directly (not via `store.notify`) to avoid a full UI rebuild per update.
+    private func updateActiveConsoleTitle() {
+        let console = center.terminal.activeTabTitle
+        store.onWindowTitle?(Domain.WindowTitlePolicy.title(console: console))
+        store.activeConsoleTitle = console ?? ""
+        titlebar.apply()
     }
 
     /// Focus the connection-rail search field (the ⌘K target). The field exists only when the rail is
