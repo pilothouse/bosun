@@ -81,6 +81,10 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// (1:1) by default, so an upgrade — and a saved blob from a build without this field — looks
     /// unchanged.
     public var uiZoomPercent: Int
+    /// Whether a background console tab raises an activity badge (amber dot + underline) when it
+    /// rings the bell or posts a desktop notification. `true` (opt-out) by default — the active tab
+    /// never flags; see `TerminalBellPolicy` (#74).
+    public var terminalBellBadge: Bool
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -133,7 +137,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         splitAxis: String? = nil,
         terminalFraction: Double = SplitLayout.defaultFraction,
         terminalLeading: Bool = false,
-        uiZoomPercent: Int = 100
+        uiZoomPercent: Int = 100,
+        terminalBellBadge: Bool = true
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -161,6 +166,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.terminalFraction = terminalFraction
         self.terminalLeading = terminalLeading
         self.uiZoomPercent = uiZoomPercent
+        self.terminalBellBadge = terminalBellBadge
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -197,7 +203,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             splitAxis: try container.decodeIfPresent(String.self, forKey: .splitAxis) ?? fallback.splitAxis,
             terminalFraction: try container.decodeIfPresent(Double.self, forKey: .terminalFraction) ?? fallback.terminalFraction,
             terminalLeading: try container.decodeIfPresent(Bool.self, forKey: .terminalLeading) ?? fallback.terminalLeading,
-            uiZoomPercent: try container.decodeIfPresent(Int.self, forKey: .uiZoomPercent) ?? fallback.uiZoomPercent
+            uiZoomPercent: try container.decodeIfPresent(Int.self, forKey: .uiZoomPercent) ?? fallback.uiZoomPercent,
+            terminalBellBadge: try container.decodeIfPresent(Bool.self, forKey: .terminalBellBadge) ?? fallback.terminalBellBadge
         )
     }
 

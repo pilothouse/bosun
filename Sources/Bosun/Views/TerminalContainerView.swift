@@ -41,6 +41,10 @@ final class TerminalSession {
     /// When set, the server/OSC title is ignored so the tab keeps `title` (issue #29). True for
     /// named-connection tabs; `var` so a user-renamed local tab can lock too (#30).
     var lockTitle: Bool
+    /// Ephemeral activity flag: this tab rang the bell / posted a notification while in the
+    /// background (#74). Drives the amber badge in `tabView`; cleared on focus. Not persisted —
+    /// kept out of `TerminalTabState` / `snapshotTabs`.
+    var hasBell = false
 
     init(view: NSView, title: String, dot: NSColor, origin: TabOrigin, lockTitle: Bool = false) {
         self.view = view
@@ -274,7 +278,24 @@ final class TerminalContainerView: FlippedView {
         surface.onGotoTab = { [weak self] jump in
             DispatchQueue.main.async { self?.gotoTab(jump) }
         }
+        surface.onBell = { [weak self] in
+            DispatchQueue.main.async { self?.bellRang(id: id) }
+        }
         return session
+    }
+
+    /// A surface rang the bell / posted a notification. Flag the tab only when it's in the
+    /// background and the setting is on (the active tab is already on screen — see
+    /// `TerminalBellPolicy`). The `!hasBell` guard coalesces a spammy background job into a single
+    /// strip repaint; `needsLayout` (not `refresh()`) keeps it to the strip — no parent relayout
+    /// or window retitle.
+    private func bellRang(id: UUID) {
+        guard let session = views[id],
+              TerminalBellPolicy.shouldFlag(isActiveTab: id == tabs.activeID,
+                                            enabled: store.terminalBellBadge),
+              !session.hasBell else { return }
+        session.hasBell = true
+        needsLayout = true
     }
 
     /// Insert a prepared session into the model + map (no relayout, no persist); used to seed the
@@ -455,6 +476,12 @@ final class TerminalContainerView: FlippedView {
     private func focusActive() {
         guard let view = activeSurfaceView else { return }
         window?.makeFirstResponder(view)
+        // The single choke point every focus path funnels through, so clearing the badge here
+        // covers click / ⌘-number / next-prev / open / close / restore / rename (#74).
+        if let id = tabs.activeID, let session = views[id], session.hasBell {
+            session.hasBell = false
+            needsLayout = true
+        }
     }
 
     private func refresh() {
@@ -541,20 +568,14 @@ final class TerminalContainerView: FlippedView {
         if available {
             // Tabs + the `+` button live in a scrolling document so they stay reachable when they
             // overflow the window width (#21). The doc is inset to clear the pinned resize chevron.
-            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: w - z(36), height: barH))
+            // `AutoHideScrollView` floats its own slim indicator instead of an AppKit scroller (which
+            // would reserve a band that clips each tab's bottom underline). It stays hidden at rest and
+            // reveals only while scrolling, fading ~1s after. (#21 follow-up)
+            let scroll = AutoHideScrollView(frame: NSRect(x: 0, y: 0, width: w - z(36), height: barH))
             scroll.drawsBackground = false
-            scroll.hasHorizontalScroller = true
-            scroll.hasVerticalScroller = false   // a horizontal-only strip; never reserve vertical space
-            scroll.autohidesScrollers = true     // only show the bar when the tabs actually overflow
-            // Legacy (not overlay) so the slim indicator stays *persistently* visible while overflowing,
-            // and renders identically regardless of the system "Show scroll bars" setting — overlay would
-            // fade out when idle and, under a mouse, the system can still present a fat legacy bar. The
-            // default legacy scroller is ~15pt and would swamp the 32pt strip, so ThinScroller pins it to
-            // ~7pt (the bar's bottom border is drawn on `bar`, not here, so it's unaffected). (#21 follow-up)
-            scroll.scrollerStyle = .legacy
+            scroll.knobColor = t.txt4
             scroll.horizontalScrollElasticity = .allowed
             scroll.verticalScrollElasticity = .none
-            scroll.horizontalScroller = ThinScroller()
 
             let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w - z(36), height: barH))
             var x: CGFloat = 0
@@ -594,6 +615,9 @@ final class TerminalContainerView: FlippedView {
             } else if tabs.activeID == nil {
                 lastFocusedTabId = nil
             }
+            // Resting state: the indicator is invisible until the user actually scrolls (the programmatic
+            // scrolls above don't go through `scrollWheel`, so they leave it hidden).
+            scroll.hideKnobNow()
         } else {
             let nm = label("terminal unavailable", sys(11.5), t.txt3)
             nm.frame = NSRect(x: z(14), y: z(8), width: w - z(28), height: z(16)); bar.addSubview(nm)
@@ -651,9 +675,12 @@ final class TerminalContainerView: FlippedView {
         tab.frame = NSRect(x: x, y: 0, width: tw, height: barH)
         tab.onClick = { [weak self] in self?.handleTabClick(id: session.id) }
 
-        let underline = BoxView(bg: active ? Status.green : .clear)
+        // A background tab that rang/notified reads as "wants attention": amber underline + dot,
+        // mirroring the active tab's green underline (#74). The active tab never flags.
+        let flagged = session.hasBell && !active
+        let underline = BoxView(bg: active ? Status.green : (flagged ? Status.yellow : .clear))
         underline.frame = NSRect(x: 0, y: barH - z(2), width: tw, height: z(2)); tab.addSubview(underline)
-        let d = Dot(session.dot, z(7)); d.frame.origin = NSPoint(x: z(13), y: (barH - z(7)) / 2); tab.addSubview(d)
+        let d = Dot(flagged ? Status.yellow : session.dot, z(7)); d.frame.origin = NSPoint(x: z(13), y: (barH - z(7)) / 2); tab.addSubview(d)
         let nameFrame = NSRect(x: z(28), y: z(8), width: tw - z(28) - z(24), height: z(16))
         if session.id == editingTabId {
             tab.addSubview(renameEditor(session.title, frame: nameFrame, t: t))

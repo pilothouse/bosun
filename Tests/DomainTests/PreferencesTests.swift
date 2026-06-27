@@ -177,6 +177,30 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNil(decoded.selectedRepoKey)
     }
 
+    func testTerminalBellBadgeDefaultsToOn() {
+        XCTAssertTrue(Preferences.default.terminalBellBadge,
+                      "the background-tab activity badge is opt-out (#74)")
+    }
+
+    func testTerminalBellBadgeRoundTripsThroughCodable() throws {
+        let original = Preferences(terminalBellBadge: false)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertFalse(decoded.terminalBellBadge)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutTerminalBellBadgeFallsBackToOn() throws {
+        // A payload written by a build before the badge setting existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertTrue(decoded.terminalBellBadge)
+    }
+
     func testSelectedOrgIdDefaultsToEmpty() {
         XCTAssertEqual(Preferences.default.selectedOrgId, "",
                        "empty means a single repo (or nothing) was the active scope, not an org")

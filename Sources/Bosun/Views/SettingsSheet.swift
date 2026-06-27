@@ -48,7 +48,9 @@ final class SettingsSheet: FlippedView {
         let winY = footY + z(40)
         let repoY = winY + z(90)          // Repositories section: divider + header (the spacing WINDOW used)
         let repoRowY = repoY + z(30)      // the skip-empty checkbox row
-        let accY = repoY + z(72)          // Account section, shifted down to make room for Repositories
+        let consoleY = repoY + z(72)      // Console section, below Repositories
+        let consoleRowY = consoleY + z(30) // the activity-badge checkbox row
+        let accY = consoleY + z(72)       // Account section, shifted down to make room for Console
         let accRowY = accY + z(34)
         let btnH: CGFloat = z(30)
         let btnY = accRowY + z(46)
@@ -140,6 +142,22 @@ final class SettingsSheet: FlippedView {
         let skipName = label("Skip repos without issues and PRs", sys(12.5), t.txt)
         skipName.frame = NSRect(x: z(34), y: z(6), width: rowW - z(60), height: z(16)); skipRow.addSubview(skipName)
         card.addSubview(skipRow)
+
+        // ── Console: badge a background tab that rings/notifies (#74). ──
+        let consoleDiv = BoxView(bg: t.line2); consoleDiv.frame = NSRect(x: pad, y: consoleY, width: innerW, height: 1); card.addSubview(consoleDiv)
+        let cHdr = label("CONSOLE", mono(9.5, .semibold), t.txt4)
+        cHdr.frame = NSRect(x: pad, y: consoleY + z(12), width: z(200), height: z(14)); card.addSubview(cHdr)
+        // A toggle changes `terminalBellBadge`, which fires `changed()` → this sheet rebuilds (so the
+        // glyph restates) live, exactly like the skip-empty row above.
+        let bellRow = ClickRow(bg: nil, radius: z(9))
+        bellRow.hoverColor = t.hover
+        bellRow.frame = NSRect(x: pad - z(9), y: consoleRowY, width: rowW, height: z(28))
+        bellRow.onClick = { [weak self] in self?.store.terminalBellBadge.toggle() }
+        let bellCheck = label(store.terminalBellBadge ? "☑" : "☐", sys(13), store.terminalBellBadge ? t.accent : t.txt4)
+        bellCheck.frame = NSRect(x: z(10), y: z(6), width: z(16), height: z(16)); bellRow.addSubview(bellCheck)
+        let bellName = label("Show activity badge on background tabs", sys(12.5), t.txt)
+        bellName.frame = NSRect(x: z(34), y: z(6), width: rowW - z(60), height: z(16)); bellRow.addSubview(bellName)
+        card.addSubview(bellRow)
 
         // ── Account: GitHub sign-in. ──
         let accDiv = BoxView(bg: t.line2); accDiv.frame = NSRect(x: pad, y: accY, width: innerW, height: 1); card.addSubview(accDiv)

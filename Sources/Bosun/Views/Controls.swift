@@ -117,19 +117,92 @@ final class ClickRow: FlippedView {
     override func resetCursorRects() { if let cursor { addCursorRect(bounds, cursor: cursor) } }
 }
 
-/// A deliberately slim scroller for cramped strips (the 32pt terminal tab bar). NSScrollView renders
-/// the ~15pt legacy scroller whenever the system "Show scroll bars" setting resolves to *Always* — or
-/// to *Automatic* with a mouse attached — which swamps such a short bar even though the strip asks for
-/// `.overlay`. We override only the class width (for BOTH styles, so it stays slim however the setting
-/// resolves) and let AppKit draw its standard knob/track at that width — so the indicator is still
-/// visible and draggable, just thin. `isCompatibleWithOverlayScrollers` keeps overlay fade working.
-final class ThinScroller: NSScroller {
-    static let thickness: CGFloat = 7
+/// A horizontal scroll view (the terminal tab strip, #21) that floats its own thin scroll indicator
+/// instead of using an AppKit scroller. A native scroller can't do what the strip needs: a *legacy*
+/// one reserves a band that shrinks the clip and clips each tab's bottom border (the active green /
+/// bell amber underline), while an *overlay* one turns back into that legacy band under a mouse or the
+/// "Always show scroll bars" setting. So we hide the native scroller entirely (it never reserves space
+/// → the underline always shows) and draw a slim knob that overlays the strip, mirrors the scroll
+/// offset, and is revealed only while the user scrolls — fading out ~1s after the last scroll.
+/// Programmatic scrolls (restoring the saved offset, bringing the active tab into view) go through
+/// `reflectScrolledClipView` to reposition the knob but NOT `scrollWheel`, so a relabel never flashes it.
+final class AutoHideScrollView: NSScrollView {
+    /// Seconds the indicator lingers after the last scroll before it fades out.
+    private static let lingerAfterScroll: TimeInterval = 1.0
+    private static let knobThickness: CGFloat = 3
+    private static let minKnobWidth: CGFloat = 24
 
-    override class var isCompatibleWithOverlayScrollers: Bool { true }
+    private var hideTimer: Timer?
+    private let knob = BoxView(radius: AutoHideScrollView.knobThickness / 2)
 
-    override class func scrollerWidth(for controlSize: NSControl.ControlSize,
-                                      scrollerStyle: NSScroller.Style) -> CGFloat { thickness }
+    /// Color of the floating indicator; set from the strip's theme.
+    var knobColor: NSColor = .gray { didSet { knob.style(bg: knobColor) } }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        hasHorizontalScroller = false   // no native scroller → no reserved band, no clipped underline
+        hasVerticalScroller = false
+        knob.alphaValue = 0
+        knob.style(bg: knobColor)
+        addSubview(knob)                // sibling of the clip view → floats over the tabs, doesn't scroll
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func scrollWheel(with event: NSEvent) {
+        super.scrollWheel(with: event)
+        revealKnob()
+    }
+
+    // Repositions the knob on every scroll (user *and* programmatic) without revealing it.
+    override func reflectScrolledClipView(_ clipView: NSClipView) {
+        super.reflectScrolledClipView(clipView)
+        layoutKnob()
+    }
+
+    override func tile() {
+        super.tile()
+        layoutKnob()
+    }
+
+    /// Hide the indicator immediately — the resting state, set once the strip is laid out.
+    func hideKnobNow() {
+        hideTimer?.invalidate()
+        knob.alphaValue = 0
+    }
+
+    /// Show the indicator now and (re)arm the fade-out. Idempotent under rapid scroll: each tick resets
+    /// the timer, so it stays up until a full second of quiet, then animates away.
+    private func revealKnob() {
+        guard overflowing else { return }   // nothing to scroll → nothing to hint at
+        hideTimer?.invalidate()
+        knob.alphaValue = 1
+        hideTimer = Timer.scheduledTimer(withTimeInterval: Self.lingerAfterScroll, repeats: false) { [weak self] _ in
+            self?.knob.animator().alphaValue = 0
+        }
+    }
+
+    private var overflowing: Bool {
+        guard let doc = documentView else { return false }
+        return doc.frame.width > contentView.bounds.width + 0.5
+    }
+
+    /// Size + position the knob to mirror the scroll offset (proportional, like a real scroller), pinned
+    /// to the strip's top edge so it never sits over the tabs' bottom underline. Hidden when the tabs fit.
+    private func layoutKnob() {
+        let clipW = contentView.bounds.width
+        guard let doc = documentView, doc.frame.width > clipW + 0.5, clipW > 0 else {
+            knob.isHidden = true; return
+        }
+        knob.isHidden = false
+        let docW = doc.frame.width
+        let knobW = max(Self.minKnobWidth, clipW * (clipW / docW))
+        let maxScroll = docW - clipW
+        let frac = maxScroll > 0 ? min(1, max(0, contentView.bounds.origin.x / maxScroll)) : 0
+        knob.frame = NSRect(x: frac * (clipW - knobW), y: bounds.height - Self.knobThickness - 1,
+                            width: knobW, height: Self.knobThickness)
+    }
+
+    deinit { hideTimer?.invalidate() }
 }
 
 /// A solid colored dot / rounded square.

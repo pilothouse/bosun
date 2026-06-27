@@ -28,6 +28,10 @@ final class GhosttySurfaceView: NSView {
     var onCloseTab: (() -> Void)?
     var onGotoTab: ((TabJump) -> Void)?
 
+    /// Invoked when this surface rings the bell or posts a desktop notification; the dock flags the
+    /// tab when it's in the background (#74). One closure covers both libghostty actions.
+    var onBell: (() -> Void)?
+
     /// Latest shell/OSC-reported title for this surface; the dock reads it to label the tab.
     private(set) var title: String?
 
@@ -275,6 +279,7 @@ final class GhosttySurfaceView: NSView {
     func ringBell() {
         NSSound.beep()
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+        onBell?()
     }
 
     /// MOUSE_SHAPE: map the shapes we have native cursors for; everything else falls back to arrow.
@@ -312,6 +317,7 @@ final class GhosttySurfaceView: NSView {
         note.title = title.isEmpty ? "Terminal" : title
         note.informativeText = body
         NSUserNotificationCenter.default.deliver(note)
+        onBell?()
     }
 
     /// Confirm an application's request to read/write the clipboard (OSC-52 or a guarded paste).

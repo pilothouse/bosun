@@ -185,6 +185,10 @@ final class Store {
     /// — top/left. A discrete toggle like `splitAxis`, so it persists and relayouts via `changed()`.
     var terminalLeading: Bool = false { didSet { if oldValue != terminalLeading { changed() } } }
 
+    /// Whether a background console tab raises an activity badge when it rings/notifies (#74).
+    /// Global, persisted; the dock reads it in `bellRang` via `TerminalBellPolicy`. On by default.
+    var terminalBellBadge = true { didSet { if oldValue != terminalBellBadge { changed() } } }
+
     /// Terminal height drives layout only (no content rebuild), so it is not part of `notify`.
     /// It changes on every drag frame, so it is persisted on gesture end (see
     /// `TerminalContainerView`), not here.
@@ -336,7 +340,8 @@ final class Store {
             splitAxis: splitAxis.rawValue,
             terminalFraction: Double(terminalFraction),
             terminalLeading: terminalLeading,
-            uiZoomPercent: uiZoom.percent)
+            uiZoomPercent: uiZoom.percent,
+            terminalBellBadge: terminalBellBadge)
         Task { await preferences.save(snapshot) }
     }
 
@@ -369,6 +374,7 @@ final class Store {
         splitAxis = SplitAxis(rawValue: p.splitAxis ?? "") ?? .default
         terminalFraction = CGFloat(p.terminalFraction)
         terminalLeading = p.terminalLeading
+        terminalBellBadge = p.terminalBellBadge
         // Seats the saved zoom: the didSet mirrors it into the `Controls` global via `setUIScale`
         // even now (it's not gated on `isLoading`), so the final `refresh()` below lays the whole
         // tree out at the restored scale and `syncTerminal` pushes the matching terminal font size.
