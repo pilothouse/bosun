@@ -166,7 +166,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             // Reopen the saved terminal tabs now that the connections they reference are loaded.
             self.root?.restoreTerminalTabs()
-            auth.restore()   // recompute signed-in state from the Keychain
+            // Measurement-only seam (`BOSUN_PERF_SEED`, used by scripts/perf-sim.sh): skip Keychain
+            // auth and hold the seeded GitHub cache resident with no live fetch, so peak memory under
+            // heavy synthetic data can be sampled. Off by default — the normal path below recomputes
+            // signed-in state from the Keychain.
+            if ProcessInfo.processInfo.environment["BOSUN_PERF_SEED"] == "1" {
+                store.authState = .signedIn
+                self.dataController?.loadFromCacheForPerf()
+            } else {
+                auth.restore()   // recompute signed-in state from the Keychain
+            }
         }
     }
 

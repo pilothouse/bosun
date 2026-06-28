@@ -120,6 +120,26 @@ final class GitHubDataController {
         }
     }
 
+    /// Measurement-only seam (`BOSUN_PERF_SEED`, wired in `AppDelegate`): hydrate the orgs/repos tree
+    /// and the first repo's PRs/issues straight from the on-disk cache with **no** live fetch, so a
+    /// seeded heavy cache stays resident long enough to sample peak memory. The first `loadOrgs` read
+    /// pulls the whole snapshot (orgs + the full `items` dict) into the cache's in-memory mirror —
+    /// the dominant resident cost we want to measure. Reuses the same `applyOrgGroups` /
+    /// `Item.init(domain:)` projection as the live path; never called in normal use.
+    func loadFromCacheForPerf() {
+        Task { @MainActor in
+            let cachedOrgs = await cache.loadOrgs()
+            let cachedRepos = await cache.loadViewerRepos()
+            applyOrgGroups(orgs: cachedOrgs, personalRepos: cachedRepos, establishSelection: false)
+            guard let firstOrg = store.orgs.first, let firstRepo = firstOrg.repos.first else { return }
+            store.expandedOrgs = [firstOrg.id]
+            let repoKey = "\(firstRepo.owner)/\(firstRepo.name)"
+            store.selectedRepoKey = repoKey
+            store.prs = (await cache.loadItems(repoKey: repoKey, kind: .pullRequest)).map(Item.init(domain:))
+            store.issues = (await cache.loadItems(repoKey: repoKey, kind: .issue)).map(Item.init(domain:))
+        }
+    }
+
     /// Project the org groups into the store, and — when `establishSelection` — pick the repo to show.
     /// A persisted selection is honored when its repo is still available (restored on relaunch);
     /// otherwise (access lost, repo gone, or nothing saved) it falls back to expanding the first
