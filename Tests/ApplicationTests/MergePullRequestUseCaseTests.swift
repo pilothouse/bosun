@@ -39,6 +39,9 @@ final class MergePullRequestUseCaseTests: XCTestCase {
         func itemDetail(owner: String, repo: String, number: Int) throws -> GitHubItem { throw Unused() }
         func issueDependencies(owner: String, repo: String, number: Int) throws -> [Int] { throw Unused() }
         func addComment(owner: String, repo: String, number: Int, body: String) throws -> GitHubComment { throw Unused() }
+        func editItem(owner: String, repo: String, number: Int, edit: GitHubItemEdit) throws -> GitHubItem { throw Unused() }
+        func repositoryLabels(owner: String, repo: String) throws -> [GitHubLabel] { throw Unused() }
+        func assignableUsers(owner: String, repo: String) throws -> [GitHubActor] { throw Unused() }
     }
 
     private let merged = PRMergeResult(merged: true, sha: "abc123", message: "Pull Request successfully merged")

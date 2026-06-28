@@ -35,6 +35,16 @@ final class DetailView: FlippedView {
     /// form and surfaces `message`.
     var onMergePullRequest: ((PRMergeRequest, @escaping (Bool, String?) -> Void) -> Void)?
 
+    /// Called when the user saves a title/body edit or toggles a label/assignee (issue #71). The view
+    /// hands over a `GitHubItemEdit` (only the changed fields) and a completion the controller runs on
+    /// the main actor: `(true, nil)` applied (the controller updates the item in place); `(false,
+    /// message)` keeps the edit and surfaces `message` (a blank title / no-op is `(false, message?)`).
+    var onEditItem: ((GitHubItemEdit, @escaping (Bool, String?) -> Void) -> Void)?
+
+    /// Called when the user enters edit mode, to populate the label/assignee pickers. The view hands a
+    /// completion the controller runs on the main actor with the repo's label palette + assignable users.
+    var onLoadEditChoices: ((@escaping ([LabelChoice], [Assignee]) -> Void) -> Void)?
+
     // Composer state lives on the view (not the rebuilt subviews), so it survives `rebuild()`:
     // an in-flight post, a typed-but-unsent draft, and the last error all persist across relayouts.
     private var composerDraft = ""
@@ -69,6 +79,45 @@ final class DetailView: FlippedView {
     /// The measured height of the elastic commit-message field, so `textDidChange` only relayouts
     /// when a line is actually added/removed (not on every keystroke within a line).
     private var mergeBodyContentH: CGFloat = 0
+
+    // Edit-mode state (issue #71), on the view for the same survives-`rebuild()` reason as the
+    // composer/merge state: whether the item's being edited, the in-progress title/body drafts, the
+    // current label/assignee draft sets, an in-flight save, the last error, which picker (if any) is
+    // open, and the fetched picker choices all persist across relayouts.
+    /// The *title/body* editor is gated by the Edit (pencil) button — those fields need a batched
+    /// Save/Cancel. Labels/assignees are NOT gated: they're always editable inline and each toggle
+    /// saves immediately (so the pencil only governs the prose).
+    private var isEditing = false
+    /// The id the title/body edit belongs to, so switching items discards the drafts and exits edit mode.
+    private var editItemId = ""
+    private var editTitleDraft = ""
+    private var editBodyDraft = ""
+    private var isSavingEdit = false
+    private var editError: String?
+    /// Draft label names / assignee logins for the always-editable metadata rows — toggled live and
+    /// saved immediately (each toggle PATCHes). Re-seeded from the item whenever the selection changes
+    /// (keyed by `metaItemId`), so they reflect the open item without entering the title/body editor.
+    private var metaItemId = ""
+    private var editLabels: [String] = []
+    private var editAssignees: [String] = []
+    private var labelMenuOpen = false
+    private var assigneeMenuOpen = false
+    /// The repo's label palette + assignable users for the pickers, fetched lazily when a picker first
+    /// opens; cleared on a selection change so a different repo's choices aren't shown.
+    private var labelChoices: [LabelChoice] = []
+    private var assigneeChoices: [Assignee] = []
+    /// The live edit title/body fields for the current rebuild; read on save.
+    private weak var editTitleField: NSTextField?
+    private weak var editBodyField: NSTextView?
+    /// The measured height of the elastic edit-body field, so `textDidChange` only relayouts on a
+    /// line add/remove (mirrors `mergeBodyContentH`).
+    private var editBodyContentH: CGFloat = 0
+    /// The open label/assignee picker overlay for the current rebuild, added to the document last so it
+    /// floats over later content (mirrors `mergeMenuOverlay`). Reset every rebuild.
+    private var editMenuOverlay: NSView?
+    /// The toggle button of the open picker, captured each rebuild so a click on it (or on the overlay)
+    /// is excluded from the click-outside-to-dismiss check (which would otherwise close-then-reopen it).
+    private weak var editMenuButton: NSView?
 
     init(store: Store) {
         self.store = store
@@ -224,7 +273,12 @@ final class DetailView: FlippedView {
         // below); without this, the relayout an elastic resize triggers would drop focus mid-word.
         let bodyHadFocus = mergeBodyField != nil && window?.firstResponder === mergeBodyField
         let bodySelection: NSRange? = (mergeBodyField?.selectedRanges.first as? NSValue)?.rangeValue
+        // Same focus/caret preservation for the elastic edit-body field (recreated below).
+        let editBodyHadFocus = editBodyField != nil && window?.firstResponder === editBodyField
+        let editBodySelection: NSRange? = (editBodyField?.selectedRanges.first as? NSValue)?.rangeValue
         mergeMenuOverlay = nil   // rebuilt below if the method picker is open; added last so it floats
+        editMenuOverlay = nil    // same for the label/assignee picker
+        editMenuButton = nil
 
         let padX: CGFloat = z(26)
         let cw = avail - padX * 2
@@ -256,6 +310,19 @@ final class DetailView: FlippedView {
             mergeBodyDraft = it.title
             mergeBodyContentH = 0
         }
+
+        // Selection change: re-seed the always-editable label/assignee drafts from the new item, close
+        // any open picker, drop the previous repo's picker choices, and abandon any title/body edit
+        // (its drafts belonged to the old item).
+        if it.id != metaItemId {
+            metaItemId = it.id
+            editLabels = it.labels
+            editAssignees = it.assignees.map(\.login)
+            labelMenuOpen = false; assigneeMenuOpen = false
+            labelChoices = []; assigneeChoices = []
+            isEditing = false; editError = nil
+        }
+        let editing = isEditing && it.id == editItemId
 
         func add(_ v: NSView, x: CGFloat = padX) { v.frame.origin = NSPoint(x: x, y: y); doc.addSubview(v) }
 
@@ -347,12 +414,46 @@ final class DetailView: FlippedView {
             iv.imageScaling = .scaleProportionallyUpOrDown
             refresh.addSubview(iv)
             doc.addSubview(refresh)
+
+            // Edit (pencil), just left of Refresh — enters inline edit mode. Hidden while already
+            // editing (Save/Cancel below take over) and while a save is in flight.
+            if !editing && onEditItem != nil {
+                let edit = ClickRow(radius: z(5))
+                edit.hoverColor = t.hover
+                edit.cursor = .pointingHand
+                edit.toolTip = "Edit"
+                edit.onClick = { [weak self] in self?.beginEdit() }
+                edit.frame = NSRect(x: padX + cw - z(48), y: y, width: z(22), height: z(20))
+                let ev = NSImageView(frame: NSRect(x: z(3), y: z(2), width: z(16), height: z(16)))
+                ev.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: "Edit")
+                ev.contentTintColor = t.txt4
+                ev.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+                ev.imageScaling = .scaleProportionallyUpOrDown
+                edit.addSubview(ev)
+                doc.addSubview(edit)
+            }
         }
         y += z(30)
 
-        // Title. A selectable (read-only) text view so it can be copied, like the body below.
-        let title = selectableText(it.title, font: sys(21, .bold), color: t.txt, width: cw)
-        add(title); y += title.frame.height + z(11)
+        // Title — an editable field in edit mode, else the selectable (read-only) copyable text.
+        if editing {
+            let titleBox = BoxView(bg: t.card, radius: z(8), border: t.cardbr)
+            titleBox.frame = NSRect(x: padX, y: y, width: cw, height: z(40))
+            let tf = NSTextField(string: editTitleDraft)
+            tf.font = sys(18, .bold); tf.placeholderString = "Title"
+            tf.isBezeled = false; tf.drawsBackground = false; tf.focusRingType = .none
+            tf.textColor = t.txt; tf.lineBreakMode = .byTruncatingTail
+            tf.delegate = self
+            tf.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+            tf.isEnabled = !isSavingEdit
+            tf.frame = NSRect(x: z(12), y: z(9), width: cw - z(24), height: z(24))
+            titleBox.addSubview(tf); editTitleField = tf
+            add(titleBox); y += z(40) + z(11)
+        } else {
+            editTitleField = nil
+            let title = selectableText(it.title, font: sys(21, .bold), color: t.txt, width: cw)
+            add(title); y += title.frame.height + z(11)
+        }
 
         // Author row.
         let avatar = AvatarView(size: z(20), cornerRadius: z(10), url: it.authorAvatarURL,
@@ -372,29 +473,105 @@ final class DetailView: FlippedView {
         }
         y += z(30)
 
-        // Metadata section: labels, assignees, milestone. Each row renders only when it has
-        // content, so an item with no metadata looks exactly as before (the body card follows
-        // straight after the author row). The item's *state* is already shown by the type badge
-        // above. Built from the reusable `metaRow`/chip helpers — the PR-reviewers feature (#70)
-        // adds its row through the same calls.
-        y = metaRow("LABELS", it.labels.map { labelPill($0, color: it.labelColors[$0], t: t) },
-                    into: doc, t: t, x: padX, y: y, width: cw)
-        y = metaRow("ASSIGNEES", it.assignees.map { assigneeChip($0, t: t) },
-                    into: doc, t: t, x: padX, y: y, width: cw)
-        if let milestone = it.milestone, !milestone.isEmpty {
-            y = metaRow("MILESTONE", [milestonePill(milestone, t: t)],
-                        into: doc, t: t, x: padX, y: y, width: cw)
+        // Metadata section: labels, assignees, milestone (issue #71). LABELS and ASSIGNEES are
+        // *always* editable inline — each chip carries a remove ✕ and each row ends with an
+        // add-from-picker button, so a label/assignee can be added or removed without entering the
+        // title/body editor; every toggle saves immediately. Both rows always render (the add button
+        // makes them non-empty) so an item with none still offers a way to add one. Milestone stays
+        // read-only — it isn't one of the four editable fields. Built on the reusable `metaRow` helper.
+        let gutter = z(80)
+        var labelViews: [NSView] = editLabels.map { name in
+            editableChip(name, color: editLabelColor(name, it: it), t: t,
+                         onRemove: { [weak self] in self?.toggleLabel(name) })
+        }
+        let labelBtn = pickerButton("＋ Label ▾", t: t, on: labelMenuOpen,
+                                    onClick: { [weak self] in self?.toggleEditMenu(label: true) })
+        labelViews.append(labelBtn)
+        y = metaRow("LABELS", labelViews, into: doc, t: t, x: padX, y: y, width: cw)
+        if labelMenuOpen {
+            editMenuOverlay = makeLabelMenu(t: t, x: padX + gutter, y: y - z(6), width: z(240))
+            editMenuButton = labelBtn
         }
 
-        // Body card. Task-list checkboxes (`- [ ]` / `- [x]`) render inline in the body via
-        // swift-markdown's native checkbox handling (see MarkdownRenderer.visitUnorderedList);
-        // `it.tasks` is intentionally left unread here so they aren't drawn a second time (#86).
-        let bodyText = markdownView(it.body, baseFont: sys(13.5), width: cw - z(34))
-        let cardH = bodyText.frame.height + z(30)
-        let card = BoxView(bg: t.card, radius: z(11), border: t.cardbr)
-        card.frame = NSRect(x: padX, y: y, width: cw, height: cardH)
-        bodyText.frame.origin = NSPoint(x: z(17), y: z(15)); card.addSubview(bodyText)
-        doc.addSubview(card); y += cardH + z(20)
+        var assigneeViews: [NSView] = editAssignees.map { login in
+            editableAssigneeChip(login, it: it, t: t,
+                                 onRemove: { [weak self] in self?.toggleAssignee(login) })
+        }
+        let assigneeBtn = pickerButton("＋ Assignee ▾", t: t, on: assigneeMenuOpen,
+                                       onClick: { [weak self] in self?.toggleEditMenu(label: false) })
+        assigneeViews.append(assigneeBtn)
+        y = metaRow("ASSIGNEES", assigneeViews, into: doc, t: t, x: padX, y: y, width: cw)
+        if assigneeMenuOpen {
+            editMenuOverlay = makeAssigneeMenu(t: t, x: padX + gutter, y: y - z(6), width: z(240))
+            editMenuButton = assigneeBtn
+        }
+
+        if let milestone = it.milestone, !milestone.isEmpty {
+            y = metaRow("MILESTONE", [milestonePill(milestone, t: t)], into: doc, t: t, x: padX, y: y, width: cw)
+        }
+
+        // Body — an editable elastic field in edit mode (mirrors the merge commit-message field), with
+        // a Save/Cancel bar for the title+body; else the read-only Markdown card. Task-list checkboxes
+        // (`- [ ]` / `- [x]`) render inline via swift-markdown (see MarkdownRenderer.visitUnorderedList);
+        // `it.tasks` is intentionally left unread so they aren't drawn a second time (#86).
+        if editing {
+            editBodyField = nil
+            let textW = cw - z(20)
+            let contentH = max(z(140), Self.textHeight(editBodyDraft, width: textW - z(8), font: sys(13.5)))
+            editBodyContentH = contentH
+            let boxH = contentH + z(18)
+            let bodyBox = BoxView(bg: t.card, radius: z(11), border: t.cardbr)
+            bodyBox.frame = NSRect(x: padX, y: y, width: cw, height: boxH)
+            let tv = NSTextView(frame: NSRect(x: z(10), y: z(9), width: textW, height: boxH - z(18)))
+            tv.string = editBodyDraft
+            tv.font = sys(13.5); tv.textColor = t.txt
+            tv.drawsBackground = false; tv.isRichText = false
+            tv.delegate = self
+            tv.textContainerInset = NSSize(width: z(4), height: z(4))
+            tv.textContainer?.lineFragmentPadding = 0
+            tv.isEditable = !isSavingEdit
+            tv.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+            bodyBox.addSubview(tv); editBodyField = tv
+            doc.addSubview(bodyBox); y += boxH + z(14)
+
+            let saveW = z(72), cancelW = z(80), gap = z(8), barH = z(30)
+            if isSavingEdit {
+                let spinner = makeSpinner(size: z(15))
+                spinner.frame.origin = NSPoint(x: padX, y: y + z(6)); doc.addSubview(spinner)
+                let lbl = label("Saving…", sys(12.5, .semibold), t.txt3)
+                lbl.frame = NSRect(x: padX + z(24), y: y + z(7), width: cw - z(30), height: z(16)); doc.addSubview(lbl)
+            } else {
+                let save = ClickRow(bg: t.accent, radius: z(8))
+                save.frame = NSRect(x: padX, y: y, width: saveW, height: barH)
+                save.onClick = { [weak self] in self?.saveEdit() }
+                let sl = label("Save", sys(12, .semibold), t.onacc, align: .center)
+                sl.frame = NSRect(x: 0, y: z(8), width: saveW, height: z(16)); save.addSubview(sl)
+                doc.addSubview(save)
+
+                let cancel = ClickRow(bg: t.card, radius: z(8))
+                cancel.layer?.borderWidth = 1; cancel.layer?.borderColor = t.cardbr.cgColor
+                cancel.frame = NSRect(x: padX + saveW + gap, y: y, width: cancelW, height: barH)
+                cancel.onClick = { [weak self] in self?.cancelEdit() }
+                let cl = label("Cancel", sys(12, .semibold), t.txt2, align: .center)
+                cl.frame = NSRect(x: 0, y: z(8), width: cancelW, height: z(16)); cancel.addSubview(cl)
+                doc.addSubview(cancel)
+            }
+            y += barH + z(8)
+            if let editError {
+                let err = label(editError, sys(11), Status.red, lines: 0)
+                err.preferredMaxLayoutWidth = cw
+                err.frame = NSRect(x: padX, y: y, width: cw, height: z(32)); doc.addSubview(err); y += z(24)
+            }
+            y += z(12)
+        } else {
+            editBodyField = nil
+            let bodyText = markdownView(it.body, baseFont: sys(13.5), width: cw - z(34))
+            let cardH = bodyText.frame.height + z(30)
+            let card = BoxView(bg: t.card, radius: z(11), border: t.cardbr)
+            card.frame = NSRect(x: padX, y: y, width: cw, height: cardH)
+            bodyText.frame.origin = NSPoint(x: z(17), y: z(15)); card.addSubview(bodyText)
+            doc.addSubview(card); y += cardH + z(20)
+        }
 
         // PR checks. The ACTIONS header is a disclosure: clicking it toggles the global,
         // persisted collapsed state (`store.prChecksCollapsed`). The X/Y tally stays in the
@@ -578,10 +755,13 @@ final class DetailView: FlippedView {
         }
         y += z(8)
 
-        // The open method picker floats over the comments: added last so it's on top of them, and
-        // its height (not its position) extends the document so it can't be clipped at the bottom.
+        // The open method / label / assignee pickers float over later content: added last so they're
+        // on top, and their height (not position) extends the document so they can't be clipped.
         if let menu = mergeMenuOverlay { doc.addSubview(menu) }
-        doc.frame.size.height = max(y + z(10), (mergeMenuOverlay?.frame.maxY ?? 0) + z(10))
+        if let menu = editMenuOverlay { doc.addSubview(menu) }
+        doc.frame.size.height = max(y + z(10),
+                                    (mergeMenuOverlay?.frame.maxY ?? 0) + z(10),
+                                    (editMenuOverlay?.frame.maxY ?? 0) + z(10))
 
         // Replacing the document view resets the scroll to the top. Restore the prior offset when
         // we're re-rendering the same item (a detail hydrating, a comment landing, a resize) so the
@@ -602,6 +782,11 @@ final class DetailView: FlippedView {
         if bodyHadFocus, let tv = mergeBodyField {
             window?.makeFirstResponder(tv)
             if let bodySelection { tv.setSelectedRange(bodySelection) }
+        }
+        // Same for the rebuilt edit-body field, so growing it by a line doesn't drop focus mid-word.
+        if editBodyHadFocus, let tv = editBodyField {
+            window?.makeFirstResponder(tv)
+            if let editBodySelection { tv.setSelectedRange(editBodySelection) }
         }
     }
 
@@ -628,32 +813,271 @@ final class DetailView: FlippedView {
         return cy + lineH + z(11)
     }
 
-    /// A label pill: GitHub-tinted (the label's color on a faint wash + matching border, mirroring
-    /// the check/file icon chips) when a color is known, else a neutral theme chip.
-    private func labelPill(_ name: String, color: NSColor?, t: Theme) -> BoxView {
-        if let color {
-            return badge(name, fg: color, bg: .hexA(UInt32(color.toHex()), 0.15), border: color, mono: false)
-        }
-        return badge(name, fg: t.txt3, bg: t.hover, border: t.cardbr, mono: false)
-    }
-
     /// The milestone shown as a neutral chip with a diamond glyph.
     private func milestonePill(_ title: String, t: Theme) -> BoxView {
         badge("◇ \(title)", fg: t.txt3, bg: t.hover, border: t.cardbr, mono: false)
     }
 
-    /// An assignee chip: a small avatar (reusing `AvatarView`/`AvatarLoader`) followed by the login,
-    /// sized to fit so `metaRow` can flow it like any other value view.
-    private func assigneeChip(_ a: Assignee, t: Theme) -> NSView {
-        let nameW = fitW(a.login, sys(11.5))
-        let chip = FlippedView(frame: NSRect(x: 0, y: 0, width: z(22) + nameW, height: z(20)))
-        let av = AvatarView(size: z(18), cornerRadius: z(9), url: a.avatarURL,
-                            placeholderColor: a.color, initials: a.initials,
-                            initialsFont: sys(8, .bold), initialsColor: .hex(0x0d0f13))
-        av.frame.origin = NSPoint(x: 0, y: z(1)); chip.addSubview(av)
-        let name = label(a.login, sys(11.5), t.txt2)
-        name.frame = NSRect(x: z(22), y: z(3), width: nameW, height: z(14)); chip.addSubview(name)
+    // MARK: Edit mode (issue #71)
+
+    /// Enter the title/body editor for the open item (the Edit pencil). Labels/assignees are edited
+    /// inline without this, so it only seeds the title/body drafts. A no-op if nothing's selected.
+    private func beginEdit() {
+        guard let it = store.selectedItem else { return }
+        isEditing = true
+        editItemId = it.id
+        editTitleDraft = it.title
+        editBodyDraft = it.body
+        editError = nil; isSavingEdit = false
+        editBodyContentH = 0
+        needsLayout = true
+    }
+
+    /// Leave the title/body editor without saving its drafts (label/assignee toggles already saved).
+    private func cancelEdit() {
+        isEditing = false
+        editError = nil
+        needsLayout = true
+    }
+
+    /// Save the title/body edit (the labels/assignees save live on toggle). No-ops while a save is in
+    /// flight; sends only the fields that actually changed; an edit that changed neither just exits.
+    /// Hands a `GitHubItemEdit` to the controller via `onEditItem`, which calls back to exit on success
+    /// or surface the error (keeping the form) on failure — mirrors `performMerge`/`submitComposer`.
+    private func saveEdit() {
+        guard !isSavingEdit, let onEditItem, let it = store.selectedItem else { return }
+        let title = editTitleField?.stringValue ?? editTitleDraft
+        let body = editBodyField?.string ?? editBodyDraft
+        editTitleDraft = title; editBodyDraft = body
+        var edit = GitHubItemEdit()
+        if title != it.title { edit.title = title }
+        if body != it.body { edit.body = body }
+        guard !edit.isEmpty else { isEditing = false; needsLayout = true; return }
+        editError = nil
+        isSavingEdit = true
+        needsLayout = true
+        onEditItem(edit) { [weak self] ok, message in
+            guard let self else { return }
+            self.isSavingEdit = false
+            if ok { self.isEditing = false; self.editError = nil }
+            else if let message { self.editError = message }   // keep the form open so the user can retry
+            self.needsLayout = true
+        }
+    }
+
+    /// Open one picker (closing the other), or close it if it's already open. Lazily fetches the repo's
+    /// label/assignee choices the first time a picker opens (cleared on a selection change).
+    private func toggleEditMenu(label: Bool) {
+        if label { labelMenuOpen.toggle(); assigneeMenuOpen = false }
+        else { assigneeMenuOpen.toggle(); labelMenuOpen = false }
+        if (labelMenuOpen || assigneeMenuOpen) && labelChoices.isEmpty && assigneeChoices.isEmpty {
+            loadEditChoices()
+        }
+        needsLayout = true
+    }
+
+    /// Fetch the repo's label palette + assignable users for the pickers (idempotent — the controller
+    /// caches per repo). The selected item is captured so a result that lands after the user moved on
+    /// is dropped.
+    private func loadEditChoices() {
+        let wantId = metaItemId
+        onLoadEditChoices? { [weak self] labels, assignees in
+            guard let self, self.metaItemId == wantId else { return }
+            self.labelChoices = labels
+            self.assigneeChoices = assignees
+            self.needsLayout = true
+        }
+    }
+
+    /// Close any open picker — the click-outside-to-dismiss path (and a selection change). The
+    /// window routes every mouse-down here via `BosunView`/`DismissingWindow`; we only act when a
+    /// picker is open and the click missed both the overlay and its toggle button (else a click on the
+    /// button would close-then-reopen it, and a click on a menu row wouldn't register).
+    func dismissPickers(forWindowClickAt pointInWindow: NSPoint) {
+        guard labelMenuOpen || assigneeMenuOpen else { return }
+        if let overlay = editMenuOverlay, overlay.convert(overlay.bounds, to: nil).contains(pointInWindow) { return }
+        if let button = editMenuButton, button.convert(button.bounds, to: nil).contains(pointInWindow) { return }
+        labelMenuOpen = false; assigneeMenuOpen = false
+        needsLayout = true
+    }
+
+    /// Add/remove a label and save the new set immediately (GitHub-sidebar style). The picker stays
+    /// open so several can be toggled in a row.
+    private func toggleLabel(_ name: String) {
+        var labels = editLabels
+        if let i = labels.firstIndex(of: name) { labels.remove(at: i) } else { labels.append(name) }
+        commitEdit(GitHubItemEdit(labels: labels), applyLabels: labels)
+    }
+
+    /// Add/remove an assignee and save the new set immediately.
+    private func toggleAssignee(_ login: String) {
+        var assignees = editAssignees
+        if let i = assignees.firstIndex(of: login) { assignees.remove(at: i) } else { assignees.append(login) }
+        commitEdit(GitHubItemEdit(assignees: assignees), applyAssignees: assignees)
+    }
+
+    /// Optimistically apply a label/assignee toggle to the drafts and PATCH it; revert + surface the
+    /// error on failure. The controller's success path updates the store's canonical labels/assignees.
+    private func commitEdit(_ edit: GitHubItemEdit, applyLabels: [String]? = nil, applyAssignees: [String]? = nil) {
+        guard let onEditItem else { return }
+        let priorLabels = editLabels, priorAssignees = editAssignees
+        if let applyLabels { editLabels = applyLabels }
+        if let applyAssignees { editAssignees = applyAssignees }
+        editError = nil
+        needsLayout = true
+        onEditItem(edit) { [weak self] ok, message in
+            guard let self else { return }
+            if !ok {
+                self.editLabels = priorLabels; self.editAssignees = priorAssignees
+                if let message { self.editError = message }
+            }
+            self.needsLayout = true
+        }
+    }
+
+    /// The display color for a draft label: the repo palette's color if known, else the color the
+    /// item already carries for it (so a pre-existing colored label keeps its tint), else neutral.
+    private func editLabelColor(_ name: String, it: Item) -> NSColor? {
+        labelChoices.first { $0.name == name }?.color ?? it.labelColors[name]
+    }
+
+    /// The presentation assignee for a draft login: prefer the item's own (has the avatar), then the
+    /// picker choices, falling back to a minimal initials-only chip via the canonical actor rule.
+    private func editAssignee(_ login: String, it: Item) -> Assignee {
+        it.assignees.first { $0.login == login }
+            ?? assigneeChoices.first { $0.login == login }
+            ?? Assignee(domain: GitHubActor(login: login))
+    }
+
+    /// A removable label chip: a tinted pill (label color, or neutral) whose trailing ✕ — and *only*
+    /// the ✕ — removes it (so a stray click on the always-visible chip can't drop a label). Sized to
+    /// fit so `metaRow` flows it like any other value view.
+    private func editableChip(_ text: String, color: NSColor?, t: Theme, onRemove: @escaping () -> Void) -> NSView {
+        let fg = color ?? t.txt3
+        let textW = fitW(text, sys(11.5)), xW = z(15)
+        let w = z(10) + textW + z(2) + xW
+        let chip = BoxView(bg: color.map { .hexA(UInt32($0.toHex()), 0.15) } ?? t.hover,
+                           radius: z(9), border: color ?? t.cardbr)
+        chip.frame = NSRect(x: 0, y: 0, width: w, height: z(20))
+        let lbl = label(text, sys(11.5), fg)
+        lbl.frame = NSRect(x: z(10), y: z(3), width: textW, height: z(14)); chip.addSubview(lbl)
+        chip.addSubview(removeButton(fg: fg, t: t, x: z(10) + textW, w: xW, h: z(20), onRemove: onRemove))
         return chip
+    }
+
+    /// A removable assignee chip: avatar + login, whose trailing ✕ (only) removes it.
+    private func editableAssigneeChip(_ login: String, it: Item, t: Theme, onRemove: @escaping () -> Void) -> NSView {
+        let a = editAssignee(login, it: it)
+        let nameW = fitW(login, sys(11.5)), xW = z(15)
+        let w = z(22) + nameW + z(2) + xW
+        let chip = BoxView(bg: t.hover, radius: z(11), border: t.cardbr)
+        chip.frame = NSRect(x: 0, y: 0, width: w, height: z(22))
+        let av = AvatarView(size: z(16), cornerRadius: z(8), url: a.avatarURL, placeholderColor: a.color,
+                            initials: a.initials, initialsFont: sys(7.5, .bold), initialsColor: .hex(0x0d0f13))
+        av.frame.origin = NSPoint(x: z(3), y: z(3)); chip.addSubview(av)
+        let nm = label(login, sys(11.5), t.txt2)
+        nm.frame = NSRect(x: z(22), y: z(4), width: nameW, height: z(14)); chip.addSubview(nm)
+        chip.addSubview(removeButton(fg: t.txt3, t: t, x: z(22) + nameW, w: xW, h: z(22), onRemove: onRemove))
+        return chip
+    }
+
+    /// The ✕ hit-target placed at the trailing edge of a removable chip — a small hover-highlighted
+    /// click area so removal needs a deliberate click on the ✕, not anywhere on the chip.
+    private func removeButton(fg: NSColor, t: Theme, x: CGFloat, w: CGFloat, h: CGFloat,
+                              onRemove: @escaping () -> Void) -> ClickRow {
+        let btn = ClickRow(radius: z(4))
+        btn.hoverColor = .hexA(UInt32(fg.toHex()), 0.30)
+        btn.cursor = .pointingHand
+        btn.toolTip = "Remove"
+        btn.onClick = onRemove
+        btn.frame = NSRect(x: x, y: (h - z(14)) / 2, width: w, height: z(14))
+        let glyph = label("✕", sys(9), fg, align: .center)
+        glyph.frame = NSRect(x: 0, y: z(1), width: w, height: z(12)); btn.addSubview(glyph)
+        return btn
+    }
+
+    /// The "＋ Label ▾" / "＋ Assignee ▾" picker-opener button, styled in the accent like a subtle
+    /// add affordance; highlighted while its picker is open.
+    private func pickerButton(_ title: String, t: Theme, on: Bool, onClick: @escaping () -> Void) -> NSView {
+        let font = sys(11.5, .medium)
+        let textW = fitW(title, font)
+        let w = z(11) + textW + z(11)
+        let btn = ClickRow(bg: on ? t.accentbg : t.accentbg2, radius: z(9))
+        btn.layer?.borderWidth = 1; btn.layer?.borderColor = t.accent.withAlphaComponent(0.4).cgColor
+        btn.hoverColor = t.accentbg
+        btn.cursor = .pointingHand
+        btn.frame = NSRect(x: 0, y: 0, width: w, height: z(20))
+        let lbl = label(title, font, t.accent)
+        lbl.frame = NSRect(x: z(11), y: z(3), width: textW, height: z(14)); btn.addSubview(lbl)
+        btn.onClick = onClick
+        return btn
+    }
+
+    /// The label picker overlay: a checklist of the repo's labels (✓ on the applied ones), each row a
+    /// color dot + name; toggling saves immediately. Empty when the repo defines no labels (or the
+    /// fetch is still in flight / failed).
+    private func makeLabelMenu(t: Theme, x: CGFloat, y: CGFloat, width: CGFloat) -> NSView {
+        makeChecklistMenu(t: t, x: x, y: y, width: width, empty: "No labels to choose",
+                          rows: labelChoices.map { choice in
+            ChecklistRow(title: choice.name, tint: choice.color, on: editLabels.contains(choice.name),
+                         action: { [weak self] in self?.toggleLabel(choice.name) })
+        })
+    }
+
+    /// The assignee picker overlay: a checklist of the repo's assignable users (✓ on the assigned ones).
+    private func makeAssigneeMenu(t: Theme, x: CGFloat, y: CGFloat, width: CGFloat) -> NSView {
+        makeChecklistMenu(t: t, x: x, y: y, width: width, empty: "No assignable users",
+                          rows: assigneeChoices.map { choice in
+            ChecklistRow(title: choice.login, tint: nil, on: editAssignees.contains(choice.login),
+                         action: { [weak self] in self?.toggleAssignee(choice.login) })
+        })
+    }
+
+    /// One row of a checklist picker.
+    private struct ChecklistRow { let title: String; let tint: NSColor?; let on: Bool; let action: () -> Void }
+
+    /// A floating multi-select checklist (mirrors `makeMergeMethodMenu`, but scrollable and with a ✓ on
+    /// each selected row) returned for the caller to float over later content. Caps its height and
+    /// scrolls when the list is long, so a repo with many labels/users doesn't run off the pane.
+    private func makeChecklistMenu(t: Theme, x: CGFloat, y: CGFloat, width: CGFloat,
+                                   empty: String, rows: [ChecklistRow]) -> NSView {
+        let rowH = z(30), maxVisible: CGFloat = 7
+        let contentH = rowH * CGFloat(max(rows.count, 1)) + z(10)
+        let menuH = min(contentH, rowH * maxVisible + z(10))
+        let menu = BoxView(bg: t.panel, radius: z(10), border: t.line2)
+        menu.frame = NSRect(x: x, y: y, width: width, height: menuH)
+        menu.layer?.shadowColor = NSColor.black.cgColor
+        menu.layer?.shadowOpacity = 0.45; menu.layer?.shadowRadius = z(10); menu.layer?.shadowOffset = .zero
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: z(5), width: width, height: menuH - z(10)))
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        let docV = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: contentH - z(10)))
+        if rows.isEmpty {
+            let e = label(empty, sys(11.5), t.txt4)
+            e.frame = NSRect(x: z(14), y: z(8), width: width - z(20), height: z(16)); docV.addSubview(e)
+        }
+        var my: CGFloat = 0
+        for r in rows {
+            let row = ClickRow(bg: r.on ? t.accentbg : nil, radius: z(7))
+            row.hoverColor = t.hover
+            row.frame = NSRect(x: z(5), y: my, width: width - z(12), height: rowH)
+            let chk = label(r.on ? "✓" : "", sys(11), t.accent)
+            chk.frame = NSRect(x: z(8), y: z(7), width: z(14), height: z(16)); row.addSubview(chk)
+            var tx = z(26)
+            if let tint = r.tint {
+                let dot = BoxView(bg: tint, radius: z(5))
+                dot.frame = NSRect(x: tx, y: z(10), width: z(10), height: z(10)); row.addSubview(dot); tx += z(16)
+            }
+            let ml = label(r.title, sys(12), t.txt)
+            ml.frame = NSRect(x: tx, y: z(7), width: width - tx - z(12), height: z(16)); row.addSubview(ml)
+            row.onClick = r.action
+            docV.addSubview(row); my += rowH
+        }
+        scroll.documentView = docV
+        menu.addSubview(scroll)
+        return menu
     }
 
     // MARK: Merge section (PR-only)
@@ -971,6 +1395,7 @@ extension DetailView: NSTextFieldDelegate {
         guard let field = obj.object as? NSTextField else { return }
         if field === composerField { composerDraft = field.stringValue }
         else if field === mergeTitleField { mergeTitleDraft = field.stringValue }
+        else if field === editTitleField { editTitleDraft = field.stringValue }
     }
 }
 
@@ -980,11 +1405,18 @@ extension DetailView: NSTextViewDelegate {
     /// line so it stays elastic. Only a height change triggers a rebuild — typing within a line
     /// doesn't churn the layout — and `rebuild()` restores focus + caret so typing isn't interrupted.
     func textDidChange(_ notification: Notification) {
-        guard let tv = notification.object as? NSTextView, tv === mergeBodyField else { return }
-        mergeBodyDraft = tv.string
-        let textW = bounds.width - z(26) * 2 - z(20)   // matches the field's measured width in rebuild()
-        let newH = max(z(46), Self.textHeight(mergeBodyDraft, width: textW, font: sys(12.5)))
-        if abs(newH - mergeBodyContentH) > 0.5 { needsLayout = true }
+        guard let tv = notification.object as? NSTextView else { return }
+        let cw = bounds.width - z(26) * 2   // the content width `rebuild()` lays out against
+        if tv === mergeBodyField {
+            mergeBodyDraft = tv.string
+            let newH = max(z(46), Self.textHeight(mergeBodyDraft, width: cw - z(20), font: sys(12.5)))
+            if abs(newH - mergeBodyContentH) > 0.5 { needsLayout = true }
+        } else if tv === editBodyField {
+            editBodyDraft = tv.string
+            // Matches the edit-body field's measured width in `rebuild()`: (cw − z(20)) inner − z(8).
+            let newH = max(z(140), Self.textHeight(editBodyDraft, width: cw - z(20) - z(8), font: sys(13.5)))
+            if abs(newH - editBodyContentH) > 0.5 { needsLayout = true }
+        }
     }
 }
 

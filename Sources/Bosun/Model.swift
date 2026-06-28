@@ -68,11 +68,18 @@ struct CurrentUser { let initials: String; let color: NSColor; let avatarURL: UR
 /// `color`/`initials` are the `AvatarView` placeholder shown until `avatarURL` loads.
 struct Assignee { let login, initials: String; let color: NSColor; let avatarURL: URL? }
 
+/// A label a repository defines, offered in the edit pane's label picker (issue #71). `color` is the
+/// label's display tint (nil → a neutral chip), pre-resolved from the hex `GitHubLabel` carries.
+struct LabelChoice { let name: String; let color: NSColor? }
+
 /// Presentation projection of a GitHub issue/PR. Built from `Domain.GitHubItem` by the mapper in
 /// `GitHubPresentation.swift` (colors, glyphs, and relative-time strings live there); the views
 /// render straight off these fields. `tasks`/`checks`/`comments` are populated by the detail fetch.
 struct Item {
-    let id, num, title: String
+    let id, num: String
+    /// The item title. `var` so an in-place edit (issue #71) updates the list row and detail without a
+    /// re-fetch; everything else reads it.
+    var title: String
     /// The issue/PR number, the raw value behind the `num` display string ("#123"). Kept so the
     /// list can sort by number. See `ItemSorting`.
     let number: Int
@@ -107,9 +114,13 @@ struct Item {
     let authorInitials: String
     let authorAvatarURL: URL?
     var isAgent = false
-    let metaLeft, metaRight: String
+    /// `metaLeft` is the list row's left-hand meta (a PR's branch, else the first label); `var` so an
+    /// edit can recompute it in place when labels change (issue #71). `metaRight` is the agent tag.
+    var metaLeft: String
+    let metaRight: String
     var agentColor: NSColor = dim
-    let body: String
+    /// The item body (markdown). `var` for the same in-place-edit reason as `title` (issue #71).
+    var body: String
     var tasks: [TaskItem] = []
     var checks: [Check] = []
     var files: [FileChange] = []

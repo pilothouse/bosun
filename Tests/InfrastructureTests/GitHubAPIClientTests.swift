@@ -384,6 +384,84 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(json, ["merge_method": "rebase"])
     }
 
+    func testEditItemPatchesFieldsAndDecodesUpdatedItem() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), json("""
+            {
+              "number": 482, "title": "New title", "body": "updated\\n- [ ] todo", "state": "open",
+              "user": { "login": "maya", "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4" },
+              "labels": [ { "name": "bug", "color": "d73a4a" }, { "name": "p1", "color": "0e8a16" } ],
+              "assignees": [ { "login": "alex", "avatar_url": "https://avatars.githubusercontent.com/u/2?v=4" } ],
+              "milestone": { "title": "v2.0" }, "created_at": "2024-01-01T00:00:00Z"
+            }
+            """))
+        }
+        let item = try await makeClient().editItem(
+            owner: "acme-corp", repo: "api-gateway", number: 482,
+            edit: GitHubItemEdit(title: "New title", body: "updated\n- [ ] todo",
+                                 labels: ["bug", "p1"], assignees: ["alex"]))
+
+        // Decodes the updated issue object into a Domain entity (an issue — no `pull_request` key).
+        XCTAssertEqual(item.kind, .issue)
+        XCTAssertEqual(item.id, "acme-corp/api-gateway#482")
+        XCTAssertEqual(item.title, "New title")
+        XCTAssertEqual(item.labels, ["bug", "p1"])
+        XCTAssertEqual(item.labelColors, ["bug": "d73a4a", "p1": "0e8a16"])
+        XCTAssertEqual(item.assignees?.map(\.login), ["alex"])
+        XCTAssertEqual(item.milestone, "v2.0")
+        XCTAssertEqual(item.tasks, [GitHubTask(title: "todo", isDone: false)], "tasks re-parse from the new body")
+
+        // PATCHes `{ title, body, labels, assignees }` to the issues endpoint.
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.httpMethod, "PATCH")
+        XCTAssertEqual(request.url?.path, "/repos/acme-corp/api-gateway/issues/482")
+        let sent = try XCTUnwrap(bodyData(request))
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: Any])
+        XCTAssertEqual(body["title"] as? String, "New title")
+        XCTAssertEqual(body["labels"] as? [String], ["bug", "p1"])
+        XCTAssertEqual(body["assignees"] as? [String], ["alex"])
+    }
+
+    func testEditItemSendsOnlyChangedFields() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), json("""
+            { "number": 7, "title": "t", "state": "open", "labels": [], "assignees": [],
+              "created_at": "2024-01-01T00:00:00Z" }
+            """))
+        }
+        // A labels-only toggle must not carry a title/body/assignees the user didn't touch.
+        _ = try await makeClient().editItem(owner: "acme-corp", repo: "api-gateway", number: 7,
+                                            edit: GitHubItemEdit(labels: ["bug"]))
+
+        let sent = try XCTUnwrap(bodyData(try XCTUnwrap(captured.value)))
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: Any])
+        XCTAssertEqual(Array(body.keys), ["labels"], "only the changed field is sent; nil fields are omitted")
+        XCTAssertEqual(body["labels"] as? [String], ["bug"])
+    }
+
+    func testRepositoryLabelsDecodesList() async throws {
+        respond { (self.ok($0), json("""
+        [ { "name": "bug", "color": "d73a4a" }, { "name": "enhancement", "color": "a2eeef" } ]
+        """)) }
+        let labels = try await makeClient().repositoryLabels(owner: "acme-corp", repo: "api-gateway")
+        XCTAssertEqual(labels.map(\.name), ["bug", "enhancement"])
+        XCTAssertEqual(labels.first?.color, "d73a4a")
+    }
+
+    func testAssignableUsersDecodesList() async throws {
+        respond { (self.ok($0), json("""
+        [ { "login": "alex", "avatar_url": "https://avatars.githubusercontent.com/u/2?v=4" },
+          { "login": "sam" } ]
+        """)) }
+        let users = try await makeClient().assignableUsers(owner: "acme-corp", repo: "api-gateway")
+        XCTAssertEqual(users.map(\.login), ["alex", "sam"])
+        XCTAssertEqual(users.first?.avatarURL?.host, "avatars.githubusercontent.com")
+    }
+
     // MARK: Error mapping
 
     func testNoStoredTokenIsUnauthorizedWithoutHittingNetwork() async throws {
@@ -499,3 +577,6 @@ private func fixture(_ name: String) throws -> Data {
     let url = try XCTUnwrap(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures"))
     return try Data(contentsOf: url)
 }
+
+/// Inline JSON response body — for the small, write-path payloads that don't warrant a fixture file.
+private func json(_ string: String) -> Data { Data(string.utf8) }

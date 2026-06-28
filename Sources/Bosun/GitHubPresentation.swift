@@ -80,10 +80,7 @@ extension Item {
             author: it.author.login,
             labels: it.labels,
             labelColors: (it.labelColors ?? [:]).compactMapValues(NSColor.hex(string:)),
-            assignees: (it.assignees ?? []).map { actor in
-                Assignee(login: actor.login, initials: actor.initials,
-                         color: actor.isBot ? agentAccent : Status.purple, avatarURL: actor.avatarURL)
-            },
+            assignees: (it.assignees ?? []).map(Assignee.init(domain:)),
             milestone: it.milestone,
             createdAt: it.createdAt,
             authorColor: isAgent ? agentAccent : Status.purple,
@@ -157,6 +154,40 @@ extension Item {
     private static func metaLeft(for it: GitHubItem) -> String {
         if let branch = it.branch, !branch.isEmpty { return "⎇ \(branch)" }
         return it.labels.first ?? ""
+    }
+
+    /// Layer the user-editable fields of a freshly-saved `GitHubItem` (issue #71) onto this
+    /// presentation item, leaving the detail-only collections (comments/checks/files) and PR fields
+    /// untouched — so an edit refreshes the title/body/labels/assignees/milestone in place without a
+    /// re-fetch. `metaLeft` is recomputed so a changed first label shows in the list row; the derived
+    /// *status* chip (`statusLabel`/`glyph`, e.g. an issue gaining the `epic` label) is left as-is and
+    /// reconciles on the next list/detail refresh — a deliberate, minor staleness for snappy edits.
+    mutating func applyEdited(from it: GitHubItem) {
+        title = it.title
+        body = it.body
+        state = it.state
+        labels = it.labels
+        labelColors = (it.labelColors ?? [:]).compactMapValues(NSColor.hex(string:))
+        assignees = (it.assignees ?? []).map(Assignee.init(domain:))
+        milestone = it.milestone
+        metaLeft = Item.metaLeft(for: it)
+    }
+}
+
+extension Assignee {
+    /// The metadata-section/edit-picker projection of an actor: the canonical `initials` rule plus the
+    /// agent/human placeholder tint shown until the real `avatarURL` loads (bots take the agent accent).
+    init(domain actor: GitHubActor) {
+        self.init(login: actor.login, initials: actor.initials,
+                  color: actor.isBot ? agentAccent : Status.purple, avatarURL: actor.avatarURL)
+    }
+}
+
+extension LabelChoice {
+    /// The edit-picker projection of a repo label: its name plus the hex color resolved to an `NSColor`
+    /// (nil → a neutral chip), mirroring how `DetailView.labelPill` tints applied labels.
+    init(domain label: GitHubLabel) {
+        self.init(name: label.name, color: label.color.flatMap(NSColor.hex(string:)))
     }
 }
 

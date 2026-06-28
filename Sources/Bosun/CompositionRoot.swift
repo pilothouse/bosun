@@ -35,6 +35,8 @@ struct GitHubAuthServices {
     let addComment: AddCommentUseCase
     /// Merge a pull request — the second write. Shares `api`'s client (same token).
     let mergePullRequest: MergePullRequestUseCase
+    /// Edit an issue/PR's title/body/labels/assignees — the third write. Shares `api`'s client.
+    let editItem: EditItemUseCase
 }
 
 /// The one place allowed to choose concrete adapters and wire them into use cases.
@@ -87,7 +89,8 @@ enum CompositionRoot {
             api: client,                                       // shares the one token store
             cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL()),
             addComment: AddCommentUseCase(api: client),
-            mergePullRequest: MergePullRequestUseCase(api: client)
+            mergePullRequest: MergePullRequestUseCase(api: client),
+            editItem: EditItemUseCase(api: client)
         )
     }
 

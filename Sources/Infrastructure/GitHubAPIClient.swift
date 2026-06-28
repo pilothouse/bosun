@@ -161,6 +161,30 @@ public actor GitHubAPIClient: GitHubAPI {
         return dto.toDomain()
     }
 
+    public func editItem(owner: String, repo: String, number: Int,
+                         edit: GitHubItemEdit) async throws -> GitHubItem {
+        // The third write: REST `PATCH .../issues/{number}` (which serves PRs too). Only the non-nil
+        // fields of `edit` are sent (`EditItemBody`'s synthesized `encodeIfPresent`), and the array
+        // fields replace the whole set. The 200 body is the updated issue, decoded through `IssueRESTDTO`
+        // — a permission denial is a 403 the controller maps to a readable reason.
+        let payload = try JSONEncoder().encode(EditItemBody(edit))
+        let url = restURL(path: "/repos/\(owner)/\(repo)/issues/\(number)")
+        let request = try await authorizedRequest(url: url, method: "PATCH", body: payload)
+        let (data, _) = try await perform(request)
+        let dto: IssueRESTDTO = try decode(data)
+        return dto.toDomain(owner: owner, repo: repo)
+    }
+
+    public func repositoryLabels(owner: String, repo: String) async throws -> [GitHubLabel] {
+        let labels: [LabelDTO] = try await getPaged(path: "/repos/\(owner)/\(repo)/labels")
+        return labels.map { $0.toDomain() }
+    }
+
+    public func assignableUsers(owner: String, repo: String) async throws -> [GitHubActor] {
+        let users: [UserRefDTO] = try await getPaged(path: "/repos/\(owner)/\(repo)/assignees")
+        return users.map { $0.toDomain() }
+    }
+
     // MARK: - REST transport
 
     /// A single REST resource (no pagination), e.g. `/user`.
@@ -332,98 +356,6 @@ private extension Optional {
     func orThrowNotFound() throws -> Wrapped {
         guard let value = self else { throw GitHubAPIError.notFound }
         return value
-    }
-}
-
-// MARK: - REST DTOs
-
-/// The `POST .../comments` request body — GitHub takes just `{ "body": "…" }`.
-private struct CommentBody: Encodable {
-    let body: String
-}
-
-/// The `PUT .../merge` request body. The optional commit fields override the merge commit's text;
-/// synthesized `Codable` uses `encodeIfPresent`, so a nil one is omitted and GitHub uses its
-/// default. `CodingKeys` map to GitHub's snake_case payload.
-private struct MergeBody: Encodable {
-    let mergeMethod: String
-    let commitTitle: String?
-    let commitMessage: String?
-
-    enum CodingKeys: String, CodingKey {
-        case mergeMethod = "merge_method"
-        case commitTitle = "commit_title"
-        case commitMessage = "commit_message"
-    }
-}
-
-/// The `PUT .../merge` success body — GitHub returns `{ "sha", "merged", "message" }`.
-private struct MergeResultDTO: Decodable {
-    let sha: String?
-    let merged: Bool
-    let message: String
-
-    func toDomain() -> PRMergeResult {
-        PRMergeResult(merged: merged, sha: sha, message: message)
-    }
-}
-
-/// One blocker from the issue-dependencies REST list — a plain issue object. Only its number and
-/// (to drop cross-repo blockers) its repository's `full_name` matter here.
-private struct DependencyIssueDTO: Decodable {
-    let number: Int
-    let repository: RepoRef?
-
-    struct RepoRef: Decodable {
-        let fullName: String
-        enum CodingKeys: String, CodingKey { case fullName = "full_name" }
-    }
-}
-
-private struct UserDTO: Decodable {
-    let login: String
-    let name: String?
-    let avatarURL: String?
-
-    enum CodingKeys: String, CodingKey {
-        case login, name
-        case avatarURL = "avatar_url"
-    }
-
-    func toDomain() -> GitHubUser {
-        GitHubUser(login: login, name: name, avatarURL: avatarURL.flatMap(URL.init(string:)))
-    }
-}
-
-private struct CommentDTO: Decodable {
-    let body: String
-    let createdAt: Date
-    let authorAssociation: String?
-    let user: UserRefDTO?
-
-    enum CodingKeys: String, CodingKey {
-        case body, user
-        case createdAt = "created_at"
-        case authorAssociation = "author_association"
-    }
-
-    func toDomain() -> GitHubComment {
-        GitHubComment(author: user?.toDomain() ?? .ghost, createdAt: createdAt,
-                      body: body, authorAssociation: authorAssociation)
-    }
-}
-
-private struct UserRefDTO: Decodable {
-    let login: String
-    let avatarURL: String?
-
-    enum CodingKeys: String, CodingKey {
-        case login
-        case avatarURL = "avatar_url"
-    }
-
-    func toDomain() -> GitHubActor {
-        GitHubActor(login: login, avatarURL: avatarURL.flatMap(URL.init(string:)))
     }
 }
 

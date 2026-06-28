@@ -32,7 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // below when a Keychain token already exists, so a returning user sees data immediately.
         let data = GitHubDataController(api: githubServices.api, cache: githubServices.cache,
                                         store: store, addComment: githubServices.addComment,
-                                        mergePullRequest: githubServices.mergePullRequest)
+                                        mergePullRequest: githubServices.mergePullRequest,
+                                        editItem: githubServices.editItem)
         self.dataController = data
         auth.onSignedIn = { [weak data] in data?.load() }
         auth.onSignedOut = { [weak data] in data?.clear() }
@@ -50,7 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Close an open View/Status dropdown on a click anywhere outside it (the menu and its toggle
         // buttons publish their no-dismiss regions in `store.menuDismissRects`). The plain overlay
         // menus can't dismiss themselves, and app-level NSEvent monitors don't see clicks here.
-        win.onMouseDown = { [weak store] pointInWindow in
+        win.onMouseDown = { [weak store, weak self] pointInWindow in
+            // Close the detail pane's label/assignee picker on a click outside it (issue #71).
+            self?.root?.windowMouseDown(at: pointInWindow)
             guard let store, store.viewMenuOpen || store.statusMenuOpen else { return }
             if !store.menuDismissRects.contains(where: { $0.contains(pointInWindow) }) {
                 store.viewMenuOpen = false

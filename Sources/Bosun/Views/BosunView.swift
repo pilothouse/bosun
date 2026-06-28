@@ -238,6 +238,8 @@ final class BosunView: NSView {
         center.detail.onSubmitComment = { [weak self] body, done in self?.data.submitComment(body: body, completion: done) }
         center.detail.onRefreshDetail = { [weak self] in self?.data.refreshDetail() }
         center.detail.onMergePullRequest = { [weak self] merge, done in self?.data.mergePullRequest(merge, completion: done) }
+        center.detail.onEditItem = { [weak self] edit, done in self?.data.editItem(edit, completion: done) }
+        center.detail.onLoadEditChoices = { [weak self] done in self?.data.loadEditChoices(completion: done) }
 
         // Reflect the active console tab — or its label — wherever it's shown whenever it changes (#73).
         center.terminal.onActiveTitleChange = { [weak self] in self?.updateActiveConsoleTitle() }
@@ -518,6 +520,13 @@ final class BosunView: NSView {
         // Only the live libghostty surface takes keystrokes; the error placeholder must not grab focus.
         guard let term = center.terminal.activeSurfaceView else { return }
         window?.makeFirstResponder(term)
+    }
+
+    /// Forward a window mouse-down (from `DismissingWindow` via the composition root) to the detail
+    /// pane so an open label/assignee picker closes on a click outside it — the libghostty-hosted
+    /// window doesn't deliver these to app-level `NSEvent` monitors, so the window hook is the path.
+    func windowMouseDown(at pointInWindow: NSPoint) {
+        center.detail.dismissPickers(forWindowClickAt: pointInWindow)
     }
 
     /// Reflect the active console tab's label (#73) in both places it shows: the macOS window title

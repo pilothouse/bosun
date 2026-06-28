@@ -18,9 +18,17 @@ final class GitHubDataController {
     private let cache: GitHubCacheStore
     private let store: Store
     /// The write seams. The controller drives them like every other use case; the view never
-    /// touches the client directly. `addComment` posts a comment; `mergePullRequest` merges a PR.
+    /// touches the client directly. `addComment` posts a comment; `mergePullRequest` merges a PR;
+    /// `editItem` edits an issue/PR's title/body/labels/assignees.
     private let addCommentUseCase: AddCommentUseCase
     private let mergePullRequestUseCase: MergePullRequestUseCase
+    private let editItemUseCase: EditItemUseCase
+
+    /// The current repo's label palette and assignable users, cached per repo so re-opening a picker
+    /// doesn't refetch (mirrors `blockedByLoaded`'s per-scope memo). Keyed by `owner/name`; cleared on
+    /// a repo/item-scope change in `loadItems`/`loadOrgItems`. Reads have no business rule, so they're
+    /// fetched straight through `api` (like `itemDetail`), not behind a use case.
+    private var editChoicesCache: [String: ([LabelChoice], [Assignee])] = [:]
 
     private var loadTask: Task<Void, Never>?
     private var itemsTask: Task<Void, Never>?
@@ -56,12 +64,13 @@ final class GitHubDataController {
     private var blockedByLoaded: Set<String> = []
 
     init(api: GitHubAPI, cache: GitHubCacheStore, store: Store, addComment: AddCommentUseCase,
-         mergePullRequest: MergePullRequestUseCase) {
+         mergePullRequest: MergePullRequestUseCase, editItem: EditItemUseCase) {
         self.api = api
         self.cache = cache
         self.store = store
         self.addCommentUseCase = addComment
         self.mergePullRequestUseCase = mergePullRequest
+        self.editItemUseCase = editItem
     }
 
     /// Hydrate the orgs panel from the local cache (instant, no spinner), then fetch live, diff it
@@ -434,12 +443,82 @@ final class GitHubDataController {
         }
     }
 
+    /// Edit the open item's title/body/labels/assignees and, on success, apply GitHub's stored copy in
+    /// place to both the open detail *and* its list row — no re-fetch, so there's no loading flash and
+    /// the response's canonical label colors / assignee avatars are used (the PR-only detail fields the
+    /// PATCH response omits — checks/files/mergeability — are preserved, since `applyEdited` layers the
+    /// edit onto the existing item rather than replacing it). `completion` runs on the main actor:
+    /// `(true, nil)` succeeded; `(false, message)` keeps the user's edits and surfaces `message`; a
+    /// no-op/blank-title edit is reported as `(false, message)` from the use case's rule. Mirrors
+    /// `submitComment`'s ownership: an edit that lands after the user moved on isn't grafted onto a
+    /// different item.
+    func editItem(_ edit: GitHubItemEdit, completion: @escaping (Bool, String?) -> Void) {
+        let selectedId = store.selectedItemId
+        guard let item = (store.prs + store.issues).first(where: { $0.id == selectedId }),
+              let repo = item.ownerRepo else {
+            completion(false, nil); return
+        }
+        let number = item.number
+        Task { @MainActor in
+            do {
+                let updated = try await editItemUseCase(
+                    owner: repo.owner, repo: repo.name, number: number, edit: edit)
+                // Apply only if the user is still on this item (a late edit must not stomp another).
+                if store.selectedItemId == selectedId {
+                    applyEdited(updated, toItemId: selectedId)
+                }
+                completion(true, nil)
+            } catch EditItemError.noChanges {
+                completion(false, nil)
+            } catch EditItemError.emptyTitle {
+                completion(false, "A title is required.")
+            } catch {
+                completion(false, Self.editMessage(for: error))
+            }
+        }
+    }
+
+    /// Layer GitHub's stored edit onto the matching list row and the open detail, leaving each item's
+    /// detail-only collections (comments/checks/files) and PR fields intact (see `Item.applyEdited`).
+    private func applyEdited(_ updated: Domain.GitHubItem, toItemId id: String) {
+        if let i = store.prs.firstIndex(where: { $0.id == id }) { store.prs[i].applyEdited(from: updated) }
+        if let i = store.issues.firstIndex(where: { $0.id == id }) { store.issues[i].applyEdited(from: updated) }
+        if var detail = store.selectedItemDetail, detail.id == id {
+            detail.applyEdited(from: updated)
+            store.selectedItemDetail = detail
+        }
+    }
+
+    /// Fetch the open item's repo label palette and assignable users for the edit pane's pickers,
+    /// projected to presentation choices. Cached per repo for the session so re-opening a picker is
+    /// instant; an empty result (or failure) just yields empty pickers. Routes to the item's own repo
+    /// (correct in aggregate-org scope), and reports on the main actor only while it's still selected.
+    func loadEditChoices(completion: @escaping ([LabelChoice], [Assignee]) -> Void) {
+        let selectedId = store.selectedItemId
+        guard let item = (store.prs + store.issues).first(where: { $0.id == selectedId }),
+              let repo = item.ownerRepo else {
+            completion([], []); return
+        }
+        let key = "\(repo.owner)/\(repo.name)"
+        if let cached = editChoicesCache[key] { completion(cached.0, cached.1); return }
+        Task { @MainActor in
+            async let labelsCall = api.repositoryLabels(owner: repo.owner, repo: repo.name)
+            async let usersCall = api.assignableUsers(owner: repo.owner, repo: repo.name)
+            let labels = (try? await labelsCall) ?? []
+            let users = (try? await usersCall) ?? []
+            let choices = (labels.map(LabelChoice.init(domain:)), users.map(Assignee.init(domain:)))
+            editChoicesCache[key] = choices
+            if store.selectedItemId == selectedId { completion(choices.0, choices.1) }
+        }
+    }
+
     /// Drop all live data on sign-out so the UI returns to an empty, signed-out shell.
     func clear() {
         loadTask?.cancel(); itemsTask?.cancel(); detailTask?.cancel()
         currentRepo = nil
         currentOrg = nil
         blockedByLoaded = []
+        editChoicesCache = [:]
         consecutiveUnauthorized = 0   // a fresh streak starts next session; `awaitingRevalidation`
                                       // intentionally survives (clear() runs during recovery itself)
         store.collapsedItems = []
@@ -826,6 +905,20 @@ final class GitHubDataController {
                  + "merge method may be disabled for this repo."
         case .http(409):
             return "This pull request changed since it loaded. Refresh and try again."
+        default:
+            return message(for: error)
+        }
+    }
+
+    /// Edit failures need their own wording for the codes the generic `message(for:)` would flatten to
+    /// "check your connection": a 403 is a permission denial (the token can't write this repo), and a
+    /// 422 is GitHub rejecting the payload (e.g. an unknown label/assignee). Everything else defers.
+    private static func editMessage(for error: Error) -> String {
+        switch error as? GitHubAPIError {
+        case .http(403):
+            return "You don't have permission to edit this item."
+        case .http(422):
+            return "GitHub rejected the change. A label or assignee may no longer be valid."
         default:
             return message(for: error)
         }

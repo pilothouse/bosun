@@ -127,6 +127,18 @@ public protocol GitHubAPI: Sendable {
     /// `GitHubAPIError.http` from the adapter.
     func mergePullRequest(owner: String, repo: String, number: Int,
                           merge: PRMergeRequest) async throws -> PRMergeResult
+    /// Edit an issue/PR's title/body/labels/assignees per `edit` and return it as GitHub stored it.
+    /// The third write on this port (REST `PATCH /repos/{owner}/{repo}/issues/{number}`, which serves
+    /// PRs too). Only the non-nil fields of `edit` are sent; `labels`/`assignees` *replace* the whole
+    /// set. A permission denial surfaces as `GitHubAPIError.http` from the adapter.
+    func editItem(owner: String, repo: String, number: Int,
+                  edit: GitHubItemEdit) async throws -> GitHubItem
+    /// The labels a repository defines, for the edit pane's label picker (REST
+    /// `GET /repos/{owner}/{repo}/labels`). Read-only — no business rule, so callers use it directly.
+    func repositoryLabels(owner: String, repo: String) async throws -> [GitHubLabel]
+    /// The users assignable to a repository's issues/PRs, for the edit pane's assignee picker (REST
+    /// `GET /repos/{owner}/{repo}/assignees`). Read-only, like `repositoryLabels`.
+    func assignableUsers(owner: String, repo: String) async throws -> [GitHubActor]
 }
 
 /// Why posting a comment didn't happen before the network was even touched. `.empty` is a blank
@@ -134,6 +146,14 @@ public protocol GitHubAPI: Sendable {
 /// `GitHubAPIError` from the adapter, not here.
 public enum AddCommentError: Error, Sendable, Equatable {
     case empty
+}
+
+/// Why editing an issue/PR didn't happen before the network was even touched. `.emptyTitle` is a
+/// title edited down to blank (GitHub would reject it); `.noChanges` is an edit that changes nothing.
+/// Transport/HTTP failures (including a permission denial) surface as `GitHubAPIError`, not here.
+public enum EditItemError: Error, Sendable, Equatable {
+    case emptyTitle
+    case noChanges
 }
 
 /// Persistence seam for a local copy of the viewer's GitHub data, so the UI hydrates instantly on
