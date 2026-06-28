@@ -110,7 +110,11 @@ extension Item {
             repo: it.repositoryNameWithOwner,
             // Web URL for the copy-link affordance; the kind picks `pull` vs `issues`.
             url: "https://github.com/\(it.repositoryNameWithOwner)/" +
-                 "\(it.kind == .pullRequest ? "pull" : "issues")/\(it.number)"
+                 "\(it.kind == .pullRequest ? "pull" : "issues")/\(it.number)",
+            // PR mergeability for the detail pane's merge control (nil for issues / lead rows).
+            mergeable: it.mergeable,
+            mergeStateStatus: it.mergeStateStatus,
+            baseRef: it.baseRefName
         )
     }
 

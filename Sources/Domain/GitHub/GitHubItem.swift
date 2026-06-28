@@ -58,6 +58,18 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
     /// so the instantly-shown lead row already has colored pills, with no recolor when the detail
     /// lands. Optional, like the above (older caches and colorless labels map to nil).
     public let labelColors: [String: String]?
+    /// Whether GitHub considers this PR mergeable: `true` (MERGEABLE), `false` (CONFLICTING), or nil
+    /// (UNKNOWN — GitHub computes this asynchronously, so a freshly opened PR reads nil until the
+    /// background check lands). PR-only and detail-hydrated. Drives the detail pane's merge control
+    /// via `PRMergePolicy`; nil for issues and for items that haven't been hydrated.
+    public let mergeable: Bool?
+    /// GitHub's raw merge-state status for a PR (CLEAN/BLOCKED/DIRTY/DRAFT/BEHIND/UNSTABLE/…), the
+    /// nuance `mergeable` can't carry (e.g. BLOCKED = required reviews/checks missing). PR-only and
+    /// detail-hydrated; nil for issues / un-hydrated items.
+    public let mergeStateStatus: String?
+    /// The PR's base (target) branch — the branch a merge would land on. PR-only and
+    /// detail-hydrated; nil for issues.
+    public let baseRefName: String?
 
     public init(id: String, number: Int, kind: GitHubItemKind, title: String,
                 state: GitHubItemState, author: GitHubActor, createdAt: Date, body: String,
@@ -66,7 +78,8 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
                 comments: [GitHubComment] = [], checks: [GitHubCheck] = [],
                 files: [GitHubFile]? = nil, tasks: [GitHubTask] = [], parentNumber: Int? = nil,
                 assignees: [GitHubActor]? = nil, milestone: String? = nil,
-                labelColors: [String: String]? = nil) {
+                labelColors: [String: String]? = nil, mergeable: Bool? = nil,
+                mergeStateStatus: String? = nil, baseRefName: String? = nil) {
         self.id = id
         self.number = number
         self.kind = kind
@@ -89,5 +102,8 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
         self.assignees = assignees
         self.milestone = milestone
         self.labelColors = labelColors
+        self.mergeable = mergeable
+        self.mergeStateStatus = mergeStateStatus
+        self.baseRefName = baseRefName
     }
 }

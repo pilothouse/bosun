@@ -123,6 +123,13 @@ struct Item {
     var repo = ""
     /// The item's GitHub web URL (issue or PR), used by the detail view's copy-link affordance.
     var url = ""
+    /// PR mergeability, carried so the detail pane's merge control can enable/disable itself via
+    /// `PRMergePolicy`. `mergeable`: true (MERGEABLE), false (CONFLICTING), nil (UNKNOWN / not yet
+    /// hydrated). `mergeStateStatus`: GitHub's raw status (CLEAN/BLOCKED/DRAFT/…). `baseRef`: the
+    /// target branch a merge lands on. All nil for issues and lead (un-hydrated) rows.
+    var mergeable: Bool? = nil
+    var mergeStateStatus: String? = nil
+    var baseRef: String? = nil
 }
 
 extension Item {

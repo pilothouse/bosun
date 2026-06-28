@@ -1,4 +1,5 @@
 import AppKit
+import Domain
 
 /// Scrollable issue/PR detail for the currently-selected item.
 final class DetailView: FlippedView {
@@ -28,6 +29,12 @@ final class DetailView: FlippedView {
     /// same top-right slot the hydration spinner uses). The controller force-reloads the open item.
     var onRefreshDetail: (() -> Void)?
 
+    /// Called when the user confirms a merge. The view hands over the chosen method + edited commit
+    /// text (a `PRMergeRequest`) and a completion the controller runs on the main actor: `(true,
+    /// nil)` succeeded (the controller refreshes the item to `merged`); `(false, message)` keeps the
+    /// form and surfaces `message`.
+    var onMergePullRequest: ((PRMergeRequest, @escaping (Bool, String?) -> Void) -> Void)?
+
     // Composer state lives on the view (not the rebuilt subviews), so it survives `rebuild()`:
     // an in-flight post, a typed-but-unsent draft, and the last error all persist across relayouts.
     private var composerDraft = ""
@@ -37,6 +44,31 @@ final class DetailView: FlippedView {
     private var composerItemId = ""
     /// The live composer field for the current rebuild; read on submit (Return key / Send click).
     private weak var composerField: NSTextField?
+
+    // Merge-control state, on the view for the same survives-`rebuild()` reason as the composer: the
+    // chosen method, whether the method picker is open, the edited commit title/body, an in-flight
+    // merge, and the last error all persist across relayouts.
+    private var mergeMethod: PRMergeMethod = .merge
+    private var mergeMenuOpen = false
+    /// Whether the inline confirm form is expanded. Collapsed (false) shows just the merge button
+    /// (GitHub-style); clicking it expands the commit fields + Confirm/Cancel.
+    private var mergeConfirming = false
+    private var mergeTitleDraft = ""
+    private var mergeBodyDraft = ""
+    private var isMerging = false
+    private var mergeError: String?
+    /// The open method-picker overlay for the current rebuild, added to the document *last* so it
+    /// floats over the comments below rather than pushing them down. Reset every rebuild.
+    private var mergeMenuOverlay: NSView?
+    /// The id the merge form belongs to, so switching items resets the method/menu/error and re-seeds
+    /// the commit fields from the new PR.
+    private var mergeItemId = ""
+    /// The live merge title/body fields for the current rebuild; read on submit.
+    private weak var mergeTitleField: NSTextField?
+    private weak var mergeBodyField: NSTextView?
+    /// The measured height of the elastic commit-message field, so `textDidChange` only relayouts
+    /// when a line is actually added/removed (not on every keystroke within a line).
+    private var mergeBodyContentH: CGFloat = 0
 
     init(store: Store) {
         self.store = store
@@ -188,6 +220,12 @@ final class DetailView: FlippedView {
         let avail = bounds.width
         guard avail > 80 else { scroll.documentView = nil; return }
 
+        // Preserve the elastic merge-message field's focus + caret across this rebuild (it's recreated
+        // below); without this, the relayout an elastic resize triggers would drop focus mid-word.
+        let bodyHadFocus = mergeBodyField != nil && window?.firstResponder === mergeBodyField
+        let bodySelection: NSRange? = (mergeBodyField?.selectedRanges.first as? NSValue)?.rangeValue
+        mergeMenuOverlay = nil   // rebuilt below if the method picker is open; added last so it floats
+
         let padX: CGFloat = z(26)
         let cw = avail - padX * 2
         let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: avail, height: 10))
@@ -203,6 +241,20 @@ final class DetailView: FlippedView {
         if it.id != composerItemId {
             composerItemId = it.id
             composerDraft = ""; composerError = nil; isPosting = false
+        }
+
+        // A new item also gets a fresh merge form: reset the method/menu/error and re-seed the
+        // commit fields from the new PR (title → commit title, body → commit message), the same
+        // defaults GitHub starts from.
+        if it.id != mergeItemId {
+            mergeItemId = it.id
+            mergeMethod = .merge; mergeMenuOpen = false; mergeConfirming = false
+            mergeError = nil; isMerging = false
+            // GitHub's default merge-commit text: a "Merge pull request #N from owner/branch" title
+            // and the PR title as the body. The user can edit both in the confirm form before merging.
+            mergeTitleDraft = Self.defaultMergeTitle(for: it)
+            mergeBodyDraft = it.title
+            mergeBodyContentH = 0
         }
 
         func add(_ v: NSView, x: CGFloat = padX) { v.frame.origin = NSPoint(x: x, y: y); doc.addSubview(v) }
@@ -434,6 +486,12 @@ final class DetailView: FlippedView {
             y += z(22)
         }
 
+        // Merge control (open PRs only). A closed/merged PR has no merge affordance; an open one
+        // shows the split-button when mergeable, or a disabled bar with the reason when not.
+        if it.kind == .pr && it.state == .open {
+            y = layoutMergeSection(for: it, into: doc, t: t, padX: padX, cw: cw, y: y)
+        }
+
         // Comments. The header is a disclosure mirroring ACTIONS/FILES CHANGED: it toggles the
         // global, persisted `store.prCommentsCollapsed`. Only the thread collapses — the composer
         // below stays visible so a comment can always be posted.
@@ -520,7 +578,10 @@ final class DetailView: FlippedView {
         }
         y += z(8)
 
-        doc.frame.size.height = y + z(10)
+        // The open method picker floats over the comments: added last so it's on top of them, and
+        // its height (not its position) extends the document so it can't be clipped at the bottom.
+        if let menu = mergeMenuOverlay { doc.addSubview(menu) }
+        doc.frame.size.height = max(y + z(10), (mergeMenuOverlay?.frame.maxY ?? 0) + z(10))
 
         // Replacing the document view resets the scroll to the top. Restore the prior offset when
         // we're re-rendering the same item (a detail hydrating, a comment landing, a resize) so the
@@ -535,6 +596,13 @@ final class DetailView: FlippedView {
             scroll.reflectScrolledClipView(scroll.contentView)
         }
         lastScrollItemId = it.id
+
+        // Restore focus + caret to the rebuilt merge-message field so an elastic resize doesn't
+        // interrupt typing (the field above was just recreated under a new document view).
+        if bodyHadFocus, let tv = mergeBodyField {
+            window?.makeFirstResponder(tv)
+            if let bodySelection { tv.setSelectedRange(bodySelection) }
+        }
     }
 
     // MARK: Metadata section (reusable)
@@ -586,6 +654,248 @@ final class DetailView: FlippedView {
         let name = label(a.login, sys(11.5), t.txt2)
         name.frame = NSRect(x: z(22), y: z(3), width: nameW, height: z(14)); chip.addSubview(name)
         return chip
+    }
+
+    // MARK: Merge section (PR-only)
+
+    /// Lay out the merge control for an open PR into `doc` starting at `y`, returning the new `y`.
+    /// `PRMergePolicy` decides whether to show the split-button (mergeable) or a disabled bar with a
+    /// reason (draft/conflicts/blocked/checking). The editable commit fields show for the methods
+    /// that create a commit; a rebase hides them (GitHub ignores commit text there).
+    private func layoutMergeSection(for it: Item, into doc: NSView, t: Theme,
+                                    padX: CGFloat, cw: CGFloat, y startY: CGFloat) -> CGFloat {
+        var y = startY
+        let availability = PRMergePolicy.availability(
+            kind: .pullRequest, state: it.state,
+            mergeable: it.mergeable, mergeStateStatus: it.mergeStateStatus)
+
+        // Caption, mirroring the ACTIONS/FILES CHANGED/COMMENTS section captions; names the base
+        // branch when known so the user sees what a merge lands on.
+        let caption = it.baseRef.map { "MERGE · into \($0)" } ?? "MERGE"
+        let hdr = label(caption, mono(9.5, .semibold), t.txt4)
+        hdr.frame = NSRect(x: padX, y: y, width: cw, height: z(14)); doc.addSubview(hdr)
+        y += z(22)
+
+        if case let .blocked(reason) = availability {
+            let barH = z(34)
+            let bar = BoxView(bg: t.card, radius: z(8), border: t.cardbr)
+            bar.frame = NSRect(x: padX, y: y, width: cw, height: barH)
+            let glyph = label("⊘", sys(12), t.txt4, align: .center)
+            glyph.frame = NSRect(x: z(12), y: z(9), width: z(16), height: z(16)); bar.addSubview(glyph)
+            let msg = label(reason, sys(12), t.txt4)
+            msg.frame = NSRect(x: z(34), y: z(9), width: cw - z(46), height: z(16)); bar.addSubview(msg)
+            doc.addSubview(bar)
+            return y + barH + z(18)
+        }
+
+        // Mergeable. Collapsed (GitHub default), the section is just the merge button; clicking it
+        // expands the inline confirm form (commit fields + Confirm/Cancel). No commit fields show
+        // until then — exactly like github.com.
+        let barH = z(34), btnW = z(200)
+        if isMerging {
+            let spinner = makeSpinner(size: z(16))
+            spinner.frame.origin = NSPoint(x: padX + z(4), y: y + z(8)); doc.addSubview(spinner)
+            let lbl = label("Merging…", sys(12.5, .semibold), t.txt3)
+            lbl.frame = NSRect(x: padX + z(28), y: y + z(8), width: cw - z(40), height: z(18)); doc.addSubview(lbl)
+            y += barH + z(8)
+        } else if mergeConfirming {
+            // The editable commit fields (merge/squash only — rebase makes no commit), then the
+            // inline Confirm/Cancel that replaces the old modal alert.
+            if mergeMethod.usesCommitMessage {
+                let titleBox = BoxView(bg: t.card, radius: z(8), border: t.cardbr)
+                titleBox.frame = NSRect(x: padX, y: y, width: cw, height: z(32))
+                let tf = NSTextField(string: mergeTitleDraft)
+                tf.font = sys(12.5); tf.placeholderString = "Commit title"
+                tf.isBezeled = false; tf.drawsBackground = false; tf.focusRingType = .none
+                tf.textColor = t.txt; tf.lineBreakMode = .byTruncatingTail
+                tf.delegate = self
+                tf.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+                tf.frame = NSRect(x: z(12), y: z(7), width: cw - z(24), height: z(18))
+                titleBox.addSubview(tf); mergeTitleField = tf
+                doc.addSubview(titleBox); y += z(40)
+
+                // The commit message grows with its content (no inner scrollbar) so the whole body
+                // stays visible no matter how many lines; `textDidChange` relayouts when a line is
+                // added/removed. `lineFragmentPadding` is zeroed so the measured width matches.
+                let textW = cw - z(20)
+                let contentH = max(z(46), Self.textHeight(mergeBodyDraft, width: textW, font: sys(12.5)))
+                mergeBodyContentH = contentH
+                let msgH = contentH + z(20)
+                let msgBox = BoxView(bg: t.card, radius: z(8), border: t.cardbr)
+                msgBox.frame = NSRect(x: padX, y: y, width: cw, height: msgH)
+                let tv = NSTextView(frame: NSRect(x: z(8), y: z(7), width: cw - z(16), height: msgH - z(14)))
+                tv.string = mergeBodyDraft
+                tv.font = sys(12.5); tv.textColor = t.txt
+                tv.drawsBackground = false
+                tv.isRichText = false
+                tv.delegate = self
+                tv.textContainerInset = NSSize(width: z(2), height: z(2))
+                tv.textContainer?.lineFragmentPadding = 0
+                tv.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+                msgBox.addSubview(tv); mergeBodyField = tv
+                doc.addSubview(msgBox); y += msgH + z(10)
+            } else {
+                mergeTitleField = nil; mergeBodyField = nil
+            }
+
+            let confirmW = z(126), cancelW = z(86), gap = z(8)
+            let confirm = ClickRow(bg: t.accent, radius: z(8))
+            confirm.frame = NSRect(x: padX, y: y, width: confirmW, height: barH)
+            confirm.onClick = { [weak self] in self?.performMerge() }
+            let cl = label("Confirm merge", sys(12, .semibold), t.onacc, align: .center)
+            cl.frame = NSRect(x: 0, y: z(9), width: confirmW, height: z(16)); confirm.addSubview(cl)
+            doc.addSubview(confirm)
+
+            let cancel = ClickRow(bg: t.card, radius: z(8))
+            cancel.layer?.borderWidth = 1; cancel.layer?.borderColor = t.cardbr.cgColor
+            cancel.frame = NSRect(x: padX + confirmW + gap, y: y, width: cancelW, height: barH)
+            cancel.onClick = { [weak self] in self?.cancelMergeConfirm() }
+            let cancl = label("Cancel", sys(12, .semibold), t.txt2, align: .center)
+            cancl.frame = NSRect(x: 0, y: z(9), width: cancelW, height: z(16)); cancel.addSubview(cancl)
+            doc.addSubview(cancel)
+            y += barH + z(8)
+        } else {
+            // Collapsed: just the split-button (primary opens the confirm form, caret opens the
+            // method picker) with the mergeability status to its right. No commit fields yet.
+            mergeTitleField = nil; mergeBodyField = nil
+            let caretW = z(32), gap = z(5)
+            let primaryW = btnW - caretW - gap
+            let primary = ClickRow(bg: t.accent, radius: z(8))
+            primary.frame = NSRect(x: padX, y: y, width: primaryW, height: barH)
+            primary.onClick = { [weak self] in self?.beginMergeConfirm() }
+            let pl = label(mergeMethod.buttonTitle, sys(12, .semibold), t.onacc, align: .center)
+            pl.frame = NSRect(x: 0, y: z(9), width: primaryW, height: z(16)); primary.addSubview(pl)
+            doc.addSubview(primary)
+
+            let caret = ClickRow(bg: t.accent, radius: z(8))
+            caret.frame = NSRect(x: padX + btnW - caretW, y: y, width: caretW, height: barH)
+            caret.onClick = { [weak self] in self?.toggleMergeMenu() }
+            let cl = label(mergeMenuOpen ? "▴" : "▾", sys(11), t.onacc, align: .center)
+            cl.frame = NSRect(x: 0, y: z(9), width: caretW, height: z(16)); caret.addSubview(cl)
+            doc.addSubview(caret)
+
+            let statusX = padX + btnW + z(14)
+            let check = label("✓", sys(12, .bold), Status.green, align: .center)
+            check.frame = NSRect(x: statusX, y: y + z(9), width: z(14), height: z(16)); doc.addSubview(check)
+            let statusLbl = label("No conflicts with base branch", sys(12), t.txt3)
+            statusLbl.frame = NSRect(x: statusX + z(20), y: y + z(9), width: cw - btnW - z(38), height: z(16))
+            doc.addSubview(statusLbl)
+
+            // Method picker: built at the button's bottom but added to `doc` last (in `rebuild()`) so
+            // it floats over the comments below instead of pushing them down. Not counted into `y`.
+            if mergeMenuOpen {
+                mergeMenuOverlay = makeMergeMethodMenu(t: t, x: padX, y: y + barH + z(2), width: btnW)
+            }
+            y += barH + z(8)
+        }
+
+        if let mergeError {
+            let err = label(mergeError, sys(11), Status.red, lines: 0)
+            err.preferredMaxLayoutWidth = cw
+            err.frame = NSRect(x: padX, y: y, width: cw, height: z(32))
+            doc.addSubview(err); y += z(36)
+        }
+        return y + z(10)
+    }
+
+    /// Build the method-picker overlay (merge commit / squash / rebase, ✓ on the selected). Returned
+    /// rather than added so the caller can float it over later content; mirrors the RepoPanelView menus.
+    private func makeMergeMethodMenu(t: Theme, x: CGFloat, y: CGFloat, width: CGFloat) -> NSView {
+        let rowH = z(34)
+        let menuH = rowH * CGFloat(PRMergeMethod.allCases.count) + z(10)
+        let menu = BoxView(bg: t.panel, radius: z(10), border: t.line2)
+        menu.frame = NSRect(x: x, y: y, width: width, height: menuH)
+        menu.layer?.shadowColor = NSColor.black.cgColor
+        menu.layer?.shadowOpacity = 0.45
+        menu.layer?.shadowRadius = z(10)
+        menu.layer?.shadowOffset = .zero
+        var my = z(5)
+        for m in PRMergeMethod.allCases {
+            let on = m == mergeMethod
+            let row = ClickRow(bg: on ? t.accentbg : nil, radius: z(7))
+            row.hoverColor = t.hover
+            row.frame = NSRect(x: z(5), y: my, width: width - z(10), height: rowH)
+            let chk = label(on ? "✓" : "", sys(11), t.accent)
+            chk.frame = NSRect(x: z(10), y: z(9), width: z(14), height: z(16)); row.addSubview(chk)
+            let ml = label(m.title, sys(12), t.txt)
+            ml.frame = NSRect(x: z(28), y: z(9), width: width - z(38), height: z(16)); row.addSubview(ml)
+            row.onClick = { [weak self] in self?.selectMergeMethod(m) }
+            menu.addSubview(row); my += rowH
+        }
+        return menu
+    }
+
+    /// Toggle the method picker open/closed.
+    private func toggleMergeMenu() { mergeMenuOpen.toggle(); needsLayout = true }
+
+    /// Pick a merge method, close the picker, and relayout (rebase hides the commit fields).
+    private func selectMergeMethod(_ method: PRMergeMethod) {
+        mergeMethod = method
+        mergeMenuOpen = false
+        needsLayout = true
+    }
+
+    /// GitHub's default merge-commit title: "Merge pull request #N from owner/branch" (falling back
+    /// to just the number when the head branch/owner isn't known).
+    private static func defaultMergeTitle(for it: Item) -> String {
+        if let owner = it.ownerRepo?.owner, let branch = it.branch, !branch.isEmpty {
+            return "Merge pull request #\(it.number) from \(owner)/\(branch)"
+        }
+        return "Merge pull request #\(it.number)"
+    }
+
+    /// The height `text` needs when wrapped to `width` in `font` — drives the elastic commit-message
+    /// field. Measures a single space for empty text so the field keeps a one-line minimum.
+    private static func textHeight(_ text: String, width: CGFloat, font: NSFont) -> CGFloat {
+        let measured = (text.isEmpty ? " " : text) as NSString
+        let rect = measured.boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font])
+        return ceil(rect.height)
+    }
+
+    /// Expand the inline confirm form (GitHub-style) where the user reviews/edits the commit text
+    /// before merging. No modal — the form's Confirm merge button is the confirmation.
+    private func beginMergeConfirm() {
+        guard !isMerging else { return }
+        mergeConfirming = true
+        mergeMenuOpen = false
+        mergeError = nil
+        needsLayout = true
+    }
+
+    /// Collapse the confirm form without merging.
+    private func cancelMergeConfirm() {
+        mergeConfirming = false
+        mergeError = nil
+        needsLayout = true
+    }
+
+    /// Merge the open PR with the chosen method + edited commit text — the confirm form's action.
+    /// No-ops while a merge is in flight. Captures the latest field values, flips to the in-flight
+    /// state, and hands a `PRMergeRequest` to the controller via `onMergePullRequest`, which calls
+    /// back to collapse the form on success or surface the error (keeping the form) on failure.
+    private func performMerge() {
+        guard !isMerging, let onMergePullRequest else { return }
+        let title = mergeTitleField?.stringValue ?? mergeTitleDraft
+        let body = mergeBodyField?.string ?? mergeBodyDraft
+        mergeTitleDraft = title; mergeBodyDraft = body
+        mergeError = nil
+        isMerging = true
+        needsLayout = true
+        let request = PRMergeRequest(method: mergeMethod, commitTitle: title, commitMessage: body)
+        onMergePullRequest(request) { [weak self] ok, message in
+            guard let self else { return }
+            self.isMerging = false
+            if ok {
+                self.mergeError = nil
+                self.mergeConfirming = false   // the controller refreshes to `merged`, hiding the section
+            } else if let message {
+                self.mergeError = message       // keep the form open so the user can retry
+            }
+            self.needsLayout = true
+        }
     }
 
     /// Post the current composer text. Shared by the Send button and the Return key. No-ops while a
@@ -655,10 +965,26 @@ final class DetailView: FlippedView {
 
 extension DetailView: NSTextFieldDelegate {
     /// Keep the persisted draft in sync as the user types, so a rebuild (resize, theme, a comment
-    /// landing) preserves the in-progress text instead of resetting the field.
+    /// landing) preserves the in-progress text instead of resetting the field. Handles both the
+    /// comment composer and the merge commit-title field.
     func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField, field === composerField else { return }
-        composerDraft = field.stringValue
+        guard let field = obj.object as? NSTextField else { return }
+        if field === composerField { composerDraft = field.stringValue }
+        else if field === mergeTitleField { mergeTitleDraft = field.stringValue }
+    }
+}
+
+extension DetailView: NSTextViewDelegate {
+    /// Keep the merge commit-message draft in sync as the user types (same survives-`rebuild()`
+    /// reason as the title field above), and relayout when the field needs to grow or shrink by a
+    /// line so it stays elastic. Only a height change triggers a rebuild — typing within a line
+    /// doesn't churn the layout — and `rebuild()` restores focus + caret so typing isn't interrupted.
+    func textDidChange(_ notification: Notification) {
+        guard let tv = notification.object as? NSTextView, tv === mergeBodyField else { return }
+        mergeBodyDraft = tv.string
+        let textW = bounds.width - z(26) * 2 - z(20)   // matches the field's measured width in rebuild()
+        let newH = max(z(46), Self.textHeight(mergeBodyDraft, width: textW, font: sys(12.5)))
+        if abs(newH - mergeBodyContentH) > 0.5 { needsLayout = true }
     }
 }
 

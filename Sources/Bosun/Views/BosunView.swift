@@ -222,6 +222,7 @@ final class BosunView: NSView {
         repoPanel.onChangeGroup = { [weak self] in self?.data.loadBlockedByIfNeeded() }
         center.detail.onSubmitComment = { [weak self] body, done in self?.data.submitComment(body: body, completion: done) }
         center.detail.onRefreshDetail = { [weak self] in self?.data.refreshDetail() }
+        center.detail.onMergePullRequest = { [weak self] merge, done in self?.data.mergePullRequest(merge, completion: done) }
 
         // Reflect the active console tab — or its label — wherever it's shown whenever it changes (#73).
         center.terminal.onActiveTitleChange = { [weak self] in self?.updateActiveConsoleTitle() }

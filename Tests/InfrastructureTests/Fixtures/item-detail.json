@@ -13,6 +13,9 @@
         "additions": 124,
         "deletions": 18,
         "headRefName": "fix/rate-limiter",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "baseRefName": "main",
         "author": { "login": "maya", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
         "labels": { "nodes": [ { "name": "bug", "color": "d73a4a" }, { "name": "p1" } ] },
         "assignees": {

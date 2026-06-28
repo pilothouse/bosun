@@ -17,9 +17,10 @@ final class GitHubDataController {
     private let api: GitHubAPI
     private let cache: GitHubCacheStore
     private let store: Store
-    /// The write seam (the app's only mutation). The controller drives it like every other use
-    /// case; the view never touches the client directly.
+    /// The write seams. The controller drives them like every other use case; the view never
+    /// touches the client directly. `addComment` posts a comment; `mergePullRequest` merges a PR.
     private let addCommentUseCase: AddCommentUseCase
+    private let mergePullRequestUseCase: MergePullRequestUseCase
 
     private var loadTask: Task<Void, Never>?
     private var itemsTask: Task<Void, Never>?
@@ -54,11 +55,13 @@ final class GitHubDataController {
     /// re-entering the "By blocked-by" grouping doesn't refetch. Cleared per repo on each item load.
     private var blockedByLoaded: Set<String> = []
 
-    init(api: GitHubAPI, cache: GitHubCacheStore, store: Store, addComment: AddCommentUseCase) {
+    init(api: GitHubAPI, cache: GitHubCacheStore, store: Store, addComment: AddCommentUseCase,
+         mergePullRequest: MergePullRequestUseCase) {
         self.api = api
         self.cache = cache
         self.store = store
         self.addCommentUseCase = addComment
+        self.mergePullRequestUseCase = mergePullRequest
     }
 
     /// Hydrate the orgs panel from the local cache (instant, no spinner), then fetch live, diff it
@@ -382,6 +385,31 @@ final class GitHubDataController {
                 completion(false, nil)
             } catch {
                 completion(false, Self.message(for: error))
+            }
+        }
+    }
+
+    /// Merge the open PR with the chosen `merge` request and, on success, re-hydrate the item so the
+    /// detail pane reflects `merged` (the type badge flips and `PRMergePolicy` then hides the
+    /// control). `completion` runs on the main actor: `(true, nil)` clears the form, `(false,
+    /// message)` keeps the user's edits and surfaces `message`. Mirrors `submitComment`'s ownership:
+    /// a merge that lands after the user moved on doesn't refresh a different item.
+    func mergePullRequest(_ merge: PRMergeRequest, completion: @escaping (Bool, String?) -> Void) {
+        let selectedId = store.selectedItemId
+        guard let item = (store.prs + store.issues).first(where: { $0.id == selectedId }),
+              let repo = item.ownerRepo else {
+            completion(false, nil); return
+        }
+        let number = item.number
+        Task { @MainActor in
+            do {
+                _ = try await mergePullRequestUseCase(
+                    owner: repo.owner, repo: repo.name, number: number, merge: merge)
+                completion(true, nil)
+                // Re-fetch only if the user is still on this item; the detail now reports `merged`.
+                if store.selectedItemId == selectedId { refreshDetail() }
+            } catch {
+                completion(false, Self.mergeMessage(for: error))
             }
         }
     }
@@ -764,6 +792,22 @@ final class GitHubDataController {
         case .surfaceError:
             consecutiveUnauthorized = 0
             store.dataError = Self.message(for: GitHubAPIError.unauthorized)
+        }
+    }
+
+    /// Merge failures need their own wording: the generic `message(for:)` maps every `.http` to a
+    /// "check your connection" line, but a merge's 405/409 are about the PR's state, not the network.
+    /// 405 = GitHub refused the merge (not mergeable / method disabled / blocked); 409 = the head
+    /// branch moved since the detail loaded (stale SHA). Everything else defers to `message(for:)`.
+    private static func mergeMessage(for error: Error) -> String {
+        switch error as? GitHubAPIError {
+        case .http(405):
+            return "GitHub wouldn't merge this pull request. It may be blocked, out of date, or that "
+                 + "merge method may be disabled for this repo."
+        case .http(409):
+            return "This pull request changed since it loaded. Refresh and try again."
+        default:
+            return message(for: error)
         }
     }
 

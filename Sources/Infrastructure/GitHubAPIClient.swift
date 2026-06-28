@@ -143,6 +143,24 @@ public actor GitHubAPIClient: GitHubAPI {
         return dto.toDomain()
     }
 
+    public func mergePullRequest(owner: String, repo: String, number: Int,
+                                 merge: PRMergeRequest) async throws -> PRMergeResult {
+        // The second write: REST `PUT .../merge`. A non-mergeable PR is a 405 and a stale-SHA
+        // conflict a 409 — both surface as `GitHubAPIError.http` from `validate`, which the
+        // controller maps to a readable reason. GitHub ignores the commit text for a rebase, so we
+        // only send it for the methods that produce a commit.
+        let usesMessage = merge.method.usesCommitMessage
+        let body = MergeBody(mergeMethod: merge.method.rawValue,
+                             commitTitle: usesMessage ? merge.commitTitle : nil,
+                             commitMessage: usesMessage ? merge.commitMessage : nil)
+        let payload = try JSONEncoder().encode(body)
+        let url = restURL(path: "/repos/\(owner)/\(repo)/pulls/\(number)/merge")
+        let request = try await authorizedRequest(url: url, method: "PUT", body: payload)
+        let (data, _) = try await perform(request)
+        let dto: MergeResultDTO = try decode(data)
+        return dto.toDomain()
+    }
+
     // MARK: - REST transport
 
     /// A single REST resource (no pagination), e.g. `/user`.
@@ -324,6 +342,32 @@ private struct CommentBody: Encodable {
     let body: String
 }
 
+/// The `PUT .../merge` request body. The optional commit fields override the merge commit's text;
+/// synthesized `Codable` uses `encodeIfPresent`, so a nil one is omitted and GitHub uses its
+/// default. `CodingKeys` map to GitHub's snake_case payload.
+private struct MergeBody: Encodable {
+    let mergeMethod: String
+    let commitTitle: String?
+    let commitMessage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case mergeMethod = "merge_method"
+        case commitTitle = "commit_title"
+        case commitMessage = "commit_message"
+    }
+}
+
+/// The `PUT .../merge` success body — GitHub returns `{ "sha", "merged", "message" }`.
+private struct MergeResultDTO: Decodable {
+    let sha: String?
+    let merged: Bool
+    let message: String
+
+    func toDomain() -> PRMergeResult {
+        PRMergeResult(merged: merged, sha: sha, message: message)
+    }
+}
+
 /// One blocker from the issue-dependencies REST list — a plain issue object. Only its number and
 /// (to drop cross-repo blockers) its repository's `full_name` matter here.
 private struct DependencyIssueDTO: Decodable {
@@ -451,76 +495,6 @@ private struct ItemDetailResponse: Decodable {
     struct Repo: Decodable { let issueOrPullRequest: ItemNode? }
 }
 
-/// One issue/PR node. The list queries fill the lead fields; the detail query also sets
-/// `typeName` and the PR's `commits` rollup. PR-only fields stay nil for issues.
-struct ItemNode: Decodable {
-    let id: String
-    let number: Int
-    let title: String
-    let body: String
-    let createdAt: Date
-    let state: String
-    let author: AuthorDTO?
-    let labels: LabelConnection?
-    let isDraft: Bool?
-    let additions: Int?
-    let deletions: Int?
-    let headRefName: String?
-    let typeName: String?
-    let commits: CommitConnection?
-    let files: FilesConnection?
-    let parent: ParentRef?
-    let assignees: ActorConnection?
-    let milestone: MilestoneRef?
-
-    /// The sub-issue parent, when this issue is one — only its `number` is needed to group locally.
-    struct ParentRef: Decodable { let number: Int }
-    /// The item's milestone — only its `title` is surfaced.
-    struct MilestoneRef: Decodable { let title: String }
-
-    enum CodingKeys: String, CodingKey {
-        case id, number, title, body, createdAt, state, author, labels
-        case isDraft, additions, deletions, headRefName, commits, files, parent
-        case assignees, milestone
-        case typeName = "__typename"
-    }
-
-    /// CI checks pulled from the PR's status-check rollup (empty for issues / no checks).
-    var rollupChecks: [GitHubCheck] {
-        commits?.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap { $0.toDomain() } ?? []
-    }
-
-    /// The files a PR changed (empty for issues, or a PR whose `files` GraphQL field is absent).
-    var changedFiles: [GitHubFile] {
-        files?.nodes.map { $0.toDomain() } ?? []
-    }
-
-    func toDomain(kind: GitHubItemKind, repoNameWithOwner: String,
-                  comments: [GitHubComment] = [], checks: [GitHubCheck] = [],
-                  files: [GitHubFile]? = nil) -> GitHubItem {
-        GitHubItem(
-            id: id, number: number, kind: kind, title: title,
-            state: GitHubItem.state(fromGraphQL: state),
-            author: author?.toDomain() ?? .ghost,
-            createdAt: createdAt, body: body, repositoryNameWithOwner: repoNameWithOwner,
-            labels: labels?.nodes.map(\.name) ?? [], isDraft: isDraft ?? false,
-            branch: headRefName, additions: additions, deletions: deletions,
-            comments: comments, checks: checks, files: files,
-            tasks: GitHubTask.parse(markdownBody: body), parentNumber: parent?.number,
-            assignees: assignees?.nodes.map { $0.toDomain() },
-            milestone: milestone?.title,
-            labelColors: labelColorMap)
-    }
-
-    /// Label name → hex color for the labels that carry one. Nil when none does — keeps items
-    /// (and the cache) from gaining an empty dictionary. Both the list and detail queries select
-    /// `color`, so a lead row carries it too.
-    private var labelColorMap: [String: String]? {
-        let pairs = labels?.nodes.compactMap { node in node.color.map { (node.name, $0) } } ?? []
-        return pairs.isEmpty ? nil : Dictionary(pairs, uniquingKeysWith: { first, _ in first })
-    }
-}
-
 struct CommitConnection: Decodable {
     let nodes: [CommitNode]
     struct CommitNode: Decodable { let commit: Commit }
@@ -583,13 +557,15 @@ struct ContextNode: Decodable {
     }
 }
 
-private extension GitHubActor {
-    /// GitHub renders a deleted account as "ghost"; mirror that when an author is null.
+extension GitHubActor {
+    /// GitHub renders a deleted account as "ghost"; mirror that when an author is null. `internal`
+    /// (not `private`) so the `ItemNode` DTO in `GitHubItemNodeDTOs` can reach it too.
     static let ghost = GitHubActor(login: "ghost")
 }
 
-private extension GitHubItem {
-    /// GraphQL `IssueState`/`PullRequestState` (UPPERCASE) → domain state.
+extension GitHubItem {
+    /// GraphQL `IssueState`/`PullRequestState` (UPPERCASE) → domain state. `internal` for the same
+    /// cross-file reason as `GitHubActor.ghost`.
     static func state(fromGraphQL value: String) -> GitHubItemState {
         switch value {
         case "MERGED": return .merged

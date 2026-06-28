@@ -118,9 +118,15 @@ public protocol GitHubAPI: Sendable {
     /// issue, so callers fetch lazily (only for the active "By blocked-by" grouping). Cross-repo
     /// blockers and any when the feature is unavailable are dropped, yielding an empty list.
     func issueDependencies(owner: String, repo: String, number: Int) async throws -> [Int]
-    /// Post a comment on an issue/PR and return it as GitHub stored it. The one write on this
+    /// Post a comment on an issue/PR and return it as GitHub stored it. The first write on this
     /// otherwise read-only port (REST `POST /repos/{owner}/{repo}/issues/{number}/comments`).
     func addComment(owner: String, repo: String, number: Int, body: String) async throws -> GitHubComment
+    /// Merge a pull request per `merge` (method + optional commit text), returning the outcome
+    /// GitHub reported. The second write on this port (REST
+    /// `PUT /repos/{owner}/{repo}/pulls/{number}/merge`). A non-mergeable PR surfaces as
+    /// `GitHubAPIError.http` from the adapter.
+    func mergePullRequest(owner: String, repo: String, number: Int,
+                          merge: PRMergeRequest) async throws -> PRMergeResult
 }
 
 /// Why posting a comment didn't happen before the network was even touched. `.empty` is a blank

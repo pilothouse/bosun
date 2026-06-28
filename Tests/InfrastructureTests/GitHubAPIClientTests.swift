@@ -240,6 +240,11 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(item.branch, "fix/rate-limiter")
         XCTAssertEqual(item.additions, 124)
         XCTAssertEqual(item.deletions, 18)
+
+        // Merge fields: GraphQL `MergeableState` flattens to the tri-state Bool? (MERGEABLE → true).
+        XCTAssertEqual(item.mergeable, true)
+        XCTAssertEqual(item.mergeStateStatus, "CLEAN")
+        XCTAssertEqual(item.baseRefName, "main")
         XCTAssertEqual(item.tasks, [
             GitHubTask(title: "code", isDone: true),
             GitHubTask(title: "docs", isDone: false),
@@ -336,6 +341,47 @@ final class GitHubAPIClientTests: XCTestCase {
         let sent = try XCTUnwrap(bodyData(request))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: String])
         XCTAssertEqual(json, ["body": body])
+    }
+
+    func testMergePullRequestPutsMethodAndCommitTextAndDecodesResult() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), try fixture("merge-result"))
+        }
+        let result = try await makeClient().mergePullRequest(
+            owner: "acme-corp", repo: "api-gateway", number: 482,
+            merge: PRMergeRequest(method: .squash, commitTitle: "Squash it", commitMessage: "the whole thing"))
+
+        // Decodes `{ sha, merged, message }` into the Domain result.
+        XCTAssertTrue(result.merged)
+        XCTAssertEqual(result.sha, "6dcb09b5b57875f334f61aebed695e2e4193db5e")
+        XCTAssertEqual(result.message, "Pull Request successfully merged")
+
+        // PUTs `{ merge_method, commit_title, commit_message }` to the pulls-merge endpoint.
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.httpMethod, "PUT")
+        XCTAssertEqual(request.url?.path, "/repos/acme-corp/api-gateway/pulls/482/merge")
+        let sent = try XCTUnwrap(bodyData(request))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: String])
+        XCTAssertEqual(json, ["merge_method": "squash", "commit_title": "Squash it",
+                              "commit_message": "the whole thing"])
+    }
+
+    func testMergePullRequestOmitsCommitTextForRebase() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), try fixture("merge-result"))
+        }
+        // GitHub ignores the commit text on a rebase, so the adapter must not send it even if asked.
+        _ = try await makeClient().mergePullRequest(
+            owner: "acme-corp", repo: "api-gateway", number: 482,
+            merge: PRMergeRequest(method: .rebase, commitTitle: "ignored", commitMessage: "ignored"))
+
+        let sent = try XCTUnwrap(bodyData(try XCTUnwrap(captured.value)))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: String])
+        XCTAssertEqual(json, ["merge_method": "rebase"])
     }
 
     // MARK: Error mapping

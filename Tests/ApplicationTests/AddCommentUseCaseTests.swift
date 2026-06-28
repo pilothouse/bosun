@@ -32,6 +32,8 @@ final class AddCommentUseCaseTests: XCTestCase {
                         states: Set<GitHubItemState>) throws -> [GitHubRepoItems] { throw Unused() }
         func itemDetail(owner: String, repo: String, number: Int) throws -> GitHubItem { throw Unused() }
         func issueDependencies(owner: String, repo: String, number: Int) throws -> [Int] { throw Unused() }
+        func mergePullRequest(owner: String, repo: String, number: Int,
+                              merge: PRMergeRequest) throws -> PRMergeResult { throw Unused() }
     }
 
     private func comment(body: String, by login: String = "octocat") -> GitHubComment {
