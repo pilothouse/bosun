@@ -123,4 +123,48 @@ final class TerminalTabsTests: XCTestCase {
         t.goto(.next)
         XCTAssertNil(t.activeID)
     }
+
+    // MARK: Reorder (#87)
+
+    func testReorderMovesTheTabWithinTheStrip() {
+        var t = tabs("a", "b", "c")
+        t.reorder(from: 2, to: 0)            // drag the last tab to the front
+        XCTAssertEqual(t.ids, ["c", "a", "b"])
+    }
+
+    func testReorderForwardMove() {
+        var t = tabs("a", "b", "c")
+        t.reorder(from: 0, to: 2)            // drag the first tab to the end
+        XCTAssertEqual(t.ids, ["b", "c", "a"])
+    }
+
+    func testReorderKeepsTheActiveTabActive() {
+        var t = tabs("a", "b", "c")          // active c
+        t.reorder(from: 0, to: 2)            // move a (not active) past c
+        XCTAssertEqual(t.ids, ["b", "c", "a"])
+        XCTAssertEqual(t.activeID, "c", "reordering a different tab never changes the selection")
+        XCTAssertEqual(t.activeIndex, 1, "active id is unchanged; its position follows the new order")
+    }
+
+    func testReorderingTheActiveTabItselfKeepsItActive() {
+        var t = tabs("a", "b", "c")          // active c
+        t.reorder(from: 2, to: 0)            // drag the active tab to the front
+        XCTAssertEqual(t.ids, ["c", "a", "b"])
+        XCTAssertEqual(t.activeID, "c")
+        XCTAssertEqual(t.activeIndex, 0)
+    }
+
+    func testReorderFromEqualsToIsNoOp() {
+        var t = tabs("a", "b", "c")
+        t.reorder(from: 1, to: 1)
+        XCTAssertEqual(t.ids, ["a", "b", "c"])
+    }
+
+    func testReorderOutOfRangeIsNoOp() {
+        var t = tabs("a", "b", "c")
+        t.reorder(from: 0, to: 5)
+        t.reorder(from: -1, to: 1)
+        t.reorder(from: 3, to: 0)
+        XCTAssertEqual(t.ids, ["a", "b", "c"])
+    }
 }
