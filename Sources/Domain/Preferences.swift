@@ -43,6 +43,12 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// How repos within an org are ordered in the panel, as an opaque `RepoOrderingMode` key the
     /// App layer maps to its enum. `nil` means never customized — order by name. See `RepoOrdering`.
     public var repoOrdering: String?
+    /// How the organization list itself is ordered, as an opaque `OrgOrderingMode` key the App layer
+    /// maps to its enum (`nil` means never customized — the manual drag order), and the direction
+    /// (`true` ascending = A→Z / least-active-first). The direction applies only to the name/activity
+    /// modes; manual ignores it. See `OrgOrdering`.
+    public var orgOrdering: String?
+    public var orgOrderAscending: Bool
     /// How the issue/PR list is sorted: the field as an opaque `ItemSortField` key the App layer maps
     /// to its enum (`nil` means never customized — sort by date), and the direction (`false` means
     /// descending, the newest-first default for date). See `ItemSorting`.
@@ -139,6 +145,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         selectedTab: String? = nil,
         groupBy: String? = nil,
         repoOrdering: String? = nil,
+        orgOrdering: String? = nil,
+        orgOrderAscending: Bool = true,
         sortField: String? = nil,
         sortAscending: Bool = false,
         prStates: [String]? = nil,
@@ -170,6 +178,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.selectedTab = selectedTab
         self.groupBy = groupBy
         self.repoOrdering = repoOrdering
+        self.orgOrdering = orgOrdering
+        self.orgOrderAscending = orgOrderAscending
         self.sortField = sortField
         self.sortAscending = sortAscending
         self.prStates = prStates
@@ -211,6 +221,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             selectedTab: try container.decodeIfPresent(String.self, forKey: .selectedTab) ?? fallback.selectedTab,
             groupBy: try container.decodeIfPresent(String.self, forKey: .groupBy) ?? fallback.groupBy,
             repoOrdering: try container.decodeIfPresent(String.self, forKey: .repoOrdering) ?? fallback.repoOrdering,
+            orgOrdering: try container.decodeIfPresent(String.self, forKey: .orgOrdering) ?? fallback.orgOrdering,
+            orgOrderAscending: try container.decodeIfPresent(Bool.self, forKey: .orgOrderAscending) ?? fallback.orgOrderAscending,
             sortField: try container.decodeIfPresent(String.self, forKey: .sortField) ?? fallback.sortField,
             sortAscending: try container.decodeIfPresent(Bool.self, forKey: .sortAscending) ?? fallback.sortAscending,
             prStates: try container.decodeIfPresent([String].self, forKey: .prStates) ?? fallback.prStates,

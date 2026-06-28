@@ -68,6 +68,11 @@ final class Store {
     /// How each org's repos are ordered in the panel (by name, or busiest-first by open issue+PR
     /// count). Global, persisted; a change re-sorts every org's repos instantly via `visibleOrgs`.
     var repoOrdering: RepoOrderingMode = .byName { didSet { if oldValue != repoOrdering { changed() } } }
+    /// How the org list itself is ordered (the manual drag order, by name, or by activity) and the
+    /// direction. Independent of `repoOrdering`; global, persisted; a change re-orders the sidebar and
+    /// the Manage sheet instantly via `visibleOrgs`. Default is manual — the user's drag order.
+    var orgOrdering: OrgOrderingMode = .default { didSet { if oldValue != orgOrdering { changed() } } }
+    var orgOrderAscending = true { didSet { if oldValue != orgOrderAscending { changed() } } }
     /// The lifecycle states the PR and issue lists are filtered to (and fetched for). Default
     /// open-only — the cheap fast path. Persisted; a change re-filters the list instantly and
     /// triggers a re-fetch in the matching scope (see `GitHubDataController.reloadCurrentItems`).
@@ -306,12 +311,16 @@ final class Store {
         let byId = Dictionary(orgs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let mode = repoOrdering
         let skip = skipEmptyRepos
-        return order.compactMap { byId[$0] }.map { org in
+        let projected = order.compactMap { byId[$0] }.map { org -> Org in
             let ordered = RepoOrdering.order(org.repos, by: mode, name: \.name, open: \.open)
             let shown = RepoVisibility.visible(ordered, skipEmpty: skip, open: \.open)
             return Org(id: org.id, name: org.name, color: org.color, avatarURL: org.avatarURL,
                        repos: shown)
         }
+        // Then order the orgs themselves. `.manual` keeps the `OrgFollowing` order above; the sorted
+        // modes use the org's total open issues+PRs for activity (hidden empty repos contribute 0).
+        return OrgOrdering.order(projected, by: orgOrdering, ascending: orgOrderAscending,
+                                 name: \.name, activity: { $0.repos.reduce(0) { $0 + $1.open } })
     }
 
     /// `owner/name` of the selected repo for the titlebar breadcrumb and panel header.
@@ -369,6 +378,8 @@ final class Store {
             selectedTab: tab.rawValue,
             groupBy: groupBy.storageKey,
             repoOrdering: repoOrdering.rawValue,
+            orgOrdering: orgOrdering.rawValue,
+            orgOrderAscending: orgOrderAscending,
             sortField: sortField.rawValue,
             sortAscending: sortAscending,
             prStates: prStates.map(\.rawValue).sorted(),
@@ -406,6 +417,8 @@ final class Store {
         tab = Tab(rawValue: p.selectedTab ?? "") ?? .prs
         groupBy = GroupBy(storageKey: p.groupBy)
         repoOrdering = RepoOrderingMode(rawValue: p.repoOrdering ?? "") ?? .default
+        orgOrdering = OrgOrderingMode(rawValue: p.orgOrdering ?? "") ?? .default
+        orgOrderAscending = p.orgOrderAscending
         sortField = ItemSortField(rawValue: p.sortField ?? "") ?? .default
         sortAscending = p.sortAscending
         prStates = Store.states(from: p.prStates, default: [.open])
