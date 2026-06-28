@@ -202,9 +202,11 @@ final class RepoPanelView: FlippedView {
         let dot = Dot(it.dotColor, z(8), radius: z(4))
         dot.frame.origin = NSPoint(x: z(10), y: z(10)); card.addSubview(dot)
         let num = label(it.num, mono(11), t.txt3)
-        num.frame = NSRect(x: z(24), y: z(8), width: z(36), height: z(14)); card.addSubview(num)
+        num.frame = NSRect(x: z(24), y: z(8), width: z(48), height: z(14)); card.addSubview(num)
+        // Tooltip only when the ID is too long to fit (6+ digits), same truncation rule as the title.
+        if fitW(num) > num.frame.width { num.toolTip = it.num }
         let title = label(it.title, sys(12.5, .medium), t.txt)
-        title.frame = NSRect(x: z(62), y: z(8), width: cw - z(62) - z(70), height: z(14)); card.addSubview(title)
+        title.frame = NSRect(x: z(74), y: z(8), width: cw - z(74) - z(70), height: z(14)); card.addSubview(title)
         // Tooltip only when the title is actually truncated — `fitW` is the width it needs to render
         // in full, so if that exceeds the label's frame the row is showing a tail ellipsis.
         if fitW(title) > title.frame.width { title.toolTip = it.title }
@@ -241,9 +243,11 @@ final class RepoPanelView: FlippedView {
         let g = label(it.glyph, sys(11), it.gcolor, align: .center)
         g.frame = NSRect(x: indent + z(14), y: z(6), width: z(14), height: z(14)); row.addSubview(g)
         let num = label(it.num, mono(11), t.txt3)
-        num.frame = NSRect(x: indent + z(32), y: z(6), width: z(34), height: z(14)); row.addSubview(num)
+        num.frame = NSRect(x: indent + z(32), y: z(6), width: z(46), height: z(14)); row.addSubview(num)
+        // Tooltip only when the ID is too long to fit (6+ digits), same truncation rule as the title.
+        if fitW(num) > num.frame.width { num.toolTip = it.num }
         let title = label(it.title, sys(12), selected ? t.txt : t.txt2)
-        title.frame = NSRect(x: indent + z(68), y: z(6), width: cw - indent - z(68) - z(22), height: z(14)); row.addSubview(title)
+        title.frame = NSRect(x: indent + z(80), y: z(6), width: cw - indent - z(80) - z(22), height: z(14)); row.addSubview(title)
         // Tooltip only when the title is actually truncated (see `itemCard`).
         if fitW(title) > title.frame.width { title.toolTip = it.title }
         if it.blocked != nil {
