@@ -247,6 +247,30 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(decoded.orgsScrollOffset, 0)
     }
 
+    func testOrgsListHeightDefaultsToThePreviousFixedCap() {
+        XCTAssertEqual(Preferences.default.orgsListHeight, 268,
+                       "the draggable orgs cap defaults to the old fixed height, so an upgrade is unchanged")
+    }
+
+    func testOrgsListHeightRoundTripsThroughCodable() throws {
+        let original = Preferences(orgsListHeight: 412)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.orgsListHeight, 412)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutOrgsListHeightFallsBackToDefault() throws {
+        // A payload written by a build before the orgs/issues splitter existed (#91).
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertEqual(decoded.orgsListHeight, Preferences.default.orgsListHeight)
+    }
+
     func testSelectedTabAndGroupByDefaultToNil() {
         XCTAssertNil(Preferences.default.selectedTab, "nil means 'use the default tab'")
         XCTAssertNil(Preferences.default.groupBy, "nil means 'use the default View'")

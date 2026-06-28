@@ -24,6 +24,13 @@ public enum SplitLayout {
     /// previously had no floor and could be crushed toward zero on short windows (#65).
     public static let minDetailHeight: Double = 120
 
+    /// The smallest the Organizations region may be dragged to in the repo panel's orgs/issues
+    /// split (points) — roughly two org rows, so the divider can never collapse it to nothing.
+    /// The orgs/issues split is a *vertical* (stacked) split, so it reuses `clampExtent` with this
+    /// as the top-pane floor; the bottom pane's floor (the fixed header/tabs/search/controls chrome
+    /// plus a few list rows) is App-layer geometry passed in as `minDetail` (#91).
+    public static let minOrgsListHeight: Double = 96
+
     /// Clamp a terminal-width `fraction` so both panes keep at least `minPane` points. When the
     /// container is too narrow to honor that on both sides, fall back to an even split rather than
     /// pinning one pane shut. A non-positive `total` (the view isn't laid out yet) passes through

@@ -12,17 +12,32 @@ final class DragHandle: FlippedView {
     var onBegin: (() -> Void)?
     var onDrag: ((CGFloat) -> Void)?
     var onEnd: (() -> Void)?
-    private var start: NSPoint = .zero
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: axis == .vertical ? .resizeUpDown : .resizeLeftRight)
     }
-    override func mouseDown(with e: NSEvent) { start = e.locationInWindow; onBegin?() }
-    override func mouseDragged(with e: NSEvent) {
-        let p = e.locationInWindow
-        onDrag?(axis == .vertical ? p.y - start.y : p.x - start.x)
+
+    /// Run the resize as a modal tracking loop, pulling the gesture's events straight off the window
+    /// queue, instead of relying on AppKit to route `mouseDragged`/`mouseUp` back to this view. A
+    /// container that relayouts on drag may tear this view's siblings down and rebuild them
+    /// mid-gesture (the orgs/issues panel does, #91); once the hierarchy is mutated AppKit stops
+    /// delivering the rest of the gesture to the original mouse-down view, so an event-method
+    /// implementation freezes after the first frame. Owning the loop keeps the gesture intact
+    /// regardless, and flushing layout each frame gives live feedback while the loop holds the runloop.
+    /// (The detail↔terminal split doesn't tear down, so its behaviour is unchanged — just sturdier.)
+    override func mouseDown(with e: NSEvent) {
+        onBegin?()
+        guard let window else { onEnd?(); return }
+        let start = e.locationInWindow
+        while let ev = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp],
+                                        until: .distantFuture, inMode: .eventTracking, dequeue: true) {
+            if ev.type == .leftMouseUp { break }
+            let p = ev.locationInWindow
+            onDrag?(axis == .vertical ? p.y - start.y : p.x - start.x)
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        onEnd?()
     }
-    override func mouseUp(with e: NSEvent) { onEnd?() }
 }
 
 /// Center column: scrollable detail + docked terminal. Connection name/type live in the

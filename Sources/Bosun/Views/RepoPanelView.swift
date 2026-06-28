@@ -54,13 +54,65 @@ final class RepoPanelView: FlippedView {
     private var searchQuery = ""
     private weak var searchField: NSTextField?
 
+    /// The draggable splitter on the orgs↔issues seam (#91). Reuses the detail↔terminal divider
+    /// machinery (`DragHandle` + `SplitLayout`). `DragHandle` owns its gesture via a tracking loop,
+    /// so the drag survives this panel's full teardown/rebuild on every `layout()`; the handle is a
+    /// persistent property kept out of the teardown only to avoid recreating it each rebuild.
+    private let orgsHandle = DragHandle()
+    /// The orgs cap captured at drag start, held for the gesture. Starting from the cap (not the
+    /// displayed height) means a downward drag can't accidentally shrink a cap that already exceeds
+    /// the content — so the saved preference is never corrupted in the few-orgs case.
+    private var orgsDragStartCap: CGFloat = 268
+
     init(store: Store) {
         self.store = store
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = true
+
+        orgsHandle.axis = .vertical
+        orgsHandle.onBegin = { [weak self] in
+            guard let self else { return }
+            self.orgsDragStartCap = self.store.orgsListHeight
+        }
+        orgsHandle.onDrag = { [weak self] delta in
+            guard let self else { return }
+            // Orgs is the top pane and the grip sits on its bottom edge, so dragging down — a
+            // negative window-space delta (y-up) — grows it; hence `- delta`. `clampExtent` keeps
+            // the orgs region above its floor and the list/chrome below above theirs (#91).
+            let newCap = Double(self.orgsDragStartCap - delta)
+            self.store.orgsListHeight = CGFloat(SplitLayout.clampExtent(
+                newCap, total: Double(self.bounds.height),
+                minTerminal: SplitLayout.minOrgsListHeight,
+                minDetail: Double(self.orgsBottomReserve)))
+            self.needsLayout = true
+        }
+        // Persist the final cap once the drag ends, not on every frame (mirrors the terminal divider).
+        orgsHandle.onEnd = { [weak self] in self?.store.persist() }
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// The vertical space the orgs cap must always leave below its seam: the fixed header/tabs/
+    /// search/controls chrome accumulated between the seam and the list in `rebuild()`, the list's
+    /// bottom padding, and a few list rows so the list can never be squeezed shut. Keep the literals
+    /// in sync with the `y +=` accumulation in `rebuild()`.
+    private var orgsBottomReserve: CGFloat {
+        z(12) + z(30) + z(38) + z(42) + z(42) + z(8) + z(160)
+    }
+
+    /// Position the persistent splitter on the orgs seam: a fat, seam-centered hit-zone (above all
+    /// panes so a press near the seam from either side starts a drag, #84) with a thin centered grip
+    /// pill. Re-adding it reorders it to front. Mirrors `CenterColumnView.layout()`.
+    private func layoutOrgsHandle(seamY: CGFloat, width w: CGFloat, t: Theme) {
+        let gripT: CGFloat = z(14)
+        orgsHandle.frame = NSRect(x: 0, y: seamY - gripT / 2, width: w, height: gripT)
+        let grip = BoxView(bg: t.txt5, radius: z(1.5))
+        grip.frame = NSRect(x: (w - z(34)) / 2, y: (gripT - z(3)) / 2, width: z(34), height: z(3))
+        orgsHandle.subviews.forEach { $0.removeFromSuperview() }
+        orgsHandle.addSubview(grip)
+        addSubview(orgsHandle)   // reorder to front so the seam-centered hit-zone wins (#84)
+        window?.invalidateCursorRects(for: orgsHandle)
+    }
 
     func apply() { needsLayout = true }
     override func layout() { super.layout(); rebuild() }
@@ -299,7 +351,9 @@ final class RepoPanelView: FlippedView {
         // (e.g. opening an item, which hydrates its detail) can restore it instead of jumping to top.
         let priorListOffset = listScroll?.contentView.bounds.origin
         let priorOrgsOffset = orgsScroll?.contentView.bounds.origin
-        subviews.forEach { $0.removeFromSuperview() }
+        // Keep the persistent orgs splitter out of the teardown so an in-flight drag isn't
+        // interrupted (it's repositioned below); everything else is rebuilt from scratch.
+        subviews.forEach { if $0 !== orgsHandle { $0.removeFromSuperview() } }
         let t = store.theme
         layer?.backgroundColor = t.panel.cgColor
         let w = bounds.width
@@ -308,9 +362,14 @@ final class RepoPanelView: FlippedView {
         let lb = BoxView(bg: t.line)
         lb.frame = NSRect(x: 0, y: 0, width: 1, height: bounds.height); addSubview(lb)
 
-        // 1. Orgs (scroll region; design caps it at max-height 268, shrinking to fit content).
+        // 1. Orgs (scroll region; the user-draggable cap from `store.orgsListHeight`, shrinking to
+        // fit content). The cap is clamped so the orgs region keeps its floor and the chrome + list
+        // below it keep theirs — the same `SplitLayout` clamp the divider drag uses (#91).
         let (orgsDoc, orgsContentH) = orgRows(width: w, t: t)
-        let orgsH: CGFloat = min(orgsContentH, z(268))
+        let orgsCap = CGFloat(SplitLayout.clampExtent(
+            Double(store.orgsListHeight), total: Double(bounds.height),
+            minTerminal: SplitLayout.minOrgsListHeight, minDetail: Double(orgsBottomReserve)))
+        let orgsH: CGFloat = min(orgsContentH, orgsCap)
         let orgsScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: w, height: orgsH))
         orgsScroll.drawsBackground = false
         orgsScroll.hasVerticalScroller = true
@@ -509,6 +568,14 @@ final class RepoPanelView: FlippedView {
                 menu.addSubview(row); my += z(36)
             }
             addSubview(menu)
+        }
+
+        // The orgs/issues splitter sits on the seam, added last so it's frontmost (#84). Only shown
+        // when there are orgs to resize; otherwise (signed out / first load) there's nothing to drag.
+        if store.visibleOrgs.isEmpty {
+            orgsHandle.removeFromSuperview()
+        } else {
+            layoutOrgsHandle(seamY: orgsH, width: w, t: t)
         }
     }
 

@@ -222,6 +222,12 @@ final class Store {
     /// (see `TerminalContainerView`), not here. `SplitLayout` clamps it to a usable range.
     var terminalFraction: CGFloat = CGFloat(Domain.SplitLayout.defaultFraction)
 
+    /// The Organizations region's height (points) in the repo panel — the cap the draggable
+    /// orgs/issues splitter resizes (#91). Like `terminalHeight`: layout-only (not part of
+    /// `notify`), changes every drag frame, so it is persisted on gesture end (see
+    /// `RepoPanelView`), not here. `SplitLayout` clamps it to a usable range.
+    var orgsListHeight: CGFloat = 268
+
     /// The open terminal tabs and which one is active, owned by the dock (`TerminalContainerView`):
     /// it snapshots them here on every tab change and restores them at launch. Persisted, but not
     /// part of `notify` — the dock manages its own views, so a write here must not rebuild the UI.
@@ -359,6 +365,7 @@ final class Store {
             selectedRepoKey: selectedRepoKey,
             selectedOrgId: selectedOrgId,
             orgsScrollOffset: orgsScrollOffset,
+            orgsListHeight: Double(orgsListHeight),
             selectedTab: tab.rawValue,
             groupBy: groupBy.storageKey,
             repoOrdering: repoOrdering.rawValue,
@@ -395,6 +402,7 @@ final class Store {
         selectedRepoKey = p.selectedRepoKey
         selectedOrgId = p.selectedOrgId
         orgsScrollOffset = p.orgsScrollOffset
+        orgsListHeight = CGFloat(p.orgsListHeight)
         tab = Tab(rawValue: p.selectedTab ?? "") ?? .prs
         groupBy = GroupBy(storageKey: p.groupBy)
         repoOrdering = RepoOrderingMode(rawValue: p.repoOrdering ?? "") ?? .default

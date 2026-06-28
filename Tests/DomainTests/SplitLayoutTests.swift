@@ -146,4 +146,32 @@ final class SplitLayoutTests: XCTestCase {
         let trailing = SplitLayout.seamPosition(total: total, terminalExtent: extent, terminalLeading: false)
         XCTAssertEqual(leading + trailing, total, accuracy: 1e-9)
     }
+
+    // MARK: orgs/issues splitter floor (#91)
+    //
+    // The repo panel's orgs region is a vertical (stacked) pane, so its draggable cap reuses
+    // `clampExtent` with `minOrgsListHeight` as the top-pane floor and the App-layer chrome+list
+    // reserve as the bottom-pane floor.
+
+    func testMinOrgsListHeightIsAUsableFloor() {
+        XCTAssertGreaterThan(SplitLayout.minOrgsListHeight, 0,
+                             "the orgs region must keep a positive floor so the divider can't collapse it")
+    }
+
+    func testOrgsCapClampKeepsBothRegionsAboveTheirFloors() {
+        // 900pt panel, reserve 332pt for the header/tabs/search/controls chrome + a few list rows.
+        let total = 900.0, reserve = 332.0
+        // Drag the cap below the orgs floor: clamp up to minOrgsListHeight.
+        XCTAssertEqual(SplitLayout.clampExtent(10, total: total,
+                                               minTerminal: SplitLayout.minOrgsListHeight, minDetail: reserve),
+                       SplitLayout.minOrgsListHeight, accuracy: 1e-9)
+        // Drag the cap past the panel: clamp down so the chrome + list keep their reserve.
+        XCTAssertEqual(SplitLayout.clampExtent(880, total: total,
+                                               minTerminal: SplitLayout.minOrgsListHeight, minDetail: reserve),
+                       total - reserve, accuracy: 1e-9)
+        // A value in range is left untouched.
+        XCTAssertEqual(SplitLayout.clampExtent(268, total: total,
+                                               minTerminal: SplitLayout.minOrgsListHeight, minDetail: reserve),
+                       268, accuracy: 1e-9)
+    }
 }

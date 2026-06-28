@@ -29,6 +29,12 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// The orgs panel's vertical scroll offset, restored on relaunch so the user lands where they
     /// left off. `0` is the top.
     public var orgsScrollOffset: Double
+    /// The user-set height (points) of the Organizations region in the repo panel — the cap the
+    /// draggable orgs/issues splitter resizes (#91). The vertical twin of `terminalHeight`:
+    /// layout-only, persisted on drag end, clamped to a usable range by `SplitLayout` at the
+    /// boundary. The region still shrinks to fit when there are few orgs, so this is the *cap*, not
+    /// a fixed height. Defaults to `268`, the previous fixed cap, so an upgrade looks unchanged.
+    public var orgsListHeight: Double
     /// The active item tab (PRs vs Issues) and the list grouping ("View"), stored as opaque keys
     /// the App layer maps to its own enums. `nil` means never customized — use the default. The
     /// open item's kind can still override the restored tab so the item stays visible.
@@ -129,6 +135,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         selectedRepoKey: String? = nil,
         selectedOrgId: String = "",
         orgsScrollOffset: Double = 0,
+        orgsListHeight: Double = 268,
         selectedTab: String? = nil,
         groupBy: String? = nil,
         repoOrdering: String? = nil,
@@ -159,6 +166,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.selectedRepoKey = selectedRepoKey
         self.selectedOrgId = selectedOrgId
         self.orgsScrollOffset = orgsScrollOffset
+        self.orgsListHeight = orgsListHeight
         self.selectedTab = selectedTab
         self.groupBy = groupBy
         self.repoOrdering = repoOrdering
@@ -199,6 +207,7 @@ public struct Preferences: Sendable, Equatable, Codable {
             selectedRepoKey: try container.decodeIfPresent(String.self, forKey: .selectedRepoKey) ?? fallback.selectedRepoKey,
             selectedOrgId: try container.decodeIfPresent(String.self, forKey: .selectedOrgId) ?? fallback.selectedOrgId,
             orgsScrollOffset: try container.decodeIfPresent(Double.self, forKey: .orgsScrollOffset) ?? fallback.orgsScrollOffset,
+            orgsListHeight: try container.decodeIfPresent(Double.self, forKey: .orgsListHeight) ?? fallback.orgsListHeight,
             selectedTab: try container.decodeIfPresent(String.self, forKey: .selectedTab) ?? fallback.selectedTab,
             groupBy: try container.decodeIfPresent(String.self, forKey: .groupBy) ?? fallback.groupBy,
             repoOrdering: try container.decodeIfPresent(String.self, forKey: .repoOrdering) ?? fallback.repoOrdering,
