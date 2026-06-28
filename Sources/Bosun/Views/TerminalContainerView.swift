@@ -59,6 +59,20 @@ final class TerminalContainerView: FlippedView {
     private var lastTabClickId: UUID?
     private var lastTabClickAt: TimeInterval = 0
 
+    /// Whole-tab drag-reorder (#87), modelled on `ConnectionRailView`'s row drag (#79): a press past
+    /// `tabDragThreshold` becomes a reorder; a release without a drag is a plain select/rename click.
+    /// `dragTabOrder` is a live copy of `tabs.ids` mutated during the drag; `tabRowsById`/`tabDoc`
+    /// are the current strip rows + their scrolling document, rebuilt every `layout()`.
+    private var tabDownId: UUID?
+    private var tabDownPoint: NSPoint = .zero
+    private var tabDragging = false
+    private let tabDragThreshold: CGFloat = 4
+    private var draggingTabId: UUID?
+    private var dragTabOrder: [UUID] = []
+    private var dragTabGrabDX: CGFloat = 0
+    private var tabRowsById: [UUID: ClickRow] = [:]
+    private weak var tabDoc: FlippedView?
+
     /// Horizontal-scroll state for the tab strip (#21). The strip is rebuilt every `layout()`, so the
     /// scroll view is too; `tabScroll` is the live one (weak — it's owned by the bar) read at the top
     /// of the next `layout()` to carry the user's manual scroll offset across a plain repaint.
@@ -501,12 +515,16 @@ final class TerminalContainerView: FlippedView {
             let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w - z(36), height: barH))
             var x: CGFloat = 0
             var activeRect: NSRect?
+            tabRowsById.removeAll()   // rebuilt each layout; keyed by id for the drag reflow (#87)
             for session in orderedSessions {
                 let tw = tabWidth(for: session.title)
-                doc.addSubview(tabView(session, width: tw, barH: barH, x: x))
+                let row = tabView(session, width: tw, barH: barH, x: x)
+                tabRowsById[session.id] = row
+                doc.addSubview(row)
                 if session.id == tabs.activeID { activeRect = NSRect(x: x, y: 0, width: tw, height: barH) }
                 x += tw
             }
+            tabDoc = doc
             // New local tab. Trailing slack keeps the `+` off the right edge of the document.
             let plus = ClickRow(bg: nil)
             plus.hoverColor = t.hover
@@ -594,7 +612,8 @@ final class TerminalContainerView: FlippedView {
         let tab = ClickRow(bg: active ? t.termBg : nil)
         tab.hoverColor = active ? nil : t.hover
         tab.frame = NSRect(x: x, y: 0, width: tw, height: barH)
-        tab.onClick = { [weak self] in self?.handleTabClick(id: session.id) }
+        // Click/rename is routed through the drag grip below (so a press can become a drag); the
+        // bare `ClickRow` keeps only its hover fill.
 
         // A background tab that rang/notified reads as "wants attention": amber underline + dot,
         // mirroring the active tab's green underline (#74). The active tab never flags.
@@ -610,6 +629,17 @@ final class TerminalContainerView: FlippedView {
             nm.frame = nameFrame; tab.addSubview(nm)
         }
 
+        // Whole-tab drag handle (#87): a press becomes a reorder past the threshold, else a plain
+        // select/rename click. Added over the label/dot but *under* the close × (added next), so
+        // close stays clickable; skipped while renaming so the inline editor keeps the clicks.
+        if session.id != editingTabId {
+            let grip = DragGrip(frame: tab.bounds)
+            grip.onDown = { [weak self] e in self?.tabMouseDown(id: session.id, event: e) }
+            grip.onDrag = { [weak self] e in self?.tabMouseDragged(event: e) }
+            grip.onUp = { [weak self] _ in self?.tabMouseUp(id: session.id) }
+            tab.addSubview(grip)
+        }
+
         // Per-tab close (×). Sits above the tab, so its click closes without also selecting.
         let close = ClickRow(radius: z(4))
         close.hoverColor = t.hover
@@ -621,6 +651,106 @@ final class TerminalContainerView: FlippedView {
 
         let sep = BoxView(bg: t.line); sep.frame = NSRect(x: tw - z(1), y: 0, width: z(1), height: barH); tab.addSubview(sep)
         return tab
+    }
+
+    // MARK: Drag — reorder tabs by dragging (#87)
+
+    /// The whole tab is a drag handle (browser/Terminal.app style). A press records the start; a
+    /// drag past the threshold begins the gesture; a release without a drag is a plain
+    /// select/rename click. Mirrors `ConnectionRailView`'s row drag (#79), adapted from a vertical
+    /// fixed-height list to this horizontal, variable-width strip.
+    private func tabMouseDown(id: UUID, event: NSEvent) {
+        tabDownId = id
+        tabDownPoint = event.locationInWindow
+        tabDragging = false
+    }
+
+    private func tabMouseDragged(event: NSEvent) {
+        guard tabDownId != nil else { return }
+        if !tabDragging {
+            let moved = max(abs(event.locationInWindow.x - tabDownPoint.x),
+                            abs(event.locationInWindow.y - tabDownPoint.y))
+            guard moved >= tabDragThreshold else { return }
+            tabDragging = true
+            beginTabDrag(event: event)
+        }
+        updateTabDrag(event: event)
+    }
+
+    private func tabMouseUp(id: UUID) {
+        if tabDragging { endTabDrag() } else { handleTabClick(id: id) }
+        tabDownId = nil
+        tabDragging = false
+    }
+
+    /// A tab's rendered width is a pure function of its title, so it's stable across a drag.
+    private func tabWidth(forId id: UUID) -> CGFloat { tabWidth(for: views[id]?.title ?? "") }
+
+    private func beginTabDrag(event: NSEvent) {
+        guard let id = tabDownId, let doc = tabDoc, let row = tabRowsById[id] else { return }
+        draggingTabId = id
+        dragTabOrder = tabs.ids
+        let p = doc.convert(event.locationInWindow, from: nil)
+        dragTabGrabDX = p.x - row.frame.origin.x
+        doc.addSubview(row)                 // raise above siblings for the shadow
+        row.layer?.shadowColor = NSColor.black.cgColor
+        row.layer?.shadowOpacity = 0.35
+        row.layer?.shadowRadius = z(8)
+        row.layer?.shadowOffset = CGSize(width: 0, height: z(2))
+        row.layer?.masksToBounds = false
+        row.setBase(store.theme.card)       // show the tab as "picked up"
+    }
+
+    private func updateTabDrag(event: NSEvent) {
+        guard let id = draggingTabId, let doc = tabDoc, let row = tabRowsById[id] else { return }
+        let p = doc.convert(event.locationInWindow, from: nil)
+        let dw = tabWidth(forId: id)
+        let total = dragTabOrder.reduce(CGFloat(0)) { $0 + tabWidth(forId: $1) }
+        // The dragged tab follows the cursor, clamped to the strip's span.
+        let newX = max(0, min(total - dw, p.x - dragTabGrabDX))
+        row.frame.origin.x = newX
+        // Drop index = how many *other* tabs have their midpoint left of the dragged tab's centre.
+        // Walking cumulative widths (not dividing by a fixed slot) is what handles variable widths.
+        let center = newX + dw / 2
+        var acc: CGFloat = 0
+        var target = 0
+        for tid in dragTabOrder where tid != id {
+            let w = tabWidth(forId: tid)
+            if center > acc + w / 2 { target += 1 }
+            acc += w
+        }
+        if let cur = dragTabOrder.firstIndex(of: id), cur != target {
+            dragTabOrder.remove(at: cur)
+            dragTabOrder.insert(id, at: target)
+        }
+        // Reflow the other tabs into their slots, reserving (skipping over) the dragged tab's gap.
+        var ax: CGFloat = 0
+        for tid in dragTabOrder {
+            if tid != id { tabRowsById[tid]?.frame.origin.x = ax }
+            ax += tabWidth(forId: tid)
+        }
+    }
+
+    private func endTabDrag() {
+        guard let id = draggingTabId else { return }
+        draggingTabId = nil
+        // `from` is the tab's index before the drag (tabs.ids is untouched until we commit); `to`
+        // is where it landed in the live order. A real move commits via the Domain rule; otherwise
+        // a rebuild settles the lifted row back into place.
+        if let from = tabs.ids.firstIndex(of: id),
+           let to = dragTabOrder.firstIndex(of: id), from != to {
+            commitTabReorder(from: from, to: to)
+        } else {
+            refresh()
+        }
+    }
+
+    /// Commit a drag-reorder: apply the tested Domain rule, rebuild the strip from the new order,
+    /// and persist so it survives relaunch. The active tab (and its mounted surface) is untouched.
+    private func commitTabReorder(from: Int, to: Int) {
+        tabs.reorder(from: from, to: to)
+        refresh()
+        snapshotTabs()
     }
 
     /// The editable field shown in place of a tab's label while it's being renamed (#30). Borderless

@@ -74,4 +74,11 @@ public struct TerminalTabs<ID: Hashable>: Equatable {
     public mutating func goto(_ jump: TabJump) {
         if let id = target(for: jump) { activeID = id }
     }
+
+    /// Move the tab at `from` to `to` within the display order. The active tab is unchanged —
+    /// identity is stable, only position moves. Out-of-range indices or `from == to` are a no-op.
+    public mutating func reorder(from: Int, to: Int) {
+        guard ids.indices.contains(from), ids.indices.contains(to), from != to else { return }
+        ids.insert(ids.remove(at: from), at: to)
+    }
 }
