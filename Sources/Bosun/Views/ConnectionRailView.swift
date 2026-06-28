@@ -414,11 +414,16 @@ final class ConnectionRailView: FlippedView {
     private func rebuild() {
         // Never tear the rows down mid-drag — the gesture repositions the live views directly.
         if draggingId != nil { return }
-        subviews.forEach { $0.removeFromSuperview() }
+        // Reuse the existing scroll view across rebuilds so its autohiding scroller doesn't flash on
+        // every selection (#78), and restore its offset so the list doesn't jump to the top. Keep it
+        // out of the blanket teardown; the chrome around it is cheap to recreate.
+        let priorListOffset = listScroll?.contentView.bounds.origin
+        let keptScroll = listScroll
+        subviews.forEach { if $0 !== keptScroll { $0.removeFromSuperview() } }
         let t = store.theme
         layer?.backgroundColor = t.panel.cgColor
         let w = bounds.width
-        guard w > 60 else { return }   // collapsed
+        guard w > 60 else { keptScroll?.removeFromSuperview(); listScroll = nil; return }   // collapsed
 
         // Right border.
         let border = BoxView(bg: t.line)
@@ -469,16 +474,30 @@ final class ConnectionRailView: FlippedView {
         addSubview(footer)
 
         // Scrollable list. Its document is built by `makeListDocument` so a keystroke can rebuild
-        // just the document (keeping the sibling search field focused), not the whole rail.
+        // just the document (keeping the sibling search field focused), not the whole rail. The
+        // scroll view itself is reused across rebuilds (created once) so the autohiding scroller
+        // doesn't flash on selection (#78); only its frame and document change.
         let top: CGFloat = z(56)
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: top, width: w, height: bounds.height - top - footerH))
-        scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.verticalScrollElasticity = .allowed
+        let scroll = keptScroll ?? {
+            let s = NSScrollView()
+            s.drawsBackground = false
+            s.hasVerticalScroller = true
+            s.autohidesScrollers = true
+            s.verticalScrollElasticity = .allowed
+            return s
+        }()
+        scroll.frame = NSRect(x: 0, y: top, width: w, height: bounds.height - top - footerH)
         scroll.documentView = makeListDocument(width: w, minHeight: scroll.frame.height, t: t)
-        addSubview(scroll)
+        if scroll.superview == nil { addSubview(scroll) }
         listScroll = scroll
+
+        // Restore the user's place across the rebuild, clamped to the new content height so we never
+        // land in empty space (mirrors RepoPanelView). Swapping `documentView` resets to the top.
+        if let off = priorListOffset, let doc = scroll.documentView {
+            let maxY = max(0, doc.frame.height - scroll.contentView.bounds.height)
+            scroll.contentView.scroll(to: NSPoint(x: off.x, y: min(off.y, maxY)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
     }
 
     /// Build the (filtered) connection list as a fresh document view. Sections come from the pure
