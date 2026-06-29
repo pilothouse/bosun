@@ -73,21 +73,18 @@ class SettingsPane: NSView {
 final class GeneralPane: SettingsPane {
     private let skipBox: NSButton
     private let bellBox: NSButton
-    private let busyBox: NSButton
     private let iCloudBox: NSButton
     private let iCloudHint: NSTextField
 
     override init(store: Store) {
         skipBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         bellBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-        busyBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         iCloudBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         iCloudHint = NSTextField(labelWithString: "Sign in to iCloud to sync connections.")
         super.init(store: store)
 
         configure(skipBox, "Skip repositories without open issues or PRs", #selector(toggleSkip))
         configure(bellBox, "Show an activity badge on background console tabs", #selector(toggleBell))
-        configure(busyBox, "Show a spinner on busy console tabs", #selector(toggleBusy))
         configure(iCloudBox, "Sync connections across your devices via iCloud", #selector(toggleSync))
 
         iCloudHint.font = .systemFont(ofSize: 11)
@@ -103,7 +100,7 @@ final class GeneralPane: SettingsPane {
         iCloudHint.leadingAnchor.constraint(equalTo: iCloudGroup.leadingAnchor, constant: 20).isActive = true
 
         stack.spacing = 12
-        [skipBox, bellBox, busyBox, iCloudGroup].forEach { stack.addArrangedSubview($0) }
+        [skipBox, bellBox, iCloudGroup].forEach { stack.addArrangedSubview($0) }
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -121,7 +118,6 @@ final class GeneralPane: SettingsPane {
     override func refresh() {
         skipBox.state = store.skipEmptyRepos ? .on : .off
         bellBox.state = store.terminalBellBadge ? .on : .off
-        busyBox.state = store.terminalBusySpinner ? .on : .off
         let iCloudAvailable = FileManager.default.ubiquityIdentityToken != nil
         iCloudBox.isEnabled = iCloudAvailable
         iCloudBox.state = (iCloudAvailable && store.syncConnectionsICloud) ? .on : .off
@@ -130,7 +126,6 @@ final class GeneralPane: SettingsPane {
 
     @objc private func toggleSkip(_ sender: NSButton) { store.skipEmptyRepos = sender.state == .on }
     @objc private func toggleBell(_ sender: NSButton) { store.terminalBellBadge = sender.state == .on }
-    @objc private func toggleBusy(_ sender: NSButton) { store.terminalBusySpinner = sender.state == .on }
     @objc private func toggleSync(_ sender: NSButton) { store.syncConnectionsICloud = sender.state == .on }
 }
 
@@ -289,6 +284,7 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
     private let optionBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let notifyBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let bellBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let busyBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
 
     /// ghostty `cursor-style` keywords, parallel to the popup's titles.
     private let cursorStyles = ["block", "bar", "underline"]
@@ -325,10 +321,21 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
         configure(optionBox, "Use the Option key as Alt (⌥ sends Esc-prefixed sequences)", #selector(toggleOption))
         configure(notifyBox, "Allow desktop notifications from the terminal", #selector(toggleNotify))
         configure(bellBox, "Play the macOS system bell sound", #selector(toggleBell))
+        configure(busyBox, "Show busy/progress on console tabs", #selector(toggleBusy))
 
         let tabsNote = NSTextField(labelWithString: "Open terminal tabs are restored automatically on relaunch.")
         tabsNote.font = .systemFont(ofSize: 11)
         tabsNote.textColor = .secondaryLabelColor
+
+        // Sets the right expectation for the busy indicator: it covers shell commands and tools that
+        // report OSC 9;4 progress, not long-lived TUIs that emit no such signal (#94).
+        let busyNote = NSTextField(wrappingLabelWithString:
+            "Spins while a shell command runs or a tool reports progress (OSC 9;4); long-lived "
+            + "tools like Claude Code report none, so they aren't detected.")
+        busyNote.font = .systemFont(ofSize: 11)
+        busyNote.textColor = .secondaryLabelColor
+        busyNote.translatesAutoresizingMaskIntoConstraints = false
+        busyNote.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
 
         let sizeRow = sliderRow(sizeSlider, sizeReadout, leading: "Size")
         let padXRow = sliderRow(padXSlider, padXReadout, leading: "Horizontal")
@@ -337,12 +344,15 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
         [sectionLabel("Font"), fontCombo, sizeRow,
          sectionLabel("Cursor"), cursorPopup, blinkBox,
          sectionLabel("Window Padding"), padXRow, padYRow, optionBox,
-         sectionLabel("Notifications"), notifyBox, bellBox, tabsNote]
+         sectionLabel("Notifications"), notifyBox, bellBox,
+         sectionLabel("Console Tabs"), busyBox, busyNote, tabsNote]
             .forEach { stack.addArrangedSubview($0) }
         // A touch more air before each section heading than between a heading and its controls.
         stack.setCustomSpacing(18, after: sizeRow)
         stack.setCustomSpacing(18, after: blinkBox)
         stack.setCustomSpacing(18, after: optionBox)
+        stack.setCustomSpacing(18, after: bellBox)
+        stack.setCustomSpacing(2, after: busyBox)
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -403,6 +413,7 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
         optionBox.state = t.optionAsAlt ? .on : .off
         notifyBox.state = t.desktopNotifications ? .on : .off
         bellBox.state = t.systemBell ? .on : .off
+        busyBox.state = store.terminalBusySpinner ? .on : .off
     }
 
     // Font family: live-apply on both list selection and typed end-of-edit. Programmatic
@@ -439,6 +450,9 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
     @objc private func toggleOption(_ sender: NSButton) { store.terminalConfig.optionAsAlt = sender.state == .on }
     @objc private func toggleNotify(_ sender: NSButton) { store.terminalConfig.desktopNotifications = sender.state == .on }
     @objc private func toggleBell(_ sender: NSButton) { store.terminalConfig.systemBell = sender.state == .on }
+    // The busy spinner is a Bosun-app behavior flag, not a ghostty `terminalConfig` field, so it
+    // binds straight to the store (like the General-pane toggles) rather than through `terminalConfig`.
+    @objc private func toggleBusy(_ sender: NSButton) { store.terminalBusySpinner = sender.state == .on }
 }
 
 // MARK: - Account

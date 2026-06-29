@@ -23,16 +23,23 @@ final class TerminalSession {
     /// background (#74). Drives the amber badge in `tabView`; cleared on focus. Not persisted —
     /// kept out of `TerminalTabState` / `snapshotTabs`.
     var hasBell = false
-    /// Ephemeral busy flag: the surface reported it's working (an in-flight OSC 9;4 progress report),
-    /// cleared when it reports done or its shell command finishes (#93). Drives the spinner-for-dot
-    /// swap in `tabView` when `store.terminalBusySpinner` is on. Live state, *not* cleared on focus
-    /// (unlike `hasBell`) and not persisted.
-    var isBusy = false
-    /// Whether the spinner is actually drawn. Lags `isBusy` by a short debounce so a fast command
-    /// (e.g. `ls`) that flips busy for a few ms via the shell hook (#94) doesn't flicker the tab;
-    /// `busyDebounce` is the pending "show" work item, cancelled if the command finishes first.
+    /// Ephemeral busy state: what the surface last reported (#93/#94). `.indeterminate` (an OSC 9;4
+    /// progress report with no percentage, or our shell hook on a plain command) draws a spinner;
+    /// `.determinate(percent)` draws a progress ring; `.idle` the normal dot. Drives the dot swap in
+    /// `tabView` when `store.terminalBusySpinner` is on. Live state, *not* cleared on focus (unlike
+    /// `hasBell`) and not persisted.
+    var busy: TerminalBusyState = .idle
+    /// Whether the *indeterminate* spinner is actually drawn. Lags `busy` by a short debounce so a
+    /// fast command (e.g. `ls`) that flips busy for a few ms via the shell hook (#94) doesn't
+    /// flicker the tab; `busyDebounce` is the pending "show" work item, cancelled if the command
+    /// finishes first. A determinate ring ignores this — an explicit percentage shows immediately.
     var busyShown = false
     var busyDebounce: DispatchWorkItem?
+    /// Last-resort backstop (#94): force-clears `busy` if a tab latches a progress report then goes
+    /// silent without a REMOVE / command-finish (e.g. an `ssh` tool that dies mid-report, where our
+    /// shell hook isn't installed). Re-armed on every signal, so an actively-reporting tab never
+    /// fires it; cancelled when the tab goes idle.
+    var busyTimeout: DispatchWorkItem?
 
     init(view: NSView, title: String, dot: NSColor, origin: TabOrigin, lockTitle: Bool = false) {
         self.view = view
@@ -278,29 +285,67 @@ final class TerminalContainerView: FlippedView {
         needsLayout = true
     }
 
-    /// A surface reported an activity signal. Reduce it to a busy/idle decision via the shared
+    /// How long a tab may stay busy with no further signal before the backstop force-clears it (#94).
+    /// Far longer than any interactive command and re-armed on every signal, so it only ever fires
+    /// for a genuinely abandoned indicator (a tool that latches busy then goes silent — typically an
+    /// `ssh` tab, where our shell hook isn't installed to emit the REMOVE).
+    private static let busyBackstop: TimeInterval = 600
+
+    /// A surface reported an activity signal. Reduce it to a busy state via the shared
     /// `TerminalBusyPolicy` rule. Unlike the bell, busy is tracked regardless of the badge setting
     /// and on the active tab too — the `store.terminalBusySpinner` gate is applied at render time in
-    /// `tabView`. The visible `busyShown` lags `isBusy` by a short debounce: with the shell hook
-    /// (#94) every command flips busy, so a fast `ls` would otherwise flash a spinner. We only show
-    /// it once a command has stayed busy past the delay, and hide it as soon as it finishes.
+    /// `tabView`. An *indeterminate* spinner lags `busy` by a short debounce: with the shell hook
+    /// (#94) every command flips busy, so a fast `ls` would otherwise flash a spinner; we only show
+    /// it once a command has stayed busy past the delay. A *determinate* ring shows immediately — an
+    /// explicit percentage is a meaningful report, not the flicker the debounce exists to swallow.
     private func activityChanged(id: UUID, signal: TerminalBusySignal) {
-        let busy = TerminalBusyPolicy.isBusy(signal)
-        guard let session = views[id], session.isBusy != busy else { return }
-        session.isBusy = busy
-        session.busyDebounce?.cancel()
-        if busy {
+        guard let session = views[id] else { return }
+        let new = TerminalBusyPolicy.state(signal)
+        rearmBusyTimeout(session, id: id, state: new)
+        guard session.busy != new else { return }
+
+        // Whether an indicator was actually on screen before this change — a still-debouncing
+        // indeterminate isn't, so flipping it straight to idle (the fast-`ls` case) repaints nothing.
+        let wasVisible: Bool
+        switch session.busy {
+        case .determinate: wasVisible = true
+        case .indeterminate: wasVisible = session.busyShown
+        case .idle: wasVisible = false
+        }
+
+        session.busy = new
+        session.busyDebounce?.cancel(); session.busyDebounce = nil
+        session.busyShown = false
+
+        switch new {
+        case .determinate:
+            needsLayout = true                       // explicit percentage → show / update at once
+        case .indeterminate:
             let work = DispatchWorkItem { [weak self] in
-                guard let self, let s = self.views[id], s.isBusy, !s.busyShown else { return }
+                guard let self, let s = self.views[id], s.busy == .indeterminate, !s.busyShown else { return }
                 s.busyShown = true
                 self.needsLayout = true
             }
             session.busyDebounce = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
-        } else {
-            session.busyDebounce = nil
-            if session.busyShown { session.busyShown = false; needsLayout = true }
+            if wasVisible { needsLayout = true }     // drop a prior ring now while the spinner debounces
+        case .idle:
+            if wasVisible { needsLayout = true }     // relayout only if something was on screen
         }
+    }
+
+    /// Re-arm (or, when idle, cancel) the stuck-indicator backstop for a session. Called on every
+    /// signal — including identical re-pings — so an actively-reporting tab keeps pushing its
+    /// deadline out and never trips it; only a tab that goes silent while still busy is force-cleared.
+    private func rearmBusyTimeout(_ session: TerminalSession, id: UUID, state: TerminalBusyState) {
+        session.busyTimeout?.cancel(); session.busyTimeout = nil
+        guard state != .idle else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let s = self.views[id], s.busy != .idle else { return }
+            self.activityChanged(id: id, signal: .progress(.remove))   // force-clear via the idle path
+        }
+        session.busyTimeout = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.busyBackstop, execute: work)
     }
 
     /// Insert a prepared session into the model + map (no relayout, no persist); used to seed the
@@ -656,6 +701,17 @@ final class TerminalContainerView: FlippedView {
         min(z(200), max(z(86), fitW(title, sys(11.5, .semibold)) + z(56)))
     }
 
+    /// The busy indicator to draw in a tab's dot slot, or `nil` to fall back to the dot: a
+    /// determinate ring for a reported percentage, a spinner once an indeterminate report has
+    /// cleared the debounce (`busyShown`), nothing while idle or still debouncing (#94).
+    private func busyIndicator(for session: TerminalSession) -> NSProgressIndicator? {
+        switch session.busy {
+        case .determinate(let percent): return makeProgressRing(size: z(14), percent: percent)
+        case .indeterminate where session.busyShown: return makeSpinner(size: z(14))
+        default: return nil   // .idle, or .indeterminate still inside the debounce window
+        }
+    }
+
     private func tabView(_ session: TerminalSession, width tw: CGFloat, barH: CGFloat, x: CGFloat) -> ClickRow {
         let t = store.theme
         let active = session.id == tabs.activeID
@@ -671,14 +727,14 @@ final class TerminalContainerView: FlippedView {
         let flagged = session.hasBell && !active
         let underline = BoxView(bg: active ? Status.green : (flagged ? Status.yellow : .clear))
         underline.frame = NSRect(x: 0, y: barH - z(2), width: tw, height: z(2)); tab.addSubview(underline)
-        // A busy surface swaps the status dot for a spinner while the user has the setting on (#93).
-        // The spinner is centered on the dot's slot and self-stops when the next strip rebuild
-        // removes it (see `makeSpinner`); `isBusy` is independent of `flagged`, so a busy tab spins
-        // even if it also rang the bell. Without the swap, the existing amber/normal dot is drawn.
-        if store.terminalBusySpinner && session.busyShown {
-            let spinner = makeSpinner(size: z(14))
-            spinner.frame.origin = NSPoint(x: z(13) + (z(7) - z(14)) / 2, y: (barH - z(14)) / 2)
-            tab.addSubview(spinner)
+        // A busy surface swaps the status dot for a spinner (indeterminate progress) or a ring
+        // (determinate 0–99%) while the user has the setting on (#93/#94). The indicator is centered
+        // on the dot's slot and self-stops when the next strip rebuild removes it (see `makeSpinner`
+        // / `makeProgressRing`); busy is independent of `flagged`, so a busy tab spins even if it
+        // also rang the bell. Without an indicator the existing amber/normal dot is drawn.
+        if store.terminalBusySpinner, let indicator = busyIndicator(for: session) {
+            indicator.frame.origin = NSPoint(x: z(13) + (z(7) - z(14)) / 2, y: (barH - z(14)) / 2)
+            tab.addSubview(indicator)
         } else {
             let d = Dot(flagged ? Status.yellow : session.dot, z(7)); d.frame.origin = NSPoint(x: z(13), y: (barH - z(7)) / 2); tab.addSubview(d)
         }

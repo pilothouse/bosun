@@ -19,21 +19,35 @@ public enum TerminalBusySignal: Equatable {
     case commandFinished
 }
 
+/// The busy state a signal reduces to, with enough detail for the view to pick its indicator: an
+/// indeterminate spinner vs. a determinate progress ring (#94). `determinate` carries a clamped
+/// 0–99 percentage; 100% (done) and every stop signal collapse to `idle`.
+public enum TerminalBusyState: Equatable {
+    case idle
+    case indeterminate
+    case determinate(Int)
+}
+
 public enum TerminalBusyPolicy {
-    /// Whether the tab is "busy" (show the spinner) after this signal. Pure — one rule shared by
-    /// every surface's activity callback. Busy starts on an in-flight progress report
-    /// (INDETERMINATE, or SET below 100%) and stops on completion (SET 100%, REMOVE, ERROR, PAUSE)
-    /// or a finished shell command. See `TerminalBusyPolicyTests` for the contract.
-    public static func isBusy(_ signal: TerminalBusySignal) -> Bool {
+    /// The busy state after this signal. Pure — one rule shared by every surface's activity
+    /// callback. Busy starts on an in-flight progress report (INDETERMINATE → `.indeterminate`, or
+    /// SET below 100% → `.determinate`) and stops on completion (SET 100%, REMOVE, ERROR, PAUSE) or
+    /// a finished shell command (→ `.idle`). See `TerminalBusyPolicyTests` for the contract.
+    public static func state(_ signal: TerminalBusySignal) -> TerminalBusyState {
         switch signal {
         case .progress(.indeterminate):
-            return true
+            return .indeterminate
         case .progress(.set(let percent)):
-            return percent < 100
-        case .progress(.remove), .progress(.error), .progress(.pause):
-            return false
-        case .commandFinished:
-            return false
+            // -1 means "no percentage given"; clamp so the ring is never negative. 100% is done.
+            return percent < 100 ? .determinate(max(0, percent)) : .idle
+        case .progress(.remove), .progress(.error), .progress(.pause), .commandFinished:
+            return .idle
         }
+    }
+
+    /// Whether the tab is "busy" (show an indicator) after this signal — a thin wrapper over
+    /// `state` so the two can't drift (the `TerminalBusyPolicyTests` pin this).
+    public static func isBusy(_ signal: TerminalBusySignal) -> Bool {
+        state(signal) != .idle
     }
 }

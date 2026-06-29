@@ -338,6 +338,21 @@ func makeSpinner(size: CGFloat = 20) -> NSProgressIndicator {
     return s
 }
 
+/// A determinate circular ("pie") indicator showing `percent` (0–100) filled, for a console tab
+/// reporting OSC 9;4 progress (#94). Same `.spinning` style and sizing as `makeSpinner` so it sits
+/// in the same dot slot; a determinate pie doesn't animate, so it needs no `startAnimation` and,
+/// like `makeSpinner`, self-removes on the next `layout()`.
+func makeProgressRing(size: CGFloat = 14, percent: Int) -> NSProgressIndicator {
+    let s = NSProgressIndicator(frame: NSRect(x: 0, y: 0, width: size, height: size))
+    s.style = .spinning
+    s.controlSize = size <= 14 ? .small : .regular
+    s.isIndeterminate = false
+    s.minValue = 0
+    s.maxValue = 100
+    s.doubleValue = Double(max(0, min(100, percent)))
+    return s
+}
+
 /// A small badge: text inside a rounded, tinted, bordered pill.
 func badge(_ text: String, fg: NSColor, bg: NSColor? = nil, border: NSColor? = nil, mono monospaced: Bool = true) -> BoxView {
     let b = BoxView(bg: bg, radius: z(5), border: border)

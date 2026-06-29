@@ -99,3 +99,25 @@ The prototype is low-risk, isolated, and genuinely useful for OSC-9;4-emitting t
 keeping behind the opt-in setting rather than deferring. The follow-up issue tracks turning the
 prototype into a finished feature (determinate progress, stuck-spinner backstop, sizing/design, and
 empirical coverage notes).
+
+## Productionization update (#94)
+
+The follow-up (#94) closed the gaps above, so the coverage table earlier in this doc is **no longer
+the final word**:
+
+- **Plain foreground commands now covered.** `BusyShellIntegration` injects a zsh `ZDOTDIR` shim that
+  emits OSC 9;4 INDETERMINATE from `preexec` and REMOVE from `precmd` (delegating to ghostty's own
+  integration first), so a plain `sleep`/build drives the spinner — not just OSC-9;4-native tools.
+  Scope is zsh local login shells (a folder/local tab); `ssh` and bash/fish are out (the latter a
+  follow-up). The headline case — a long-lived TUI like Claude Code, which is one shell command and
+  emits no per-turn signal — is still **not** covered; that's a libghostty limitation, not a gap to
+  fix here. The setting's help text states this expectation.
+- **Determinate progress.** `SET(0–100)` now renders a determinate ring (`makeProgressRing`) via the
+  new pure `TerminalBusyPolicy.state(_:)` (`idle`/`indeterminate`/`determinate(percent)`); `isBusy`
+  stays as a thin wrapper.
+- **Stuck-spinner backstop.** A per-session timeout (`TerminalContainerView.busyBackstop`, ~10 min),
+  re-armed on every signal, force-clears a tab that latches busy then goes silent (chiefly an `ssh`
+  tab, where the shell hook isn't installed). A focus-clear was rejected: busy is a live *level*, so
+  clearing it on focus would kill a legitimately-busy tab's spinner.
+- **Setting moved + relabelled.** The toggle now lives in the **Terminal** settings pane (with the
+  other ghostty-style options), labelled "Show busy/progress on console tabs", still opt-in (off).

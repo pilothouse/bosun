@@ -41,4 +41,47 @@ final class TerminalBusyPolicyTests: XCTestCase {
         // Shell-integration command end is the stop safety-net for a tracked shell command.
         XCTAssertFalse(TerminalBusyPolicy.isBusy(.commandFinished))
     }
+
+    // MARK: state(_:) — the richer mapping that drives indeterminate-vs-determinate rendering (#94)
+
+    func testIndeterminateMapsToIndeterminateState() {
+        // No percentage → the spinning indicator, distinct from a determinate ring.
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.indeterminate)), .indeterminate)
+    }
+
+    func testInProgressPercentMapsToDeterminateState() {
+        // A SET below 100% carries a real percentage for the determinate ring.
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.set(0))), .determinate(0))
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.set(50))), .determinate(50))
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.set(99))), .determinate(99))
+    }
+
+    func testNegativePercentClampsToZero() {
+        // libghostty passes -1 when no percentage was given; treat it as a determinate 0%, never
+        // a negative ring value.
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.set(-1))), .determinate(0))
+    }
+
+    func testCompletedAndStoppedSignalsMapToIdle() {
+        // Everything that stops the spinner reduces to a single idle state.
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.set(100))), .idle)
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.remove)), .idle)
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.error)), .idle)
+        XCTAssertEqual(TerminalBusyPolicy.state(.progress(.pause)), .idle)
+        XCTAssertEqual(TerminalBusyPolicy.state(.commandFinished), .idle)
+    }
+
+    func testIsBusyMatchesStateForEverySignal() {
+        // `isBusy` is a thin wrapper over `state`; pin them so they can't drift.
+        let signals: [TerminalBusySignal] = [
+            .progress(.indeterminate), .progress(.set(-1)), .progress(.set(0)), .progress(.set(50)),
+            .progress(.set(99)), .progress(.set(100)), .progress(.remove), .progress(.error),
+            .progress(.pause), .commandFinished
+        ]
+        for signal in signals {
+            XCTAssertEqual(TerminalBusyPolicy.isBusy(signal),
+                           TerminalBusyPolicy.state(signal) != .idle,
+                           "isBusy and state disagree for \(signal)")
+        }
+    }
 }
