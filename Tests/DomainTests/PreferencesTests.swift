@@ -500,4 +500,66 @@ final class PreferencesTests: XCTestCase {
 
         XCTAssertEqual(decoded.uiZoomPercent, 100)
     }
+
+    // MARK: - Terminal configuration (#67)
+
+    /// The nine terminal-config fields default to today's hardcoded look so an upgrade — and a blob
+    /// from a build before they existed — renders identically; the user opts into any change.
+    func testTerminalConfigDefaultsPreserveTheCurrentLook() {
+        let p = Preferences.default
+        XCTAssertEqual(p.terminalFontFamily, "JetBrains Mono")
+        XCTAssertEqual(p.terminalFontSize, 13)
+        XCTAssertEqual(p.terminalCursorStyle, "block")
+        XCTAssertTrue(p.terminalCursorBlink)
+        XCTAssertEqual(p.terminalPaddingX, 2)
+        XCTAssertEqual(p.terminalPaddingY, 2)
+        XCTAssertFalse(p.terminalOptionAsAlt)
+        XCTAssertTrue(p.terminalDesktopNotifications)
+        XCTAssertFalse(p.terminalSystemBell, "the macOS system beep is off until the user enables it")
+    }
+
+    func testTerminalConfigRoundTripsThroughCodable() throws {
+        let original = Preferences(
+            terminalFontFamily: "JetBrainsMono NFM SemiBold",
+            terminalFontSize: 15,
+            terminalCursorStyle: "bar",
+            terminalCursorBlink: false,
+            terminalPaddingX: 8,
+            terminalPaddingY: 6,
+            terminalOptionAsAlt: true,
+            terminalDesktopNotifications: false,
+            terminalSystemBell: true
+        )
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.terminalFontFamily, "JetBrainsMono NFM SemiBold")
+        XCTAssertEqual(decoded.terminalFontSize, 15)
+        XCTAssertEqual(decoded.terminalCursorStyle, "bar")
+        XCTAssertFalse(decoded.terminalCursorBlink)
+        XCTAssertEqual(decoded.terminalPaddingX, 8)
+        XCTAssertEqual(decoded.terminalPaddingY, 6)
+        XCTAssertTrue(decoded.terminalOptionAsAlt)
+        XCTAssertFalse(decoded.terminalDesktopNotifications)
+        XCTAssertTrue(decoded.terminalSystemBell)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutTerminalConfigFallsBackToDefaults() throws {
+        // A payload written by a build before terminal configuration was exposed in Settings.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertEqual(decoded.terminalFontFamily, Preferences.default.terminalFontFamily)
+        XCTAssertEqual(decoded.terminalFontSize, Preferences.default.terminalFontSize)
+        XCTAssertEqual(decoded.terminalCursorStyle, Preferences.default.terminalCursorStyle)
+        XCTAssertEqual(decoded.terminalCursorBlink, Preferences.default.terminalCursorBlink)
+        XCTAssertEqual(decoded.terminalPaddingX, Preferences.default.terminalPaddingX)
+        XCTAssertEqual(decoded.terminalPaddingY, Preferences.default.terminalPaddingY)
+        XCTAssertEqual(decoded.terminalOptionAsAlt, Preferences.default.terminalOptionAsAlt)
+        XCTAssertEqual(decoded.terminalDesktopNotifications, Preferences.default.terminalDesktopNotifications)
+        XCTAssertEqual(decoded.terminalSystemBell, Preferences.default.terminalSystemBell)
+    }
 }

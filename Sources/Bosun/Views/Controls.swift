@@ -13,6 +13,28 @@ class FlippedView: NSView { override var isFlipped: Bool { true } }
 private(set) var uiScale: CGFloat = 1.0
 func setUIScale(_ scale: CGFloat) { uiScale = scale }
 
+/// The user's Ghostty-style terminal options (#67), the App-layer mirror of the matching
+/// `Preferences` fields. `GhosttyApp.makeConfig` reads it when (re)building a surface's libghostty
+/// config, so it lives as a module global — like `uiScale` — rather than on `Store`: `makeConfig`
+/// runs from `GhosttyApp.start()` before any `Store` exists, and the App layer (`Sources/Bosun`)
+/// crosses no architecture boundary with a mirror here. Single writer: `Store` calls
+/// `setTerminalConfig` whenever its `terminalConfig` changes (and once at restore), then triggers a
+/// terminal re-sync so open surfaces pick up the new values. Defaults reproduce the old hardcoded
+/// look. `fontSize` is the base (100%-zoom) size; `makeConfig` multiplies it by `uiScale`.
+struct TerminalConfig: Equatable {
+    var fontFamily = "JetBrains Mono"
+    var fontSize: Double = 13
+    var cursorStyle = "block"
+    var cursorBlink = true
+    var paddingX = 2
+    var paddingY = 2
+    var optionAsAlt = false
+    var desktopNotifications = true
+    var systemBell = false
+}
+private(set) var terminalConfig = TerminalConfig()
+func setTerminalConfig(_ config: TerminalConfig) { terminalConfig = config }
+
 /// Scale a layout constant (point size, width, padding, radius) by the current zoom. The seam the
 /// manual `layout()` passes wrap their literals in so geometry grows with the fonts.
 func z(_ value: CGFloat) -> CGFloat { value * uiScale }

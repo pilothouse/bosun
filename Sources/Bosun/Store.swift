@@ -201,6 +201,22 @@ final class Store {
     /// Global, persisted; the dock reads it in `bellRang` via `TerminalBellPolicy`. On by default.
     var terminalBellBadge = true { didSet { if oldValue != terminalBellBadge { changed() } } }
 
+    /// The Ghostty-style terminal options (font, cursor, padding, option-as-alt, notifications) the
+    /// Settings TERMINAL pane edits (#67). Mirrors the `uiZoom` precedent: its `didSet` pushes the
+    /// value into the `Controls` `terminalConfig` global *even while restoring* (so the seed config a
+    /// surface is built from is already correct), then — once not loading — `changed()` repaints,
+    /// which runs `BosunView.applyTheme → TerminalContainerView.syncTerminal` to re-apply the new
+    /// config to every open surface. The setting panes mutate sub-fields (`store.terminalConfig.x`),
+    /// which re-fires this whole-struct `didSet`.
+    var terminalConfig = TerminalConfig() {
+        didSet {
+            guard oldValue != terminalConfig else { return }
+            setTerminalConfig(terminalConfig)
+            guard !isLoading else { return }
+            changed()
+        }
+    }
+
     /// Whether connections + folders sync via iCloud (#83). Opt-in (off by default). Persisted via
     /// `changed()` like `terminalBellBadge`; `onSyncEnabledChanged` lets the App layer flip the
     /// underlying iCloud store, which runs an initial sync when turned on. Guarded by `isLoading`
@@ -404,7 +420,16 @@ final class Store {
             uiZoomPercent: uiZoom.percent,
             terminalBellBadge: terminalBellBadge,
             collapsedFolders: collapsedFolderIds.sorted(),
-            syncConnectionsViaICloud: syncConnectionsICloud)
+            syncConnectionsViaICloud: syncConnectionsICloud,
+            terminalFontFamily: terminalConfig.fontFamily,
+            terminalFontSize: terminalConfig.fontSize,
+            terminalCursorStyle: terminalConfig.cursorStyle,
+            terminalCursorBlink: terminalConfig.cursorBlink,
+            terminalPaddingX: terminalConfig.paddingX,
+            terminalPaddingY: terminalConfig.paddingY,
+            terminalOptionAsAlt: terminalConfig.optionAsAlt,
+            terminalDesktopNotifications: terminalConfig.desktopNotifications,
+            terminalSystemBell: terminalConfig.systemBell)
         Task { await preferences.save(snapshot) }
     }
 
@@ -443,6 +468,19 @@ final class Store {
         terminalBellBadge = p.terminalBellBadge
         collapsedFolderIds = Set(p.collapsedFolders ?? [])
         syncConnectionsICloud = p.syncConnectionsViaICloud
+        // Like `uiZoom` below, the `didSet` mirrors this into the `Controls` global even while
+        // restoring, so the terminal is built/relaid at the saved font/cursor/padding once the final
+        // `refresh()` runs `syncTerminal`.
+        terminalConfig = TerminalConfig(
+            fontFamily: p.terminalFontFamily,
+            fontSize: p.terminalFontSize,
+            cursorStyle: p.terminalCursorStyle,
+            cursorBlink: p.terminalCursorBlink,
+            paddingX: p.terminalPaddingX,
+            paddingY: p.terminalPaddingY,
+            optionAsAlt: p.terminalOptionAsAlt,
+            desktopNotifications: p.terminalDesktopNotifications,
+            systemBell: p.terminalSystemBell)
         // Seats the saved zoom: the didSet mirrors it into the `Controls` global via `setUIScale`
         // even now (it's not gated on `isLoading`), so the final `refresh()` below lays the whole
         // tree out at the restored scale and `syncTerminal` pushes the matching terminal font size.

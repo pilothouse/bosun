@@ -261,6 +261,181 @@ final class ThemeTile: FlippedView {
     }
 }
 
+// MARK: - Terminal
+
+/// Ghostty-style terminal options (#67): font family + size, cursor style + blink, window padding,
+/// macOS option-as-alt, and the desktop-notification / system-bell toggles. Each control writes its
+/// field on `store.terminalConfig`, which mirrors into the `Controls` global and re-applies the
+/// libghostty config to every open surface live (via `TerminalContainerView.syncTerminal`) as well as
+/// persisting it. Native controls like the other panes; the font field is an *editable* combo box so
+/// any ghostty family string works (including styled Nerd-Font names like "JetBrainsMono NFM
+/// SemiBold"), seeded with the installed monospaced families. The size/padding sliders are continuous
+/// so the terminal resizes/repads as you drag.
+final class TerminalPane: SettingsPane, NSComboBoxDelegate {
+    private let fontCombo = NSComboBox()
+    private let sizeSlider = NSSlider()
+    private let sizeReadout = NSTextField(labelWithString: "13")
+    private let cursorPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let blinkBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let padXSlider = NSSlider()
+    private let padXReadout = NSTextField(labelWithString: "2")
+    private let padYSlider = NSSlider()
+    private let padYReadout = NSTextField(labelWithString: "2")
+    private let optionBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let notifyBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let bellBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+
+    /// ghostty `cursor-style` keywords, parallel to the popup's titles.
+    private let cursorStyles = ["block", "bar", "underline"]
+
+    override init(store: Store) {
+        super.init(store: store)
+        stack.spacing = 10
+
+        fontCombo.isEditable = true
+        fontCombo.completes = true
+        fontCombo.delegate = self
+        fontCombo.addItems(withObjectValues: Self.monospacedFamilies())
+        fontCombo.translatesAutoresizingMaskIntoConstraints = false
+        fontCombo.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+
+        sizeSlider.minValue = 8
+        sizeSlider.maxValue = 32
+        sizeSlider.isContinuous = true
+        sizeSlider.target = self
+        sizeSlider.action = #selector(sizeChanged)
+
+        cursorPopup.addItems(withTitles: ["Block", "Bar", "Underline"])
+        cursorPopup.target = self
+        cursorPopup.action = #selector(cursorStyleChanged)
+        cursorPopup.translatesAutoresizingMaskIntoConstraints = false
+
+        configure(blinkBox, "Blink the cursor", #selector(toggleBlink))
+
+        padXSlider.minValue = 0; padXSlider.maxValue = 24; padXSlider.isContinuous = true
+        padXSlider.target = self; padXSlider.action = #selector(padXChanged)
+        padYSlider.minValue = 0; padYSlider.maxValue = 24; padYSlider.isContinuous = true
+        padYSlider.target = self; padYSlider.action = #selector(padYChanged)
+
+        configure(optionBox, "Use the Option key as Alt (⌥ sends Esc-prefixed sequences)", #selector(toggleOption))
+        configure(notifyBox, "Allow desktop notifications from the terminal", #selector(toggleNotify))
+        configure(bellBox, "Play the macOS system bell sound", #selector(toggleBell))
+
+        let tabsNote = NSTextField(labelWithString: "Open terminal tabs are restored automatically on relaunch.")
+        tabsNote.font = .systemFont(ofSize: 11)
+        tabsNote.textColor = .secondaryLabelColor
+
+        let sizeRow = sliderRow(sizeSlider, sizeReadout, leading: "Size")
+        let padXRow = sliderRow(padXSlider, padXReadout, leading: "Horizontal")
+        let padYRow = sliderRow(padYSlider, padYReadout, leading: "Vertical")
+
+        [sectionLabel("Font"), fontCombo, sizeRow,
+         sectionLabel("Cursor"), cursorPopup, blinkBox,
+         sectionLabel("Window Padding"), padXRow, padYRow, optionBox,
+         sectionLabel("Notifications"), notifyBox, bellBox, tabsNote]
+            .forEach { stack.addArrangedSubview($0) }
+        // A touch more air before each section heading than between a heading and its controls.
+        stack.setCustomSpacing(18, after: sizeRow)
+        stack.setCustomSpacing(18, after: blinkBox)
+        stack.setCustomSpacing(18, after: optionBox)
+        refresh()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// A `[caption?] [slider] [readout]` row, matching the opacity row's look; the optional leading
+    /// caption distinguishes the size and the two padding sliders.
+    private func sliderRow(_ slider: NSSlider, _ readout: NSTextField, leading: String) -> NSStackView {
+        slider.translatesAutoresizingMaskIntoConstraints = false
+        slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        readout.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        readout.textColor = .secondaryLabelColor
+        readout.alignment = .right
+        readout.translatesAutoresizingMaskIntoConstraints = false
+        readout.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        let caption = NSTextField(labelWithString: leading)
+        caption.font = .systemFont(ofSize: 12)
+        caption.translatesAutoresizingMaskIntoConstraints = false
+        caption.widthAnchor.constraint(equalToConstant: 84).isActive = true
+        let row = NSStackView(views: [caption, slider, readout])
+        row.orientation = .horizontal
+        row.spacing = 10
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+        return row
+    }
+
+    private func configure(_ box: NSButton, _ title: String, _ action: Selector) {
+        box.title = title
+        box.target = self
+        box.action = action
+        box.lineBreakMode = .byWordWrapping
+        box.cell?.wraps = true
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+    }
+
+    /// The installed fixed-pitch font families, for the combo's dropdown. The field stays editable, so
+    /// a family the filter misses (or a styled variant string) can still be typed.
+    private static func monospacedFamilies() -> [String] {
+        NSFontManager.shared.availableFontFamilies.filter { family in
+            guard let font = NSFont(name: family, size: 12) else { return false }
+            return font.isFixedPitch
+        }.sorted()
+    }
+
+    override func refresh() {
+        let t = store.terminalConfig
+        if fontCombo.stringValue != t.fontFamily { fontCombo.stringValue = t.fontFamily }
+        sizeSlider.doubleValue = t.fontSize
+        sizeReadout.stringValue = "\(Int(t.fontSize.rounded()))"
+        cursorPopup.selectItem(at: cursorStyles.firstIndex(of: t.cursorStyle) ?? 0)
+        blinkBox.state = t.cursorBlink ? .on : .off
+        padXSlider.doubleValue = Double(t.paddingX)
+        padXReadout.stringValue = "\(t.paddingX)"
+        padYSlider.doubleValue = Double(t.paddingY)
+        padYReadout.stringValue = "\(t.paddingY)"
+        optionBox.state = t.optionAsAlt ? .on : .off
+        notifyBox.state = t.desktopNotifications ? .on : .off
+        bellBox.state = t.systemBell ? .on : .off
+    }
+
+    // Font family: live-apply on both list selection and typed end-of-edit. Programmatic
+    // `stringValue` updates in `refresh()` fire neither, so there's no feedback loop.
+    func comboBoxSelectionDidChange(_ notification: Notification) {
+        if let value = fontCombo.objectValueOfSelectedItem as? String, !value.isEmpty {
+            store.terminalConfig.fontFamily = value
+        }
+    }
+    func controlTextDidEndEditing(_ obj: Notification) {
+        let value = fontCombo.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.isEmpty { store.terminalConfig.fontFamily = value }
+    }
+
+    @objc private func sizeChanged(_ sender: NSSlider) {
+        let value = sender.doubleValue.rounded()
+        store.terminalConfig.fontSize = value
+        sizeReadout.stringValue = "\(Int(value))"
+    }
+    @objc private func cursorStyleChanged(_ sender: NSPopUpButton) {
+        store.terminalConfig.cursorStyle = cursorStyles[max(0, min(cursorStyles.count - 1, sender.indexOfSelectedItem))]
+    }
+    @objc private func toggleBlink(_ sender: NSButton) { store.terminalConfig.cursorBlink = sender.state == .on }
+    @objc private func padXChanged(_ sender: NSSlider) {
+        let value = Int(sender.doubleValue.rounded())
+        store.terminalConfig.paddingX = value
+        padXReadout.stringValue = "\(value)"
+    }
+    @objc private func padYChanged(_ sender: NSSlider) {
+        let value = Int(sender.doubleValue.rounded())
+        store.terminalConfig.paddingY = value
+        padYReadout.stringValue = "\(value)"
+    }
+    @objc private func toggleOption(_ sender: NSButton) { store.terminalConfig.optionAsAlt = sender.state == .on }
+    @objc private func toggleNotify(_ sender: NSButton) { store.terminalConfig.desktopNotifications = sender.state == .on }
+    @objc private func toggleBell(_ sender: NSButton) { store.terminalConfig.systemBell = sender.state == .on }
+}
+
 // MARK: - Account
 
 /// GitHub sign-in / sign-out. Signed out: a default-button "Sign in to GitHub…" that closes this window

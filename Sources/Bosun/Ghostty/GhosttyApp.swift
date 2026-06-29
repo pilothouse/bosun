@@ -10,11 +10,6 @@ final class GhosttyApp {
     private(set) var app: ghostty_app_t?
     private var config: ghostty_config_t?
 
-    /// The terminal font size at 100% zoom (points). ghostty's own default is 13; pinning it here
-    /// means 100% looks identical to the pre-zoom build, and every other level is this × the UI
-    /// zoom scale. See `makeConfig`.
-    static let baseFontSize: Double = 13
-
     /// Whether the terminal subsystem came up, and if not, where it failed. Read by the App layer
     /// to render an error state instead of a dead surface (issue #16).
     private(set) var availability: TerminalAvailability = .ready
@@ -164,12 +159,22 @@ final class GhosttyApp {
     private func makeConfig(_ palette: TerminalPalette) -> ghostty_config_t? {
         guard let cfg = ghostty_config_new() else { return nil }
         ghostty_config_load_default_files(cfg)
-        // JetBrains Mono is the font the design uses; ghostty falls back gracefully if it isn't
-        // installed. Loaded after the defaults so the theme palette wins, before finalize. The font
-        // size is the base × the current UI zoom, so the terminal scales in lockstep with the rest
-        // of the GUI (⌘+ / ⌘−); a new surface built from this config inherits the live zoom.
-        let overrides = palette.ghosttyConfig(fontFamily: "JetBrains Mono", cursorStyle: "block",
-                                              fontSize: Self.baseFontSize * Double(uiScale))
+        // The user's terminal options (#67), mirrored into the `terminalConfig` global by `Store`.
+        // Loaded after the defaults so the theme palette and these win, before finalize. The font
+        // size is the user's base size × the current UI zoom, so the terminal scales in lockstep
+        // with the rest of the GUI (⌘+ / ⌘−); a new surface built from this config inherits both the
+        // live zoom and the configured font/cursor/padding/notification options.
+        let t = terminalConfig
+        let overrides = palette.ghosttyConfig(
+            fontFamily: t.fontFamily,
+            cursorStyle: t.cursorStyle,
+            fontSize: t.fontSize * Double(uiScale),
+            cursorBlink: t.cursorBlink,
+            paddingX: t.paddingX,
+            paddingY: t.paddingY,
+            optionAsAlt: t.optionAsAlt,
+            desktopNotifications: t.desktopNotifications,
+            systemBell: t.systemBell)
         let confURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("bosun-workbench.ghostty.conf")
         if (try? overrides.write(to: confURL, atomically: true, encoding: .utf8)) != nil {

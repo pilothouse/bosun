@@ -105,6 +105,23 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// (opt-in) by default — nothing leaves the device until the user enables the Settings toggle.
     /// Honored only when the user is signed into iCloud; otherwise the app runs local-only.
     public var syncConnectionsViaICloud: Bool
+    /// Ghostty-style terminal options exposed in the Settings TERMINAL pane (#67), each rendered into
+    /// the libghostty config by `TerminalPalette.ghosttyConfig`. Defaults reproduce the previously
+    /// hardcoded look so an upgrade — and a blob from a build without these keys — is invisible; the
+    /// user opts into any change. `terminalFontSize` is the base (100%-zoom) size; the App layer
+    /// still multiplies it by the UI zoom before handing it to ghostty. Cursor style is an opaque
+    /// ghostty keyword (`block`/`bar`/`underline`); padding is in points. `terminalSystemBell` maps
+    /// to ghostty's `bell-features = system` (the macOS beep), distinct from the in-app activity
+    /// badge (`terminalBellBadge`, #74).
+    public var terminalFontFamily: String
+    public var terminalFontSize: Double
+    public var terminalCursorStyle: String
+    public var terminalCursorBlink: Bool
+    public var terminalPaddingX: Int
+    public var terminalPaddingY: Int
+    public var terminalOptionAsAlt: Bool
+    public var terminalDesktopNotifications: Bool
+    public var terminalSystemBell: Bool
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -163,7 +180,16 @@ public struct Preferences: Sendable, Equatable, Codable {
         uiZoomPercent: Int = 100,
         terminalBellBadge: Bool = true,
         collapsedFolders: [String]? = nil,
-        syncConnectionsViaICloud: Bool = false
+        syncConnectionsViaICloud: Bool = false,
+        terminalFontFamily: String = "JetBrains Mono",
+        terminalFontSize: Double = 13,
+        terminalCursorStyle: String = "block",
+        terminalCursorBlink: Bool = true,
+        terminalPaddingX: Int = 2,
+        terminalPaddingY: Int = 2,
+        terminalOptionAsAlt: Bool = false,
+        terminalDesktopNotifications: Bool = true,
+        terminalSystemBell: Bool = false
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -197,6 +223,15 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.terminalBellBadge = terminalBellBadge
         self.collapsedFolders = collapsedFolders
         self.syncConnectionsViaICloud = syncConnectionsViaICloud
+        self.terminalFontFamily = terminalFontFamily
+        self.terminalFontSize = terminalFontSize
+        self.terminalCursorStyle = terminalCursorStyle
+        self.terminalCursorBlink = terminalCursorBlink
+        self.terminalPaddingX = terminalPaddingX
+        self.terminalPaddingY = terminalPaddingY
+        self.terminalOptionAsAlt = terminalOptionAsAlt
+        self.terminalDesktopNotifications = terminalDesktopNotifications
+        self.terminalSystemBell = terminalSystemBell
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -239,7 +274,16 @@ public struct Preferences: Sendable, Equatable, Codable {
             uiZoomPercent: try container.decodeIfPresent(Int.self, forKey: .uiZoomPercent) ?? fallback.uiZoomPercent,
             terminalBellBadge: try container.decodeIfPresent(Bool.self, forKey: .terminalBellBadge) ?? fallback.terminalBellBadge,
             collapsedFolders: try container.decodeIfPresent([String].self, forKey: .collapsedFolders) ?? fallback.collapsedFolders,
-            syncConnectionsViaICloud: try container.decodeIfPresent(Bool.self, forKey: .syncConnectionsViaICloud) ?? fallback.syncConnectionsViaICloud
+            syncConnectionsViaICloud: try container.decodeIfPresent(Bool.self, forKey: .syncConnectionsViaICloud) ?? fallback.syncConnectionsViaICloud,
+            terminalFontFamily: try container.decodeIfPresent(String.self, forKey: .terminalFontFamily) ?? fallback.terminalFontFamily,
+            terminalFontSize: try container.decodeIfPresent(Double.self, forKey: .terminalFontSize) ?? fallback.terminalFontSize,
+            terminalCursorStyle: try container.decodeIfPresent(String.self, forKey: .terminalCursorStyle) ?? fallback.terminalCursorStyle,
+            terminalCursorBlink: try container.decodeIfPresent(Bool.self, forKey: .terminalCursorBlink) ?? fallback.terminalCursorBlink,
+            terminalPaddingX: try container.decodeIfPresent(Int.self, forKey: .terminalPaddingX) ?? fallback.terminalPaddingX,
+            terminalPaddingY: try container.decodeIfPresent(Int.self, forKey: .terminalPaddingY) ?? fallback.terminalPaddingY,
+            terminalOptionAsAlt: try container.decodeIfPresent(Bool.self, forKey: .terminalOptionAsAlt) ?? fallback.terminalOptionAsAlt,
+            terminalDesktopNotifications: try container.decodeIfPresent(Bool.self, forKey: .terminalDesktopNotifications) ?? fallback.terminalDesktopNotifications,
+            terminalSystemBell: try container.decodeIfPresent(Bool.self, forKey: .terminalSystemBell) ?? fallback.terminalSystemBell
         )
     }
 

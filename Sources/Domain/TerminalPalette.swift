@@ -22,7 +22,20 @@ public struct TerminalPalette: Equatable, Sendable {
     /// after the user's default files so these win. `fontSize` (points) is the app-wide zoom level
     /// applied to the terminal so it scales in lockstep with the UI; rounded to two decimals so the
     /// emitted config text is stable (a clean `font-size = 15.6`, not a long float tail).
-    public func ghosttyConfig(fontFamily: String, cursorStyle: String, fontSize: Double) -> String {
+    ///
+    /// The user-configurable terminal options (#67) are opt-in trailing parameters: each writes a
+    /// line only when supplied (non-`nil`), so the three-argument form stays byte-identical and a
+    /// `nil` simply leaves ghostty's own default in place. `systemBell` is a flag set, not a bool —
+    /// `true` emits `bell-features = system`, `false` omits the key (writing `= false` is rejected).
+    public func ghosttyConfig(fontFamily: String,
+                              cursorStyle: String,
+                              fontSize: Double,
+                              cursorBlink: Bool? = nil,
+                              paddingX: Int? = nil,
+                              paddingY: Int? = nil,
+                              optionAsAlt: Bool? = nil,
+                              desktopNotifications: Bool? = nil,
+                              systemBell: Bool = false) -> String {
         var lines = [
             "background = \(background)",
             "foreground = \(foreground)",
@@ -31,6 +44,12 @@ public struct TerminalPalette: Equatable, Sendable {
             "font-family = \(fontFamily)",
             "font-size = \((fontSize * 100).rounded() / 100)",
         ]
+        if let cursorBlink { lines.append("cursor-style-blink = \(cursorBlink)") }
+        if let paddingX { lines.append("window-padding-x = \(paddingX)") }
+        if let paddingY { lines.append("window-padding-y = \(paddingY)") }
+        if let optionAsAlt { lines.append("macos-option-as-alt = \(optionAsAlt)") }
+        if let desktopNotifications { lines.append("desktop-notifications = \(desktopNotifications)") }
+        if systemBell { lines.append("bell-features = system") }
         for (index, hex) in ansi.enumerated() {
             lines.append("palette = \(index)=\(hex)")
         }

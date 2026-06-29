@@ -86,12 +86,16 @@ final class TerminalContainerView: FlippedView {
     /// retitle the window (#73). Lighter than `onRelayout` — it never triggers a parent relayout.
     var onActiveTitleChange: (() -> Void)?
 
-    /// The theme key and zoom level whose config was last pushed to libghostty. `syncTerminal` runs
-    /// on every store notify (selection, data, …), so these let it skip the config rebuild unless the
-    /// theme or the UI zoom actually changed. Seeded to the defaults the first surface is created
-    /// with in `GhosttyApp.start()` (the default palette at 100% zoom).
+    /// The theme key, zoom level, and terminal options whose config was last pushed to libghostty.
+    /// `syncTerminal` runs on every store notify (selection, data, …), so these let it skip the config
+    /// rebuild unless the theme, the UI zoom, or a terminal setting (#67) actually changed. Seeded to
+    /// the defaults the first surface is created with in `GhosttyApp.start()` (default palette, 100%
+    /// zoom, default terminal options).
     private var lastThemeKey = "operator"
     private var lastZoomPercent = 100
+    /// The terminal options last pushed to the surfaces (#67); seeded to the same defaults the first
+    /// surface is built with, so it only rebuilds when the user actually changes a terminal setting.
+    private var lastTerminalConfig = TerminalConfig()
 
     init(store: Store, ghostty: GhosttyApp) {
         self.store = store
@@ -121,9 +125,11 @@ final class TerminalContainerView: FlippedView {
     /// re-reads the theme/zoom in `layout()`, so it updates separately via `apply()`.
     func syncTerminal() {
         let zoom = store.uiZoom.percent
-        guard available, store.themeKey != lastThemeKey || zoom != lastZoomPercent else { return }
+        guard available, store.themeKey != lastThemeKey || zoom != lastZoomPercent
+            || terminalConfig != lastTerminalConfig else { return }
         lastThemeKey = store.themeKey
         lastZoomPercent = zoom
+        lastTerminalConfig = terminalConfig
         guard let cfg = ghostty.applyPalette(store.theme.terminalPalette) else { return }
         for session in views.values { session.surfaceView?.updateConfig(cfg) }
         ghostty.tick()   // nudge a repaint with the new colors/size

@@ -15,6 +15,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private let specs: [(id: String, label: String, symbol: String)] = [
         ("general", "General", "gearshape"),
         ("appearance", "Appearance", "paintbrush"),
+        ("terminal", "Terminal", "terminal"),
         ("account", "Account", "person.crop.circle")
     ]
 
@@ -78,6 +79,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         let pane: SettingsPane
         switch identifier {
         case "appearance": pane = AppearancePane(store: store)
+        case "terminal": pane = TerminalPane(store: store)
         case "account": pane = AccountPane(store: store, auth: auth)
         default: pane = GeneralPane(store: store)
         }

@@ -49,4 +49,45 @@ final class TerminalPaletteTests: XCTestCase {
                                                  fontSize: 13 * 1.2)
         XCTAssertTrue(text.contains("font-size = 15.6"), "got: \(text)")
     }
+
+    // MARK: - Terminal configuration keys (#67)
+
+    /// The three-argument form (no terminal-config args) emits *only* the original block — the new
+    /// keys are opt-in, so an upgrade and the contract above stay byte-identical.
+    func testOmitsTerminalConfigKeysWhenNotSupplied() {
+        let text = samplePalette().ghosttyConfig(fontFamily: "Menlo", cursorStyle: "block", fontSize: 13)
+        XCTAssertFalse(text.contains("cursor-style-blink"))
+        XCTAssertFalse(text.contains("window-padding-x"))
+        XCTAssertFalse(text.contains("window-padding-y"))
+        XCTAssertFalse(text.contains("macos-option-as-alt"))
+        XCTAssertFalse(text.contains("desktop-notifications"))
+        XCTAssertFalse(text.contains("bell-features"))
+    }
+
+    func testEmitsSuppliedTerminalConfigKeys() {
+        let text = samplePalette().ghosttyConfig(
+            fontFamily: "Menlo", cursorStyle: "bar", fontSize: 13,
+            cursorBlink: true, paddingX: 2, paddingY: 4,
+            optionAsAlt: false, desktopNotifications: true, systemBell: true)
+        XCTAssertTrue(text.contains("cursor-style-blink = true"), "got: \(text)")
+        XCTAssertTrue(text.contains("window-padding-x = 2"), "got: \(text)")
+        XCTAssertTrue(text.contains("window-padding-y = 4"), "got: \(text)")
+        XCTAssertTrue(text.contains("macos-option-as-alt = false"), "got: \(text)")
+        XCTAssertTrue(text.contains("desktop-notifications = true"), "got: \(text)")
+        XCTAssertTrue(text.contains("bell-features = system"), "got: \(text)")
+    }
+
+    /// The bell is a flag set, not a bool: `false` means leave it at ghostty's default (off) by
+    /// omitting the key entirely rather than writing `bell-features = false` (which ghostty rejects).
+    func testSystemBellOffOmitsTheBellFeaturesKey() {
+        let text = samplePalette().ghosttyConfig(
+            fontFamily: "Menlo", cursorStyle: "block", fontSize: 13, systemBell: false)
+        XCTAssertFalse(text.contains("bell-features"), "got: \(text)")
+    }
+
+    func testCursorBlinkRendersFalse() {
+        let text = samplePalette().ghosttyConfig(
+            fontFamily: "Menlo", cursorStyle: "block", fontSize: 13, cursorBlink: false)
+        XCTAssertTrue(text.contains("cursor-style-blink = false"), "got: \(text)")
+    }
 }
