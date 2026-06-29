@@ -159,7 +159,9 @@ final class GitHubDataController {
     /// hidden org never steals focus.
     private func applyOrgGroups(orgs: [GitHubOrg], personalRepos: [GitHubRepo], establishSelection: Bool) {
         var groups = orgs.map(Org.init(domain:))
-        if let personal = Org(personalRepos: personalRepos) { groups.insert(personal, at: 0) }
+        if let personal = Org(personalRepos: personalRepos, viewer: store.currentUser) {
+            groups.insert(personal, at: 0)
+        }
         store.orgs = groups
         guard establishSelection else { return }
 

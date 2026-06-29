@@ -24,12 +24,14 @@ extension Org {
     /// with no org membership still sees live data. Keyed off the viewer's login (every personal
     /// repo's `owner` is the viewer, so no extra identity fetch is needed). Returns nil when there
     /// are no personal repos — there's no empty group to render.
-    init?(personalRepos repos: [GitHubRepo]) {
+    init?(personalRepos repos: [GitHubRepo], viewer: GitHubUser?) {
         guard let login = repos.first?.owner else { return nil }
         self.init(id: Org.personalID,
                   name: "@\(login)",
                   color: Org.color(forLogin: login),
-                  avatarURL: nil,   // synthetic group — no org node, so no icon; keeps colored initials
+                  // No org node here, but the synthetic group *is* the viewer — so use the viewer's
+                  // real avatar. Nil (not yet fetched / none) falls back to the colored monogram.
+                  avatarURL: viewer?.avatarURL,
                   repos: repos.map(Repo.init(domain:)))
     }
 
