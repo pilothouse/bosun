@@ -49,7 +49,8 @@ extension Org {
 extension Repo {
     init(domain r: GitHubRepo) {
         // The sidebar shows one "open" badge; the API reports issues and PRs separately.
-        self.init(id: r.id, name: r.name, open: r.openIssues + r.openPullRequests, owner: r.owner)
+        self.init(id: r.id, name: r.name, open: r.openIssues + r.openPullRequests, owner: r.owner,
+                  stars: r.stargazerCount, isPrivate: r.isPrivate)
     }
 }
 

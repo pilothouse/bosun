@@ -9,7 +9,9 @@
             "name": "dotfiles",
             "owner": { "login": "octocat" },
             "issues": { "totalCount": 4 },
-            "pullRequests": { "totalCount": 1 }
+            "pullRequests": { "totalCount": 1 },
+            "stargazerCount": 342,
+            "isPrivate": false
           },
           null,
           {
@@ -17,7 +19,9 @@
             "name": "side-project",
             "owner": { "login": "octocat" },
             "issues": { "totalCount": 0 },
-            "pullRequests": { "totalCount": 2 }
+            "pullRequests": { "totalCount": 2 },
+            "stargazerCount": 0,
+            "isPrivate": true
           }
         ]
       }

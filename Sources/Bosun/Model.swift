@@ -7,7 +7,7 @@ private let dim = Status.dim
 enum ConnKind { case ssh, folder }
 enum ItemKind { case issue, pr }
 
-struct Repo { let id, name: String; let open: Int; var owner = "" }
+struct Repo { let id, name: String; let open: Int; var owner = ""; var stars = 0; var isPrivate = false }
 
 /// `color` is the deterministic placeholder tint; `avatarURL` (when present) is the real org icon
 /// the `AvatarView` async-loads over it.

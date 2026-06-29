@@ -28,6 +28,8 @@ enum GitHubGraphQLQueries {
                 owner { login }
                 issues(states: OPEN) { totalCount }
                 pullRequests(states: OPEN) { totalCount }
+                stargazerCount
+                isPrivate
               }
             }
           }
@@ -50,6 +52,8 @@ enum GitHubGraphQLQueries {
             owner { login }
             issues(states: OPEN) { totalCount }
             pullRequests(states: OPEN) { totalCount }
+            stargazerCount
+            isPrivate
           }
         }
       }

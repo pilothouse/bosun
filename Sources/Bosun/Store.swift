@@ -326,6 +326,15 @@ final class Store {
     /// `owner/name` of the selected repo for the titlebar breadcrumb and panel header.
     var selectedRepoTitle: String { selectedRepoKey ?? "" }
 
+    /// The presentation `Repo` behind the current repo-scope selection (its `owner/name` matches
+    /// `selectedRepoKey`), or nil in org scope / when nothing matches. Searches the raw `orgs`
+    /// (which includes the synthetic personal group) so the lookup also covers repos a visibility
+    /// filter would hide. The panel uses it to show the selected repo's star count by its name.
+    var selectedRepo: Repo? {
+        guard !isOrgScope, let key = selectedRepoKey else { return nil }
+        return orgs.lazy.flatMap(\.repos).first { "\($0.owner)/\($0.name)" == key }
+    }
+
     /// Whether the active selection is a whole org (its aggregated items shown as per-repo sections)
     /// rather than a single repo. Org and repo selection are mutually exclusive (see `RepoSelection`).
     var isOrgScope: Bool { !selectedOrgId.isEmpty }

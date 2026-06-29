@@ -421,12 +421,15 @@ private struct RepoNode: Decodable {
     let owner: Owner
     let issues: Count
     let pullRequests: Count
+    let stargazerCount: Int
+    let isPrivate: Bool
     struct Owner: Decodable { let login: String }
     struct Count: Decodable { let totalCount: Int }
 
     func toDomain() -> GitHubRepo {
         GitHubRepo(id: id, name: name, owner: owner.login,
-                   openIssues: issues.totalCount, openPullRequests: pullRequests.totalCount)
+                   openIssues: issues.totalCount, openPullRequests: pullRequests.totalCount,
+                   stargazerCount: stargazerCount, isPrivate: isPrivate)
     }
 }
 

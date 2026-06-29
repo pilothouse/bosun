@@ -16,7 +16,9 @@
                   "name": "api-gateway",
                   "owner": { "login": "acme-corp" },
                   "issues": { "totalCount": 8 },
-                  "pullRequests": { "totalCount": 3 }
+                  "pullRequests": { "totalCount": 3 },
+                  "stargazerCount": 1280,
+                  "isPrivate": false
                 },
                 null,
                 {
@@ -24,7 +26,9 @@
                   "name": "web-dashboard",
                   "owner": { "login": "acme-corp" },
                   "issues": { "totalCount": 2 },
-                  "pullRequests": { "totalCount": 0 }
+                  "pullRequests": { "totalCount": 0 },
+                  "stargazerCount": 0,
+                  "isPrivate": true
                 }
               ]
             }

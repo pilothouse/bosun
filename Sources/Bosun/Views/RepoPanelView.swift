@@ -411,7 +411,18 @@ final class RepoPanelView: FlippedView {
         let scopeTitle = store.scopeTitle
         let repoTitle = label(scopeTitle.isEmpty ? "No repository" : scopeTitle,
                               sys(13, .bold), scopeTitle.isEmpty ? t.txt4 : t.txt)
-        repoTitle.frame = NSRect(x: z(14), y: y, width: w - z(28), height: z(18)); addSubview(repoTitle)
+        var titleW = w - z(28)
+        // The selected repo's star count sits to the right of its name — repo scope only (an org's
+        // aggregate has no single total), public repos only (a private repo's count is withheld, #20).
+        if let rp = store.selectedRepo, !rp.isPrivate {
+            let starFont = sys(12, .semibold)
+            let starText = "★ \(rp.stars)"
+            let sw = fitW(starText, starFont)
+            let star = label(starText, starFont, t.txt3, align: .right)
+            star.frame = NSRect(x: w - z(14) - sw, y: y, width: sw, height: z(18)); addSubview(star)
+            titleW -= sw + z(8)
+        }
+        repoTitle.frame = NSRect(x: z(14), y: y, width: titleW, height: z(18)); addSubview(repoTitle)
         y += z(30)
 
         let tabW = (w - z(28) - z(5)) / 2
