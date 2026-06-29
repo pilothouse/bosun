@@ -63,6 +63,24 @@ final class SaveConnectionUseCaseTests: XCTestCase {
         XCTAssertEqual(stored.first?.name, "renamed")
     }
 
+    func testFolderIsPreservedOnSave() async throws {
+        let folder = UUID()
+        let existing = Connection(id: UUID(), name: "filed", kind: .ssh(host: "h", port: 22, user: nil),
+                                  folderId: folder)
+        let store = FakeConnectionStore(seed: [existing])
+        let save = SaveConnectionUseCase(store: store)
+        // An edit that carries the folder through the draft must keep the connection in its folder.
+        let draft = ConnectionDraft(id: existing.id, name: "renamed",
+                                    kind: .ssh(host: "h", port: 22, user: nil), folderId: folder)
+
+        guard case let .saved(connection) = try await save(draft) else {
+            return XCTFail("expected .saved")
+        }
+        XCTAssertEqual(connection.folderId, folder, "editing must not ungroup the connection")
+        let stored = await store.connections
+        XCTAssertEqual(stored.first?.folderId, folder)
+    }
+
     func testCustomCommandIsSavedAndBlankIsNormalizedToNil() async throws {
         let store = FakeConnectionStore()
         let save = SaveConnectionUseCase(store: store)

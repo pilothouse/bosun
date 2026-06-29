@@ -161,7 +161,7 @@ final class CenterColumnView: FlippedView {
     }
 }
 
-/// Root content view: titlebar + three columns + settings overlay.
+/// Root content view: titlebar + three columns + sign-in / connection / org sheets.
 final class BosunView: NSView {
     let store: Store
     let ghostty: GhosttyApp
@@ -172,7 +172,6 @@ final class BosunView: NSView {
     private let rail: ConnectionRailView
     private let center: CenterColumnView
     private let repoPanel: RepoPanelView
-    private var settings: SettingsSheet?
     private var newConn: NewConnectionSheet?
     private var manageOrgs: ManageOrgsSheet?
     private var deviceFlow: DeviceFlowSheet?
@@ -301,7 +300,8 @@ final class BosunView: NSView {
         let save = connections.save
         let draft = ConnectionDraft(id: connection.id, name: connection.name,
                                     kind: connection.kind, isFavorite: connection.isFavorite,
-                                    customCommand: connection.customCommand)
+                                    customCommand: connection.customCommand,
+                                    folderId: connection.folderId)
         Task { _ = try? await save(draft) }
     }
 
@@ -441,20 +441,6 @@ final class BosunView: NSView {
             panelShown = store.repoPanelCollapsed
             slidePanel()
         }
-        // Settings sheet show/hide.
-        if store.settingsOpen, settings == nil {
-            let sheet = SettingsSheet(store: store, auth: auth)
-            sheet.onClose = { [weak self] in self?.store.settingsOpen = false }
-            sheet.frame = bounds
-            addSubview(sheet)
-            settings = sheet
-        } else if !store.settingsOpen, let sheet = settings {
-            sheet.removeFromSuperview()
-            settings = nil
-            focusTerminal()
-        }
-        settings?.needsLayout = true
-
         // Device-flow sign-in sheet show/hide. Active for every non-terminal auth state.
         let authActive: Bool
         switch store.authState {
@@ -597,7 +583,6 @@ final class BosunView: NSView {
         let panelSpace: CGFloat = store.repoPanelCollapsed ? 0 : panelWidth
         repoPanel.frame = NSRect(x: store.repoPanelCollapsed ? w : w - panelWidth, y: rowY, width: panelWidth, height: rowH)
         center.frame = NSRect(x: railSpace, y: rowY, width: max(0, w - railSpace - panelSpace), height: rowH)
-        settings?.frame = bounds
         newConn?.frame = bounds
         manageOrgs?.frame = bounds
         deviceFlow?.frame = bounds

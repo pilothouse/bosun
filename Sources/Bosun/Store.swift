@@ -84,7 +84,6 @@ final class Store {
     /// a click must NOT dismiss the menu. Published by `RepoPanelView` each rebuild and read by the
     /// window's `sendEvent` to dismiss the dropdown on a click anywhere else. Not persisted.
     var menuDismissRects: [CGRect] = []
-    var settingsOpen = false { didSet { if oldValue != settingsOpen { notify() } } }
     var newConnectionOpen = false { didSet { if oldValue != newConnectionOpen { notify() } } }
     var manageOrgsOpen = false { didSet { if oldValue != manageOrgsOpen { notify() } } }
     var authState: AuthState = .signedOut { didSet { if oldValue != authState { notify() } } }

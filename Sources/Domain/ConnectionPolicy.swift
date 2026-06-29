@@ -9,14 +9,18 @@ public struct ConnectionDraft: Sendable, Equatable {
     public var isFavorite: Bool
     /// Optional post-connect command (SSH only); blank input is normalized to `nil` on save.
     public var customCommand: String?
+    /// The sidebar folder this connection belongs to, or `nil` when ungrouped. A dangling id
+    /// (no matching folder) reads as ungrouped via `ConnectionGrouping`, so it's always valid.
+    public var folderId: UUID?
 
     public init(id: UUID?, name: String, kind: ConnectionKind, isFavorite: Bool = false,
-                customCommand: String? = nil) {
+                customCommand: String? = nil, folderId: UUID? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
         self.isFavorite = isFavorite
         self.customCommand = customCommand
+        self.folderId = folderId
     }
 }
 

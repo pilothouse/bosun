@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dataController: GitHubDataController!
     private var store: Store?
     let ghostty = GhosttyApp.shared
+    /// The standard preferences window (#88), built on first open and reused thereafter — so it keeps
+    /// its toolbar selection and frame for the session. Replaces the old in-window settings overlay.
+    private lazy var settingsWindowController = SettingsWindowController(store: root.store, auth: authController)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Make hover tooltips (e.g. the truncated issue/PR titles in the right list) appear quickly
@@ -203,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
-        root.store.settingsOpen = true
+        settingsWindowController.showWindow(nil)
     }
 
     // MARK: Zoom (Bosun menu)

@@ -26,7 +26,8 @@ public struct SaveConnectionUseCase: Sendable {
             name: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
             kind: draft.kind,
             isFavorite: draft.isFavorite,
-            customCommand: (trimmedCustom?.isEmpty == false) ? trimmedCustom : nil
+            customCommand: (trimmedCustom?.isEmpty == false) ? trimmedCustom : nil,
+            folderId: draft.folderId
         )
         try await store.save(connection)
         return .saved(connection)

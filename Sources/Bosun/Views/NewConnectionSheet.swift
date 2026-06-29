@@ -22,6 +22,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
     private var path: String
     private var customCommand: String
     private var isFavorite: Bool
+    private var folderId: UUID?
     private var errors: [ConnectionValidationError] = []
     private var didFocus = false
 
@@ -41,6 +42,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
             name = e.name
             isFavorite = e.isFavorite
             customCommand = e.customCommand ?? ""
+            folderId = e.folderId
             switch e.kind {
             case let .ssh(h, p, u):
                 kind = .ssh; host = h; port = String(p); user = u ?? ""; path = ""
@@ -49,7 +51,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
             }
         } else {
             kind = .ssh; name = ""; host = ""; port = "22"; user = ""; path = ""
-            customCommand = ""; isFavorite = false
+            customCommand = ""; isFavorite = false; folderId = nil
         }
         super.init(frame: .zero)
         wantsLayer = true
@@ -76,8 +78,9 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
         layer?.backgroundColor = NSColor.blackA(0.45).cgColor
 
         // SSH cards are taller to fit the optional CUSTOM COMMAND field; folder cards stay compact.
+        // Both gained a FOLDER picker row above the favorite toggle, so both are z(46) taller.
         let cardW: CGFloat = z(380)
-        let cardH: CGFloat = kind == .ssh ? z(486) : z(404)
+        let cardH: CGFloat = kind == .ssh ? z(532) : z(450)
         let card = ClickRow(bg: t.panel, radius: z(12))
         card.layer?.borderWidth = 1
         card.layer?.borderColor = t.line2.cgColor
@@ -138,7 +141,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
             let cmdBox = commandBox(t: t, frame: NSRect(x: pad, y: z(266), width: innerW, height: z(58)))
             card.addSubview(cmdBox)
         } else {
-            card.addSubview(caption("FOLDER", t: t, frame: NSRect(x: pad, y: z(150), width: innerW, height: z(12))))
+            card.addSubview(caption("FOLDER PATH", t: t, frame: NSRect(x: pad, y: z(150), width: innerW, height: z(12))))
             let chooseW: CGFloat = z(84)
             let pf = field(path, placeholder: "~/dev/api-gateway", t: t)
             pf.frame = NSRect(x: pad, y: z(166), width: innerW - chooseW - z(8), height: z(26)); card.addSubview(pf); pathField = pf
@@ -147,10 +150,15 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
             card.addSubview(choose)
         }
 
-        // Favorite toggle + validation errors sit below the kind-specific fields; the SSH card's
-        // taller CUSTOM COMMAND row pushes them down by 82pt (matched by the taller cardH).
-        let favY: CGFloat = kind == .ssh ? z(338) : z(256)
-        let errY: CGFloat = kind == .ssh ? z(372) : z(290)
+        // The sidebar-folder picker, favorite toggle, and validation errors stack below the
+        // kind-specific fields; the SSH card's taller CUSTOM COMMAND row pushes the whole stack
+        // down (matched by the taller cardH). The picker applies to both kinds.
+        let groupY: CGFloat = kind == .ssh ? z(338) : z(256)
+        card.addSubview(caption("FOLDER", t: t, frame: NSRect(x: pad, y: groupY, width: innerW, height: z(12))))
+        card.addSubview(folderPicker(t: t, frame: NSRect(x: pad, y: groupY + z(16), width: innerW, height: z(26))))
+
+        let favY: CGFloat = groupY + z(46)
+        let errY: CGFloat = favY + z(34)
         let fav = ClickRow(radius: z(6))
         fav.hoverColor = t.hover
         fav.frame = NSRect(x: pad - z(6), y: favY, width: innerW + z(12), height: z(26))
@@ -310,6 +318,60 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
         return r
     }
 
+    /// A field-styled dropdown for choosing the sidebar folder. Shows the current folder's name
+    /// (or "Ungrouped" when unset or dangling) and pops an `NSMenu` on click — mirroring the rail's
+    /// "Move to folder" menu. The selection lives in `folderId` (the source of truth); this control
+    /// is rebuilt to reflect it on every `layout()`, like the text fields.
+    private func folderPicker(t: Theme, frame: NSRect) -> ClickRow {
+        let r = ClickRow(bg: t.card, radius: z(7))
+        r.hoverColor = t.hover
+        r.layer?.borderWidth = 1
+        r.layer?.borderColor = t.line2.cgColor
+        r.frame = frame
+        let name = label(currentFolderName(), sys(12.5), t.txt)
+        name.frame = NSRect(x: z(8), y: (frame.height - z(16)) / 2, width: frame.width - z(30), height: z(16))
+        r.addSubview(name)
+        let chevron = label("⌄", sys(13), t.txt4, align: .center)
+        chevron.frame = NSRect(x: frame.width - z(24), y: (frame.height - z(16)) / 2 - z(2), width: z(16), height: z(16))
+        r.addSubview(chevron)
+        r.onClick = { [weak self, weak r] in self?.showFolderMenu(from: r) }
+        return r
+    }
+
+    private func currentFolderName() -> String {
+        guard let folderId, let folder = store.domainFolders.first(where: { $0.id == folderId })
+        else { return "Ungrouped" }
+        return folder.name
+    }
+
+    /// Pop the folder menu just under the dropdown: an "Ungrouped" item plus one per folder (in rail
+    /// order), the current one check-marked. Each carries its folder id (empty string = Ungrouped).
+    private func showFolderMenu(from anchor: ClickRow?) {
+        guard let anchor else { return }
+        let menu = NSMenu()
+        let ungrouped = NSMenuItem(title: "Ungrouped", action: #selector(selectFolder(_:)), keyEquivalent: "")
+        ungrouped.target = self
+        ungrouped.representedObject = ""
+        ungrouped.state = folderId == nil ? .on : .off
+        menu.addItem(ungrouped)
+        let folders = store.domainFolders
+        if !folders.isEmpty { menu.addItem(.separator()) }
+        for folder in folders {
+            let item = NSMenuItem(title: folder.name, action: #selector(selectFolder(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = folder.id.uuidString
+            item.state = folder.id == folderId ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height), in: anchor)
+    }
+
+    @objc private func selectFolder(_ sender: NSMenuItem) {
+        let raw = sender.representedObject as? String
+        folderId = (raw?.isEmpty == false) ? raw.flatMap { UUID(uuidString: $0) } : nil
+        needsLayout = true
+    }
+
     private func message(for error: ConnectionValidationError) -> String {
         switch error {
         case .emptyName: return "Name is required"
@@ -348,7 +410,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
         let trimmedCustom = customCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         let customCmd = (kind == .ssh && !trimmedCustom.isEmpty) ? trimmedCustom : nil
         return ConnectionDraft(id: editing?.id, name: name, kind: resolved,
-                               isFavorite: isFavorite, customCommand: customCmd)
+                               isFavorite: isFavorite, customCommand: customCmd, folderId: folderId)
     }
 
     private func selectKind(_ k: ConnKind) {
