@@ -175,6 +175,29 @@ public actor GitHubAPIClient: GitHubAPI {
         return dto.toDomain(owner: owner, repo: repo)
     }
 
+    public func requestReviewers(owner: String, repo: String, number: Int,
+                                 logins: [String]) async throws -> [GitHubReviewer] {
+        try await mutateReviewers(owner: owner, repo: repo, number: number, logins: logins, method: "POST")
+    }
+
+    public func removeRequestedReviewers(owner: String, repo: String, number: Int,
+                                         logins: [String]) async throws -> [GitHubReviewer] {
+        try await mutateReviewers(owner: owner, repo: repo, number: number, logins: logins, method: "DELETE")
+    }
+
+    /// Shared body of the two reviewer writes: REST `POST`/`DELETE .../pulls/{n}/requested_reviewers`
+    /// with `{ "reviewers": logins }`. Both return the PR object; we decode its `requested_reviewers`
+    /// (the still-pending set after the change) into Domain reviewers. Mirrors `addComment`'s shape.
+    private func mutateReviewers(owner: String, repo: String, number: Int,
+                                 logins: [String], method: String) async throws -> [GitHubReviewer] {
+        let payload = try JSONEncoder().encode(ReviewersBody(reviewers: logins))
+        let url = restURL(path: "/repos/\(owner)/\(repo)/pulls/\(number)/requested_reviewers")
+        let request = try await authorizedRequest(url: url, method: method, body: payload)
+        let (data, _) = try await perform(request)
+        let dto: PRReviewersResponse = try decode(data)
+        return dto.toDomain()
+    }
+
     public func repositoryLabels(owner: String, repo: String) async throws -> [GitHubLabel] {
         let labels: [LabelDTO] = try await getPaged(path: "/repos/\(owner)/\(repo)/labels")
         return labels.map { $0.toDomain() }

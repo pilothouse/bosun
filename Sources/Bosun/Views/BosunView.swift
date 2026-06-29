@@ -240,6 +240,9 @@ final class BosunView: NSView {
         center.detail.onMergePullRequest = { [weak self] merge, done in self?.data.mergePullRequest(merge, completion: done) }
         center.detail.onEditItem = { [weak self] edit, done in self?.data.editItem(edit, completion: done) }
         center.detail.onLoadEditChoices = { [weak self] done in self?.data.loadEditChoices(completion: done) }
+        center.detail.onManageReviewers = { [weak self] action, logins, done in
+            self?.data.manageReviewers(action, logins: logins, completion: done)
+        }
 
         // Reflect the active console tab — or its label — wherever it's shown whenever it changes (#73).
         center.terminal.onActiveTitleChange = { [weak self] in self?.updateActiveConsoleTitle() }

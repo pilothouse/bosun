@@ -133,6 +133,8 @@ enum GitHubGraphQLQueries {
             labels(first: 20) { nodes { name color } }
             assignees(first: 10) { nodes { login avatarUrl } }
             milestone { title }
+            reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login avatarUrl } } } }
+            latestReviews(first: 20) { nodes { author { login avatarUrl } state } }
             commits(last: 1) {
               nodes {
                 commit {

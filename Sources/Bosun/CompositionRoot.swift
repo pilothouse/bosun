@@ -37,6 +37,8 @@ struct GitHubAuthServices {
     let mergePullRequest: MergePullRequestUseCase
     /// Edit an issue/PR's title/body/labels/assignees — the third write. Shares `api`'s client.
     let editItem: EditItemUseCase
+    /// Request/remove a PR's reviewers (issue #70) — the fourth write. Shares `api`'s client.
+    let manageReviewers: ManageReviewersUseCase
 }
 
 /// The one place allowed to choose concrete adapters and wire them into use cases.
@@ -90,7 +92,8 @@ enum CompositionRoot {
             cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL()),
             addComment: AddCommentUseCase(api: client),
             mergePullRequest: MergePullRequestUseCase(api: client),
-            editItem: EditItemUseCase(api: client)
+            editItem: EditItemUseCase(api: client),
+            manageReviewers: ManageReviewersUseCase(api: client)
         )
     }
 

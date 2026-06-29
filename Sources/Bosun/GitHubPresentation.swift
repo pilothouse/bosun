@@ -81,6 +81,7 @@ extension Item {
             labels: it.labels,
             labelColors: (it.labelColors ?? [:]).compactMapValues(NSColor.hex(string:)),
             assignees: (it.assignees ?? []).map(Assignee.init(domain:)),
+            reviewers: (it.reviewers ?? []).map(Reviewer.init(domain:)),
             milestone: it.milestone,
             createdAt: it.createdAt,
             authorColor: isAgent ? agentAccent : Status.purple,
@@ -180,6 +181,32 @@ extension Assignee {
     init(domain actor: GitHubActor) {
         self.init(login: actor.login, initials: actor.initials,
                   color: actor.isBot ? agentAccent : Status.purple, avatarURL: actor.avatarURL)
+    }
+}
+
+extension Reviewer {
+    /// The REVIEWERS-section projection of a `GitHubReviewer` (issue #70): the same actor-derived
+    /// initials/placeholder tint as `Assignee`, plus the carried review `state` the chip badges.
+    init(domain reviewer: GitHubReviewer) {
+        self.init(login: reviewer.login, initials: reviewer.initials,
+                  color: reviewer.isBot ? agentAccent : Status.purple,
+                  avatarURL: reviewer.avatarURL, state: reviewer.state)
+    }
+
+    /// Whether this reviewer's request is still pending — the only state that can be cancelled via
+    /// `DELETE …/requested_reviewers`, so only these chips offer a remove ✕.
+    var isPending: Bool { state == .pending }
+
+    /// The review-state badge the chip shows: a glyph + label, tinted to the verdict (approved →
+    /// green, changes requested → red, the rest neutral/amber). Pure presentation glue.
+    var stateBadge: (text: String, color: NSColor) {
+        switch state {
+        case .pending:          return ("⧖ Pending", Status.yellow)
+        case .approved:         return ("✓ Approved", Status.green)
+        case .changesRequested: return ("✗ Changes requested", Status.red)
+        case .commented:        return ("💬 Commented", Status.dim)
+        case .dismissed:        return ("⊘ Dismissed", Status.dim)
+        }
     }
 }
 

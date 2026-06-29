@@ -23,6 +23,7 @@ final class GitHubDataController {
     private let addCommentUseCase: AddCommentUseCase
     private let mergePullRequestUseCase: MergePullRequestUseCase
     private let editItemUseCase: EditItemUseCase
+    private let manageReviewersUseCase: ManageReviewersUseCase
 
     /// The current repo's label palette and assignable users, cached per repo so re-opening a picker
     /// doesn't refetch (mirrors `blockedByLoaded`'s per-scope memo). Keyed by `owner/name`; cleared on
@@ -64,13 +65,15 @@ final class GitHubDataController {
     private var blockedByLoaded: Set<String> = []
 
     init(api: GitHubAPI, cache: GitHubCacheStore, store: Store, addComment: AddCommentUseCase,
-         mergePullRequest: MergePullRequestUseCase, editItem: EditItemUseCase) {
+         mergePullRequest: MergePullRequestUseCase, editItem: EditItemUseCase,
+         manageReviewers: ManageReviewersUseCase) {
         self.api = api
         self.cache = cache
         self.store = store
         self.addCommentUseCase = addComment
         self.mergePullRequestUseCase = mergePullRequest
         self.editItemUseCase = editItem
+        self.manageReviewersUseCase = manageReviewers
     }
 
     /// Hydrate the orgs panel from the local cache (instant, no spinner), then fetch live, diff it
@@ -487,6 +490,74 @@ final class GitHubDataController {
             detail.applyEdited(from: updated)
             store.selectedItemDetail = detail
         }
+    }
+
+    /// Request a reviewer or cancel a pending request on the open PR (issue #70), updating the open
+    /// detail's reviewers in place. The change applies optimistically (the chip/badge updates at
+    /// once), then reconciles with GitHub's authoritative pending set on success, or reverts on
+    /// failure. `completion` runs on the main actor: `(true, nil)` applied; `(false, message)`
+    /// reverted. Mirrors `editItem`'s ownership — a write that lands after the user moved on isn't
+    /// grafted onto a different item.
+    func manageReviewers(_ action: ReviewerAction, logins: [String],
+                         completion: @escaping (Bool, String?) -> Void) {
+        let selectedId = store.selectedItemId
+        guard let item = (store.prs + store.issues).first(where: { $0.id == selectedId }),
+              let repo = item.ownerRepo else {
+            completion(false, nil); return
+        }
+        let number = item.number
+        // Optimistic update of the open detail, captured for revert on failure.
+        let prior = store.selectedItemDetail?.reviewers
+        if var detail = store.selectedItemDetail, detail.id == selectedId {
+            detail.reviewers = Self.optimisticReviewers(detail.reviewers, action: action, logins: logins)
+            store.selectedItemDetail = detail
+        }
+        Task { @MainActor in
+            do {
+                let pending: [Domain.GitHubReviewer]
+                switch action {
+                case .request:
+                    pending = try await manageReviewersUseCase.request(
+                        owner: repo.owner, repo: repo.name, number: number, logins: logins)
+                case .remove:
+                    pending = try await manageReviewersUseCase.remove(
+                        owner: repo.owner, repo: repo.name, number: number, logins: logins)
+                }
+                // Reconcile with GitHub's authoritative pending set (keep submitted reviews, replace
+                // the pending ones) — only if the user is still on this item.
+                if store.selectedItemId == selectedId, var detail = store.selectedItemDetail,
+                   detail.id == selectedId {
+                    detail.reviewers = detail.reviewers.filter { !$0.isPending } + pending.map(Reviewer.init(domain:))
+                    store.selectedItemDetail = detail
+                }
+                completion(true, nil)
+            } catch {
+                if store.selectedItemId == selectedId, let prior,
+                   var detail = store.selectedItemDetail, detail.id == selectedId {
+                    detail.reviewers = prior   // undo the optimistic change
+                    store.selectedItemDetail = detail
+                }
+                completion(false, Self.reviewerMessage(for: error))
+            }
+        }
+    }
+
+    /// Apply a request/remove to the reviewer list optimistically. A request flips the login to a
+    /// fresh `.pending` chip (the avatar fills in once GitHub responds); a remove drops the matching
+    /// pending chip. Submitted reviews are untouched.
+    private static func optimisticReviewers(_ current: [Reviewer], action: ReviewerAction,
+                                            logins: [String]) -> [Reviewer] {
+        var result = current
+        switch action {
+        case .request:
+            for login in logins {
+                result.removeAll { $0.login == login }
+                result.append(Reviewer(domain: GitHubReviewer(login: login, state: .pending)))
+            }
+        case .remove:
+            result.removeAll { logins.contains($0.login) && $0.isPending }
+        }
+        return result
     }
 
     /// Fetch the open item's repo label palette and assignable users for the edit pane's pickers,
@@ -919,6 +990,17 @@ final class GitHubDataController {
             return "You don't have permission to edit this item."
         case .http(422):
             return "GitHub rejected the change. A label or assignee may no longer be valid."
+        default:
+            return message(for: error)
+        }
+    }
+
+    private static func reviewerMessage(for error: Error) -> String {
+        switch error as? GitHubAPIError {
+        case .http(403):
+            return "You don't have permission to manage reviewers on this PR."
+        case .http(422):
+            return "GitHub rejected the reviewer change — they may not be a valid reviewer."
         default:
             return message(for: error)
         }

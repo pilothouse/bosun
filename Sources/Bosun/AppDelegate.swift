@@ -33,7 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let data = GitHubDataController(api: githubServices.api, cache: githubServices.cache,
                                         store: store, addComment: githubServices.addComment,
                                         mergePullRequest: githubServices.mergePullRequest,
-                                        editItem: githubServices.editItem)
+                                        editItem: githubServices.editItem,
+                                        manageReviewers: githubServices.manageReviewers)
         self.dataController = data
         auth.onSignedIn = { [weak data] in data?.load() }
         auth.onSignedOut = { [weak data] in data?.clear() }

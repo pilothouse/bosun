@@ -133,6 +133,18 @@ public protocol GitHubAPI: Sendable {
     /// set. A permission denial surfaces as `GitHubAPIError.http` from the adapter.
     func editItem(owner: String, repo: String, number: Int,
                   edit: GitHubItemEdit) async throws -> GitHubItem
+    /// Request reviews on a PR from `logins` and return the PR's requested (pending) reviewers after
+    /// the change (REST `POST /repos/{owner}/{repo}/pulls/{number}/requested_reviewers`). The
+    /// returned reviewers are all `.pending` — the REST response carries the requested set, not
+    /// submitted review states. A permission denial / invalid reviewer surfaces as
+    /// `GitHubAPIError.http` from the adapter.
+    func requestReviewers(owner: String, repo: String, number: Int,
+                          logins: [String]) async throws -> [GitHubReviewer]
+    /// Cancel pending review requests on a PR for `logins` and return the requested (pending)
+    /// reviewers that remain (REST `DELETE /repos/{owner}/{repo}/pulls/{number}/requested_reviewers`).
+    /// Only cancels *pending* requests — a submitted review can't be removed through this endpoint.
+    func removeRequestedReviewers(owner: String, repo: String, number: Int,
+                                  logins: [String]) async throws -> [GitHubReviewer]
     /// The labels a repository defines, for the edit pane's label picker (REST
     /// `GET /repos/{owner}/{repo}/labels`). Read-only — no business rule, so callers use it directly.
     func repositoryLabels(owner: String, repo: String) async throws -> [GitHubLabel]
@@ -154,6 +166,13 @@ public enum AddCommentError: Error, Sendable, Equatable {
 public enum EditItemError: Error, Sendable, Equatable {
     case emptyTitle
     case noChanges
+}
+
+/// Why requesting/removing reviewers didn't happen before the network was even touched. `.empty` is
+/// an empty `logins` set — there's no one to request or remove; transport/HTTP failures (including a
+/// permission denial) surface as `GitHubAPIError` from the adapter, not here.
+public enum ManageReviewersError: Error, Sendable, Equatable {
+    case empty
 }
 
 /// Persistence seam for a local copy of the viewer's GitHub data, so the UI hydrates instantly on

@@ -40,6 +40,8 @@ final class MergePullRequestUseCaseTests: XCTestCase {
         func issueDependencies(owner: String, repo: String, number: Int) throws -> [Int] { throw Unused() }
         func addComment(owner: String, repo: String, number: Int, body: String) throws -> GitHubComment { throw Unused() }
         func editItem(owner: String, repo: String, number: Int, edit: GitHubItemEdit) throws -> GitHubItem { throw Unused() }
+        func requestReviewers(owner: String, repo: String, number: Int, logins: [String]) throws -> [GitHubReviewer] { throw Unused() }
+        func removeRequestedReviewers(owner: String, repo: String, number: Int, logins: [String]) throws -> [GitHubReviewer] { throw Unused() }
         func repositoryLabels(owner: String, repo: String) throws -> [GitHubLabel] { throw Unused() }
         func assignableUsers(owner: String, repo: String) throws -> [GitHubActor] { throw Unused() }
     }

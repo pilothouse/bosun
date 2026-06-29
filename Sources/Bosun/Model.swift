@@ -68,6 +68,15 @@ struct CurrentUser { let initials: String; let color: NSColor; let avatarURL: UR
 /// `color`/`initials` are the `AvatarView` placeholder shown until `avatarURL` loads.
 struct Assignee { let login, initials: String; let color: NSColor; let avatarURL: URL? }
 
+/// A PR reviewer, projected for the detail pane's REVIEWERS section (issue #70). `color`/`initials`
+/// are the `AvatarView` placeholder like `Assignee`; `state` carries the review verdict, which the
+/// view renders as a colored badge (and gates removal — only a `.pending` request is removable).
+struct Reviewer { let login, initials: String; let color: NSColor; let avatarURL: URL?; let state: GitHubReviewState }
+
+/// Whether a reviewer toggle requests a review or cancels a pending request (issue #70) — the two
+/// `…/requested_reviewers` writes. The detail pane hands this to the data controller.
+enum ReviewerAction { case request, remove }
+
 /// A label a repository defines, offered in the edit pane's label picker (issue #71). `color` is the
 /// label's display tint (nil → a neutral chip), pre-resolved from the hex `GitHubLabel` carries.
 struct LabelChoice { let name: String; let color: NSColor? }
@@ -104,6 +113,10 @@ struct Item {
     /// both list and detail items so the section is complete on the lead row (no body jump when the
     /// detail lands). Empty when none.
     var assignees: [Assignee] = []
+    /// The PR's reviewers and their review states, shown in the detail pane's REVIEWERS section
+    /// (issue #70). PR-only and detail-hydrated (unlike `assignees`, the list fetch doesn't carry
+    /// it), so it's empty until the detail lands. Updated in place by a request/remove.
+    var reviewers: [Reviewer] = []
     /// The item's milestone title, or nil when it has none. Carried on the list row too, like
     /// `assignees`, so the metadata section doesn't grow when the detail lands.
     var milestone: String? = nil

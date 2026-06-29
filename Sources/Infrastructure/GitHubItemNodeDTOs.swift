@@ -26,6 +26,24 @@ struct LabelConnection: Decodable {
     struct Label: Decodable { let name: String; let color: String? }
 }
 
+/// A PR's still-open review requests. `requestedReviewer` is a GraphQL union (User/Team/Mannequin/
+/// Bot); we select only the `User` inline fragment, so a team request's node has no `login` — hence
+/// the tolerant optional fields (a strict `AuthorDTO` would fail to decode it). Non-user requests
+/// map to nil and drop out.
+struct ReviewRequestConnection: Decodable {
+    let nodes: [Node]
+    struct Node: Decodable { let requestedReviewer: ReviewerRef? }
+    struct ReviewerRef: Decodable { let login: String?; let avatarUrl: String? }
+}
+
+/// A PR's latest review per author (GitHub's `latestReviews`): the author plus the review `state`
+/// (`APPROVED`/`CHANGES_REQUESTED`/`COMMENTED`/`DISMISSED`). `author` is optional so a deleted
+/// account's review still decodes (and then drops out).
+struct LatestReviewConnection: Decodable {
+    let nodes: [Node]
+    struct Node: Decodable { let author: AuthorDTO?; let state: String }
+}
+
 /// One issue/PR node. The list queries fill the lead fields; the detail query also sets
 /// `typeName` and the PR's `commits` rollup. PR-only fields stay nil for issues. Lives here (not in
 /// `GitHubAPIClient`) for the same line-cap reason as the DTOs above; the `commits`/`files`/context
@@ -52,6 +70,8 @@ struct ItemNode: Decodable {
     let parent: ParentRef?
     let assignees: ActorConnection?
     let milestone: MilestoneRef?
+    let reviewRequests: ReviewRequestConnection?
+    let latestReviews: LatestReviewConnection?
 
     /// The sub-issue parent, when this issue is one — only its `number` is needed to group locally.
     struct ParentRef: Decodable { let number: Int }
@@ -62,6 +82,7 @@ struct ItemNode: Decodable {
         case id, number, title, body, createdAt, state, author, labels
         case isDraft, additions, deletions, headRefName, commits, files, parent
         case assignees, milestone, mergeable, mergeStateStatus, baseRefName
+        case reviewRequests, latestReviews
         case typeName = "__typename"
     }
 
@@ -73,6 +94,22 @@ struct ItemNode: Decodable {
     /// The files a PR changed (empty for issues, or a PR whose `files` GraphQL field is absent).
     var changedFiles: [GitHubFile] {
         files?.nodes.map { $0.toDomain() } ?? []
+    }
+
+    /// The PR's reviewers, merging the still-pending `reviewRequests` (users only) with the
+    /// per-author `latestReviews` via the Domain rule. Nil when there are none — keeps issues (and
+    /// the cache) from gaining an empty array.
+    var reviewers: [GitHubReviewer]? {
+        let requested: [GitHubActor] = reviewRequests?.nodes.compactMap { node in
+            guard let login = node.requestedReviewer?.login else { return nil }
+            return GitHubActor(login: login, avatarURL: node.requestedReviewer?.avatarUrl.flatMap(URL.init(string:)))
+        } ?? []
+        let reviews: [(GitHubActor, GitHubReviewState)] = latestReviews?.nodes.compactMap { node in
+            guard let author = node.author?.toDomain() else { return nil }
+            return (author, GitHubReviewState(graphQL: node.state))
+        } ?? []
+        let merged = GitHubReviewer.merge(requested: requested, reviews: reviews)
+        return merged.isEmpty ? nil : merged
     }
 
     func toDomain(kind: GitHubItemKind, repoNameWithOwner: String,
@@ -90,7 +127,8 @@ struct ItemNode: Decodable {
             assignees: assignees?.nodes.map { $0.toDomain() },
             milestone: milestone?.title,
             labelColors: labelColorMap,
-            mergeable: mergeableBool, mergeStateStatus: mergeStateStatus, baseRefName: baseRefName)
+            mergeable: mergeableBool, mergeStateStatus: mergeStateStatus, baseRefName: baseRefName,
+            reviewers: reviewers)
     }
 
     /// GitHub's `MergeableState` enum (MERGEABLE/CONFLICTING/UNKNOWN) flattened to the Domain's

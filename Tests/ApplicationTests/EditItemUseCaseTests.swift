@@ -40,6 +40,8 @@ final class EditItemUseCaseTests: XCTestCase {
         func addComment(owner: String, repo: String, number: Int, body: String) throws -> GitHubComment { throw Unused() }
         func mergePullRequest(owner: String, repo: String, number: Int,
                               merge: PRMergeRequest) throws -> PRMergeResult { throw Unused() }
+        func requestReviewers(owner: String, repo: String, number: Int, logins: [String]) throws -> [GitHubReviewer] { throw Unused() }
+        func removeRequestedReviewers(owner: String, repo: String, number: Int, logins: [String]) throws -> [GitHubReviewer] { throw Unused() }
         func repositoryLabels(owner: String, repo: String) throws -> [GitHubLabel] { throw Unused() }
         func assignableUsers(owner: String, repo: String) throws -> [GitHubActor] { throw Unused() }
     }

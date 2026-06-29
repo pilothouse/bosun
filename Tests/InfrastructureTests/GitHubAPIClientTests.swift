@@ -301,6 +301,21 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(item.labelColors, ["bug": "d73a4a"])
     }
 
+    func testItemDetailMapsReviewersFromRequestsAndLatestReviews() async throws {
+        StubURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            if path.contains("/graphql") { return (self.ok(request), try fixture("item-detail")) }
+            return (self.ok(request), try fixture("comments"))
+        }
+        let item = try await makeClient().itemDetail(owner: "acme-corp", repo: "api-gateway", number: 482)
+
+        // Pending request first, then the two submitted reviews carrying their states. The non-user
+        // (Team) request is dropped, not decoded as a malformed reviewer.
+        XCTAssertEqual(item.reviewers?.map(\.login), ["kim", "alex", "sam"])
+        XCTAssertEqual(item.reviewers?.map(\.state), [.pending, .approved, .changesRequested])
+        XCTAssertEqual(item.reviewers?.first?.avatarURL?.host, "avatars.githubusercontent.com")
+    }
+
     func testCommentsPaginationFollowsLinkHeader() async throws {
         let nextURL = "https://api.github.com/repos/acme-corp/api-gateway/issues/482/comments?per_page=100&page=2"
         StubURLProtocol.handler = { request in
@@ -441,6 +456,57 @@ final class GitHubAPIClientTests: XCTestCase {
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: Any])
         XCTAssertEqual(Array(body.keys), ["labels"], "only the changed field is sent; nil fields are omitted")
         XCTAssertEqual(body["labels"] as? [String], ["bug"])
+    }
+
+    func testRequestReviewersPostsLoginsAndDecodesPendingSet() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.status(request, 201), json("""
+            { "number": 482,
+              "requested_reviewers": [
+                { "login": "kim", "avatar_url": "https://avatars.githubusercontent.com/u/4?v=4" },
+                { "login": "raj" }
+              ] }
+            """))
+        }
+        let reviewers = try await makeClient().requestReviewers(
+            owner: "acme-corp", repo: "api-gateway", number: 482, logins: ["kim", "raj"])
+
+        // Decodes the PR's requested_reviewers as the pending set.
+        XCTAssertEqual(reviewers.map(\.login), ["kim", "raj"])
+        XCTAssertEqual(reviewers.map(\.state), [.pending, .pending])
+        XCTAssertEqual(reviewers.first?.avatarURL?.host, "avatars.githubusercontent.com")
+
+        // POSTs `{ "reviewers": [...] }` to the requested-reviewers endpoint.
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/repos/acme-corp/api-gateway/pulls/482/requested_reviewers")
+        let sent = try XCTUnwrap(bodyData(request))
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: [String]])
+        XCTAssertEqual(body, ["reviewers": ["kim", "raj"]])
+    }
+
+    func testRemoveRequestedReviewersDeletesLogins() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), json("""
+            { "number": 482, "requested_reviewers": [] }
+            """))
+        }
+        let reviewers = try await makeClient().removeRequestedReviewers(
+            owner: "acme-corp", repo: "api-gateway", number: 482, logins: ["kim"])
+
+        XCTAssertEqual(reviewers, [], "the requested set is empty once the only pending reviewer is removed")
+
+        // DELETEs `{ "reviewers": [...] }` to the same endpoint.
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.httpMethod, "DELETE")
+        XCTAssertEqual(request.url?.path, "/repos/acme-corp/api-gateway/pulls/482/requested_reviewers")
+        let sent = try XCTUnwrap(bodyData(request))
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: [String]])
+        XCTAssertEqual(body, ["reviewers": ["kim"]])
     }
 
     func testRepositoryLabelsDecodesList() async throws {

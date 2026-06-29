@@ -45,6 +45,11 @@ final class DetailView: FlippedView {
     /// completion the controller runs on the main actor with the repo's label palette + assignable users.
     var onLoadEditChoices: ((@escaping ([LabelChoice], [Assignee]) -> Void) -> Void)?
 
+    /// Called when the user requests or removes a PR reviewer (issue #70). The view hands the action,
+    /// the affected logins, and a completion the controller runs on the main actor: `(true, nil)`
+    /// applied (the controller updated the detail's reviewers in place); `(false, message)` reverted.
+    var onManageReviewers: ((ReviewerAction, [String], @escaping (Bool, String?) -> Void) -> Void)?
+
     // Composer state lives on the view (not the rebuilt subviews), so it survives `rebuild()`:
     // an in-flight post, a typed-but-unsent draft, and the last error all persist across relayouts.
     private var composerDraft = ""
@@ -102,6 +107,10 @@ final class DetailView: FlippedView {
     private var editAssignees: [String] = []
     private var labelMenuOpen = false
     private var assigneeMenuOpen = false
+    /// The reviewer picker's open state (issue #70). Reviewers have no draft set like
+    /// `editLabels`/`editAssignees`: chips and the picker's ✓ read straight off `it.reviewers`
+    /// (the controller updates it optimistically), so there's no separate source of truth to drift.
+    private var reviewerMenuOpen = false
     /// The repo's label palette + assignable users for the pickers, fetched lazily when a picker first
     /// opens; cleared on a selection change so a different repo's choices aren't shown.
     private var labelChoices: [LabelChoice] = []
@@ -318,7 +327,7 @@ final class DetailView: FlippedView {
             metaItemId = it.id
             editLabels = it.labels
             editAssignees = it.assignees.map(\.login)
-            labelMenuOpen = false; assigneeMenuOpen = false
+            labelMenuOpen = false; assigneeMenuOpen = false; reviewerMenuOpen = false
             labelChoices = []; assigneeChoices = []
             isEditing = false; editError = nil
         }
@@ -474,36 +483,51 @@ final class DetailView: FlippedView {
         y += z(30)
 
         // Metadata section: labels, assignees, milestone (issue #71). LABELS and ASSIGNEES are
-        // *always* editable inline — each chip carries a remove ✕ and each row ends with an
-        // add-from-picker button, so a label/assignee can be added or removed without entering the
-        // title/body editor; every toggle saves immediately. Both rows always render (the add button
-        // makes them non-empty) so an item with none still offers a way to add one. Milestone stays
-        // read-only — it isn't one of the four editable fields. Built on the reusable `metaRow` helper.
-        let gutter = z(80)
-        var labelViews: [NSView] = editLabels.map { name in
+        // *always* editable inline — each chip carries a remove ✕ and the caption is followed by a
+        // "＋" opener, so a label/assignee can be added or removed without entering the title/body
+        // editor; every toggle saves immediately. Both rows always render (the "＋" opener keeps them
+        // non-empty) so an item with none still offers a way to add one. Milestone stays read-only —
+        // it isn't one of the four editable fields. Built on the reusable `metaRow` helper.
+        let labelViews: [NSView] = editLabels.map { name in
             editableChip(name, color: editLabelColor(name, it: it), t: t,
                          onRemove: { [weak self] in self?.toggleLabel(name) })
         }
-        let labelBtn = pickerButton("＋ Label ▾", t: t, on: labelMenuOpen,
-                                    onClick: { [weak self] in self?.toggleEditMenu(label: true) })
-        labelViews.append(labelBtn)
-        y = metaRow("LABELS", labelViews, into: doc, t: t, x: padX, y: y, width: cw)
+        let labelBtn = pickerButton("＋", t: t, on: labelMenuOpen, tooltip: "Add label",
+                                    onClick: { [weak self] in self?.toggleEditMenu(.labels) })
+        y = metaRow("LABELS", labelViews, into: doc, t: t, x: padX, y: y, width: cw, accessory: labelBtn)
         if labelMenuOpen {
-            editMenuOverlay = makeLabelMenu(t: t, x: padX + gutter, y: y - z(6), width: z(240))
+            editMenuOverlay = makeLabelMenu(t: t, x: labelBtn.frame.minX, y: y - z(6), width: z(240))
             editMenuButton = labelBtn
         }
 
-        var assigneeViews: [NSView] = editAssignees.map { login in
+        let assigneeViews: [NSView] = editAssignees.map { login in
             editableAssigneeChip(login, it: it, t: t,
                                  onRemove: { [weak self] in self?.toggleAssignee(login) })
         }
-        let assigneeBtn = pickerButton("＋ Assignee ▾", t: t, on: assigneeMenuOpen,
-                                       onClick: { [weak self] in self?.toggleEditMenu(label: false) })
-        assigneeViews.append(assigneeBtn)
-        y = metaRow("ASSIGNEES", assigneeViews, into: doc, t: t, x: padX, y: y, width: cw)
+        let assigneeBtn = pickerButton("＋", t: t, on: assigneeMenuOpen, tooltip: "Add assignee",
+                                       onClick: { [weak self] in self?.toggleEditMenu(.assignees) })
+        y = metaRow("ASSIGNEES", assigneeViews, into: doc, t: t, x: padX, y: y, width: cw, accessory: assigneeBtn)
         if assigneeMenuOpen {
-            editMenuOverlay = makeAssigneeMenu(t: t, x: padX + gutter, y: y - z(6), width: z(240))
+            editMenuOverlay = makeAssigneeMenu(t: t, x: assigneeBtn.frame.minX, y: y - z(6), width: z(240))
             editMenuButton = assigneeBtn
+        }
+
+        // Reviewers (issue #70) — PR-only. Each chip shows the reviewer's review-state badge; a
+        // *pending* (requested) reviewer carries a remove ✕ (only pending requests can be cancelled).
+        // The "＋" opener after the caption requests from the repo's assignable users (same pool as
+        // the assignee picker). Mirrors the ASSIGNEES row; both render through `metaRow`.
+        if it.kind == .pr {
+            let reviewerViews: [NSView] = it.reviewers.map { r in
+                reviewerChip(r, t: t,
+                             onRemove: r.isPending ? { [weak self] in self?.toggleReviewer(r.login) } : nil)
+            }
+            let reviewerBtn = pickerButton("＋", t: t, on: reviewerMenuOpen, tooltip: "Add reviewer",
+                                           onClick: { [weak self] in self?.toggleEditMenu(.reviewers) })
+            y = metaRow("REVIEWERS", reviewerViews, into: doc, t: t, x: padX, y: y, width: cw, accessory: reviewerBtn)
+            if reviewerMenuOpen {
+                editMenuOverlay = makeReviewerMenu(t: t, x: reviewerBtn.frame.minX, y: y - z(6), width: z(240))
+                editMenuButton = reviewerBtn
+            }
         }
 
         if let milestone = it.milestone, !milestone.isEmpty {
@@ -794,23 +818,37 @@ final class DetailView: FlippedView {
 
     /// Lay out one metadata row — an uppercase caption in a fixed left gutter, then a left-to-right
     /// flow of already-sized value views that wraps within `width` — into `doc` starting at `y`.
-    /// Returns the new `y`; unchanged when `values` is empty, so callers skip empty rows for free.
-    /// The reusable primitive behind the LABELS/ASSIGNEES/MILESTONE rows; the PR-reviewers feature
-    /// renders its row through the same call.
+    /// Returns the new `y`; unchanged when both `values` and `accessory` are empty, so callers skip
+    /// empty rows for free. The optional `accessory` (the "＋" picker opener) is placed just after the
+    /// caption word, so the add affordance reads as part of the row's label rather than trailing the
+    /// chips. The reusable primitive behind the LABELS/ASSIGNEES/REVIEWERS/MILESTONE rows.
     private func metaRow(_ caption: String, _ values: [NSView], into doc: NSView,
-                         t: Theme, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
-        guard !values.isEmpty else { return y }
-        let capW = z(80), gap = z(6), lineGap = z(7)
-        let cap = label(caption, mono(9.5, .semibold), t.txt4)
-        cap.frame = NSRect(x: x, y: y + z(4), width: capW - z(8), height: z(13)); doc.addSubview(cap)
-        let startX = x + capW, maxX = x + width
-        var cx = startX, cy = y, lineH: CGFloat = 0
+                         t: Theme, x: CGFloat, y: CGFloat, width: CGFloat,
+                         accessory: NSView? = nil) -> CGFloat {
+        guard !values.isEmpty || accessory != nil else { return y }
+        // Three fixed columns so every row lines up: the caption word, then the "＋" opener (same x on
+        // every row), then the chips/value. The opener slot is reserved even on a row without one
+        // (MILESTONE), so its value stays in the same column as the others' chips.
+        let capCol = z(64), plusSlot = z(18), gap = z(6), lineGap = z(7)
+        let capFont = mono(9.5, .semibold)
+        let cap = label(caption, capFont, t.txt4)
+        cap.frame = NSRect(x: x, y: y + z(4), width: capCol - z(4), height: z(13)); doc.addSubview(cap)
+        if let accessory {
+            accessory.frame.origin = NSPoint(x: x + capCol,
+                                             y: y + ((z(20) - accessory.frame.height) / 2).rounded())
+            doc.addSubview(accessory)
+        }
+        let startX = x + capCol + plusSlot + gap, maxX = x + width
+        // The opener (when present) sets the first line's minimum height, so a chip-less row still
+        // reserves its full height and adjacent rows' openers can't overlap. `z(14)` trailing gap
+        // keeps the rows comfortably apart.
+        var cx = startX, cy = y, lineH: CGFloat = accessory != nil ? z(20) : 0
         for v in values {
             if cx > startX && cx + v.frame.width > maxX { cx = startX; cy += lineH + lineGap; lineH = 0 }
             v.frame.origin = NSPoint(x: cx, y: cy); doc.addSubview(v)
             cx += v.frame.width + gap; lineH = max(lineH, v.frame.height)
         }
-        return cy + lineH + z(11)
+        return cy + lineH + z(14)
     }
 
     /// The milestone shown as a neutral chip with a diamond glyph.
@@ -865,12 +903,16 @@ final class DetailView: FlippedView {
         }
     }
 
-    /// Open one picker (closing the other), or close it if it's already open. Lazily fetches the repo's
-    /// label/assignee choices the first time a picker opens (cleared on a selection change).
-    private func toggleEditMenu(label: Bool) {
-        if label { labelMenuOpen.toggle(); assigneeMenuOpen = false }
-        else { assigneeMenuOpen.toggle(); labelMenuOpen = false }
-        if (labelMenuOpen || assigneeMenuOpen) && labelChoices.isEmpty && assigneeChoices.isEmpty {
+    /// Which metadata picker a toggle targets. The reviewer picker reuses the assignee-user choices.
+    private enum EditPicker { case labels, assignees, reviewers }
+
+    /// Open one picker (closing the others), or close it if it's already open. Lazily fetches the
+    /// repo's label/assignee choices the first time any picker opens (cleared on a selection change).
+    private func toggleEditMenu(_ picker: EditPicker) {
+        labelMenuOpen = (picker == .labels) ? !labelMenuOpen : false
+        assigneeMenuOpen = (picker == .assignees) ? !assigneeMenuOpen : false
+        reviewerMenuOpen = (picker == .reviewers) ? !reviewerMenuOpen : false
+        if (labelMenuOpen || assigneeMenuOpen || reviewerMenuOpen) && labelChoices.isEmpty && assigneeChoices.isEmpty {
             loadEditChoices()
         }
         needsLayout = true
@@ -894,10 +936,10 @@ final class DetailView: FlippedView {
     /// picker is open and the click missed both the overlay and its toggle button (else a click on the
     /// button would close-then-reopen it, and a click on a menu row wouldn't register).
     func dismissPickers(forWindowClickAt pointInWindow: NSPoint) {
-        guard labelMenuOpen || assigneeMenuOpen else { return }
+        guard labelMenuOpen || assigneeMenuOpen || reviewerMenuOpen else { return }
         if let overlay = editMenuOverlay, overlay.convert(overlay.bounds, to: nil).contains(pointInWindow) { return }
         if let button = editMenuButton, button.convert(button.bounds, to: nil).contains(pointInWindow) { return }
-        labelMenuOpen = false; assigneeMenuOpen = false
+        labelMenuOpen = false; assigneeMenuOpen = false; reviewerMenuOpen = false
         needsLayout = true
     }
 
@@ -914,6 +956,21 @@ final class DetailView: FlippedView {
         var assignees = editAssignees
         if let i = assignees.firstIndex(of: login) { assignees.remove(at: i) } else { assignees.append(login) }
         commitEdit(GitHubItemEdit(assignees: assignees), applyAssignees: assignees)
+    }
+
+    /// Request a reviewer, or cancel their pending request (issue #70). The action is derived from the
+    /// reviewer's current state on the open item: a still-pending request is removed, anyone else is
+    /// (re)requested. The controller owns the optimistic store update + revert; here we just fire and
+    /// surface a failure message. The picker stays open so several can be toggled in a row.
+    private func toggleReviewer(_ login: String) {
+        guard let onManageReviewers, let it = store.selectedItem else { return }
+        let isPending = it.reviewers.contains { $0.login == login && $0.isPending }
+        editError = nil
+        onManageReviewers(isPending ? .remove : .request, [login]) { [weak self] ok, message in
+            guard let self else { return }
+            if !ok, let message { self.editError = message }
+            self.needsLayout = true
+        }
     }
 
     /// Optimistically apply a label/assignee toggle to the drafts and PATCH it; revert + surface the
@@ -981,6 +1038,31 @@ final class DetailView: FlippedView {
         return chip
     }
 
+    /// A reviewer chip (issue #70): avatar + login + a review-state badge. A *pending* reviewer's
+    /// chip carries a trailing ✕ (`onRemove` non-nil) to cancel the request; a submitted review has
+    /// no ✕ (it can't be removed through this endpoint). Sized to fit so `metaRow` flows it.
+    private func reviewerChip(_ r: Reviewer, t: Theme, onRemove: (() -> Void)?) -> NSView {
+        let nameW = fitW(r.login, sys(11.5))
+        let badgeInfo = r.stateBadge
+        let stateBadge = badge(badgeInfo.text, fg: badgeInfo.color, border: badgeInfo.color, mono: false)
+        let badgeW = stateBadge.frame.width
+        let xW: CGFloat = onRemove != nil ? z(15) : z(8)
+        let w = z(22) + nameW + z(6) + badgeW + xW
+        let chip = BoxView(bg: t.hover, radius: z(11), border: t.cardbr)
+        chip.frame = NSRect(x: 0, y: 0, width: w, height: z(22))
+        let av = AvatarView(size: z(16), cornerRadius: z(8), url: r.avatarURL, placeholderColor: r.color,
+                            initials: r.initials, initialsFont: sys(7.5, .bold), initialsColor: .hex(0x0d0f13))
+        av.frame.origin = NSPoint(x: z(3), y: z(3)); chip.addSubview(av)
+        let nm = label(r.login, sys(11.5), t.txt2)
+        nm.frame = NSRect(x: z(22), y: z(4), width: nameW, height: z(14)); chip.addSubview(nm)
+        stateBadge.frame.origin = NSPoint(x: z(22) + nameW + z(6), y: (z(22) - stateBadge.frame.height) / 2)
+        chip.addSubview(stateBadge)
+        if let onRemove {
+            chip.addSubview(removeButton(fg: t.txt3, t: t, x: z(22) + nameW + z(6) + badgeW, w: xW, h: z(22), onRemove: onRemove))
+        }
+        return chip
+    }
+
     /// The ✕ hit-target placed at the trailing edge of a removable chip — a small hover-highlighted
     /// click area so removal needs a deliberate click on the ✕, not anywhere on the chip.
     private func removeButton(fg: NSColor, t: Theme, x: CGFloat, w: CGFloat, h: CGFloat,
@@ -996,19 +1078,20 @@ final class DetailView: FlippedView {
         return btn
     }
 
-    /// The "＋ Label ▾" / "＋ Assignee ▾" picker-opener button, styled in the accent like a subtle
-    /// add affordance; highlighted while its picker is open.
-    private func pickerButton(_ title: String, t: Theme, on: Bool, onClick: @escaping () -> Void) -> NSView {
-        let font = sys(11.5, .medium)
-        let textW = fitW(title, font)
-        let w = z(11) + textW + z(11)
-        let btn = ClickRow(bg: on ? t.accentbg : t.accentbg2, radius: z(9))
+    /// The compact "＋" picker-opener placed right after a metadata caption (LABELS/ASSIGNEES/
+    /// REVIEWERS), styled in the accent like a subtle add affordance; highlighted while its picker is
+    /// open. `tooltip` names what it adds, since the glyph alone carries no label text.
+    private func pickerButton(_ title: String, t: Theme, on: Bool, tooltip: String? = nil,
+                              onClick: @escaping () -> Void) -> NSView {
+        let side = z(18)
+        let btn = ClickRow(bg: on ? t.accentbg : t.accentbg2, radius: side / 2)
         btn.layer?.borderWidth = 1; btn.layer?.borderColor = t.accent.withAlphaComponent(0.4).cgColor
         btn.hoverColor = t.accentbg
         btn.cursor = .pointingHand
-        btn.frame = NSRect(x: 0, y: 0, width: w, height: z(20))
-        let lbl = label(title, font, t.accent)
-        lbl.frame = NSRect(x: z(11), y: z(3), width: textW, height: z(14)); btn.addSubview(lbl)
+        btn.toolTip = tooltip
+        btn.frame = NSRect(x: 0, y: 0, width: side, height: side)
+        let lbl = label(title, sys(11, .semibold), t.accent, align: .center)
+        lbl.frame = NSRect(x: 0, y: z(2), width: side, height: z(13)); btn.addSubview(lbl)
         btn.onClick = onClick
         return btn
     }
@@ -1030,6 +1113,18 @@ final class DetailView: FlippedView {
                           rows: assigneeChoices.map { choice in
             ChecklistRow(title: choice.login, tint: nil, on: editAssignees.contains(choice.login),
                          action: { [weak self] in self?.toggleAssignee(choice.login) })
+        })
+    }
+
+    /// The reviewer picker overlay (issue #70): a checklist of the repo's assignable users (the same
+    /// candidate pool as the assignee picker), ✓ on those with a *pending* request — toggling one
+    /// requests a review or cancels the pending request.
+    private func makeReviewerMenu(t: Theme, x: CGFloat, y: CGFloat, width: CGFloat) -> NSView {
+        let pending = Set((store.selectedItem?.reviewers ?? []).filter(\.isPending).map(\.login))
+        return makeChecklistMenu(t: t, x: x, y: y, width: width, empty: "No assignable reviewers",
+                                 rows: assigneeChoices.map { choice in
+            ChecklistRow(title: choice.login, tint: nil, on: pending.contains(choice.login),
+                         action: { [weak self] in self?.toggleReviewer(choice.login) })
         })
     }
 

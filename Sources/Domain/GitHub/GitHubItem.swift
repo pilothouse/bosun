@@ -70,6 +70,11 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
     /// The PR's base (target) branch — the branch a merge would land on. PR-only and
     /// detail-hydrated; nil for issues.
     public let baseRefName: String?
+    /// The PR's reviewers and their review states — requested (pending) reviewers plus those who've
+    /// submitted a review. PR-only and detail-hydrated (the list fetch doesn't carry it), so the
+    /// section appears once the detail lands. Optional so an older cache written before this key
+    /// still decodes (to nil); the presentation layer treats nil as "none".
+    public let reviewers: [GitHubReviewer]?
 
     public init(id: String, number: Int, kind: GitHubItemKind, title: String,
                 state: GitHubItemState, author: GitHubActor, createdAt: Date, body: String,
@@ -79,7 +84,8 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
                 files: [GitHubFile]? = nil, tasks: [GitHubTask] = [], parentNumber: Int? = nil,
                 assignees: [GitHubActor]? = nil, milestone: String? = nil,
                 labelColors: [String: String]? = nil, mergeable: Bool? = nil,
-                mergeStateStatus: String? = nil, baseRefName: String? = nil) {
+                mergeStateStatus: String? = nil, baseRefName: String? = nil,
+                reviewers: [GitHubReviewer]? = nil) {
         self.id = id
         self.number = number
         self.kind = kind
@@ -105,5 +111,6 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
         self.mergeable = mergeable
         self.mergeStateStatus = mergeStateStatus
         self.baseRefName = baseRefName
+        self.reviewers = reviewers
     }
 }

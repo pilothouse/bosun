@@ -168,3 +168,26 @@ struct UserRefDTO: Decodable {
         GitHubActor(login: login, avatarURL: avatarURL.flatMap(URL.init(string:)))
     }
 }
+
+/// The `POST`/`DELETE .../requested_reviewers` request body — GitHub takes `{ "reviewers": [...] }`
+/// (plus an optional `team_reviewers` we don't use).
+struct ReviewersBody: Encodable {
+    let reviewers: [String]
+}
+
+/// The `POST`/`DELETE .../requested_reviewers` response: the PR object, of which we only read the
+/// still-pending `requested_reviewers`. Those are by definition `.pending` (submitted reviews aren't
+/// in this list and have no place in a requested-reviewer mutation's response).
+struct PRReviewersResponse: Decodable {
+    let requestedReviewers: [UserRefDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case requestedReviewers = "requested_reviewers"
+    }
+
+    func toDomain() -> [GitHubReviewer] {
+        requestedReviewers.map { GitHubReviewer(login: $0.login,
+                                                avatarURL: $0.avatarURL.flatMap(URL.init(string:)),
+                                                state: .pending) }
+    }
+}
