@@ -32,6 +32,12 @@ final class GhosttySurfaceView: NSView {
     /// tab when it's in the background (#74). One closure covers both libghostty actions.
     var onBell: (() -> Void)?
 
+    /// Invoked when this surface reports an activity signal (an OSC 9;4 progress report, or a
+    /// shell-integration command finishing); the dock runs it through `TerminalBusyPolicy` to drive
+    /// the busy-tab spinner (#93). The mapping from libghostty's C types to the Domain signal lives
+    /// in `progressReport`/`commandFinished` so the dock stays free of C enums.
+    var onActivity: ((TerminalBusySignal) -> Void)?
+
     /// Latest shell/OSC-reported title for this surface; the dock reads it to label the tab.
     private(set) var title: String?
 
@@ -57,8 +63,11 @@ final class GhosttySurfaceView: NSView {
 
     /// `command`, when set, is the shell command line the surface runs instead of the default
     /// login shell (e.g. `ssh ubuntu@host` for a connection tab). `workingDirectory`, when set, is
-    /// the directory the shell starts in (e.g. a local-folder connection's path).
-    init(app: ghostty_app_t, command: String? = nil, workingDirectory: String? = nil) {
+    /// the directory the shell starts in (e.g. a local-folder connection's path). `env` adds extra
+    /// environment variables for *this* surface's child only (e.g. the busy-spinner `ZDOTDIR` shim,
+    /// see `BusyShellIntegration`) — applied on top of ghostty's own (its `env_override`).
+    init(app: ghostty_app_t, command: String? = nil, workingDirectory: String? = nil,
+         env: [(String, String)] = []) {
         self.waitsOnExit = (command != nil)
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
         wantsLayer = true
@@ -79,14 +88,30 @@ final class GhosttySurfaceView: NSView {
         // stays open with its error visible rather than the tab vanishing before it can be read.
         cfg.wait_after_command = waitsOnExit
 
-        // `cfg.command` / `cfg.working_directory` only need to stay valid for the duration of
-        // ghostty_surface_new (it copies what it needs), so build the surface inside the C-strings'
-        // lifetimes, nesting the optional ones.
+        // Duplicate the env pairs into C strings kept alive until after `ghostty_surface_new` copies
+        // them; the buffer is passed as the innermost nesting so it stays valid for the call.
+        var allocated: [UnsafeMutablePointer<CChar>] = []
+        let envC: [ghostty_env_var_s] = env.map { key, value in
+            let ck = strdup(key)!, cv = strdup(value)!
+            allocated.append(ck); allocated.append(cv)
+            return ghostty_env_var_s(key: UnsafePointer(ck), value: UnsafePointer(cv))
+        }
+        defer { allocated.forEach { free($0) } }
+
+        // `cfg.command` / `cfg.working_directory` / `cfg.env_vars` only need to stay valid for the
+        // duration of ghostty_surface_new (it copies what it needs), so build the surface inside the
+        // backing buffers' lifetimes, nesting the optional ones.
         withOptionalCString(command) { cmd in
             if let cmd { cfg.command = cmd }
             withOptionalCString(workingDirectory) { dir in
                 if let dir { cfg.working_directory = dir }
-                self.surface = ghostty_surface_new(app, &cfg)
+                envC.withUnsafeBufferPointer { buf in
+                    if let base = buf.baseAddress, !buf.isEmpty {
+                        cfg.env_vars = UnsafeMutablePointer(mutating: base)
+                        cfg.env_var_count = buf.count
+                    }
+                    self.surface = ghostty_surface_new(app, &cfg)
+                }
             }
         }
         if surface == nil { NSLog("ghostty_surface_new failed") }
@@ -280,6 +305,26 @@ final class GhosttySurfaceView: NSView {
         NSSound.beep()
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
         onBell?()
+    }
+
+    /// PROGRESS_REPORT (OSC 9;4): map libghostty's progress state into the Domain `TerminalBusySignal`
+    /// and hand it to the dock. `progress` is -1 when no percentage was given, else 0–100. An unknown
+    /// state falls back to `.remove` (clear the spinner) rather than wrongly latching it on (#93).
+    func progressReport(_ report: ghostty_action_progress_report_s) {
+        let state: ProgressState
+        switch report.state {
+        case GHOSTTY_PROGRESS_STATE_INDETERMINATE: state = .indeterminate
+        case GHOSTTY_PROGRESS_STATE_SET: state = .set(Int(report.progress))
+        case GHOSTTY_PROGRESS_STATE_ERROR: state = .error
+        case GHOSTTY_PROGRESS_STATE_PAUSE: state = .pause
+        default: state = .remove // GHOSTTY_PROGRESS_STATE_REMOVE and any unknown future state
+        }
+        onActivity?(.progress(state))
+    }
+
+    /// COMMAND_FINISHED (OSC 133): a tracked shell command ended — the busy spinner's stop safety-net.
+    func commandFinished() {
+        onActivity?(.commandFinished)
     }
 
     /// MOUSE_SHAPE: map the shapes we have native cursors for; everything else falls back to arrow.

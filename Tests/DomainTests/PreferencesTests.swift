@@ -201,6 +201,30 @@ final class PreferencesTests: XCTestCase {
         XCTAssertTrue(decoded.terminalBellBadge)
     }
 
+    func testTerminalBusySpinnerDefaultsToOff() {
+        XCTAssertFalse(Preferences.default.terminalBusySpinner,
+                       "the busy spinner is opt-in: signal coverage is limited, so it's off by default (#93)")
+    }
+
+    func testTerminalBusySpinnerRoundTripsThroughCodable() throws {
+        let original = Preferences(terminalBusySpinner: true)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertTrue(decoded.terminalBusySpinner)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutTerminalBusySpinnerFallsBackToOff() throws {
+        // A payload written by a build before the spinner setting existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertFalse(decoded.terminalBusySpinner)
+    }
+
     func testSelectedOrgIdDefaultsToEmpty() {
         XCTAssertEqual(Preferences.default.selectedOrgId, "",
                        "empty means a single repo (or nothing) was the active scope, not an org")

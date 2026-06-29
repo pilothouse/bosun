@@ -97,6 +97,11 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// rings the bell or posts a desktop notification. `true` (opt-out) by default — the active tab
     /// never flags; see `TerminalBellPolicy` (#74).
     public var terminalBellBadge: Bool
+    /// Whether a console tab swaps its static status dot for an animated spinner while the surface
+    /// reports it's busy — an in-flight OSC 9;4 progress report, stopped by completion or a finished
+    /// shell command (see `TerminalBusyPolicy`). `false` (opt-in) by default: coverage is limited to
+    /// tools that emit the explicit signal, so the user turns it on deliberately (#93).
+    public var terminalBusySpinner: Bool
     /// The ids (`Folder.id` uuid strings) of connection-rail folders the user has collapsed, stored
     /// as a sorted array (a `Set` in memory). `nil` means never customized — every folder expanded.
     /// A stored id whose folder no longer exists is simply ignored on render. See #82.
@@ -179,6 +184,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         terminalLeading: Bool = false,
         uiZoomPercent: Int = 100,
         terminalBellBadge: Bool = true,
+        terminalBusySpinner: Bool = false,
         collapsedFolders: [String]? = nil,
         syncConnectionsViaICloud: Bool = false,
         terminalFontFamily: String = "JetBrains Mono",
@@ -221,6 +227,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.terminalLeading = terminalLeading
         self.uiZoomPercent = uiZoomPercent
         self.terminalBellBadge = terminalBellBadge
+        self.terminalBusySpinner = terminalBusySpinner
         self.collapsedFolders = collapsedFolders
         self.syncConnectionsViaICloud = syncConnectionsViaICloud
         self.terminalFontFamily = terminalFontFamily
@@ -273,6 +280,7 @@ public struct Preferences: Sendable, Equatable, Codable {
             terminalLeading: try container.decodeIfPresent(Bool.self, forKey: .terminalLeading) ?? fallback.terminalLeading,
             uiZoomPercent: try container.decodeIfPresent(Int.self, forKey: .uiZoomPercent) ?? fallback.uiZoomPercent,
             terminalBellBadge: try container.decodeIfPresent(Bool.self, forKey: .terminalBellBadge) ?? fallback.terminalBellBadge,
+            terminalBusySpinner: try container.decodeIfPresent(Bool.self, forKey: .terminalBusySpinner) ?? fallback.terminalBusySpinner,
             collapsedFolders: try container.decodeIfPresent([String].self, forKey: .collapsedFolders) ?? fallback.collapsedFolders,
             syncConnectionsViaICloud: try container.decodeIfPresent(Bool.self, forKey: .syncConnectionsViaICloud) ?? fallback.syncConnectionsViaICloud,
             terminalFontFamily: try container.decodeIfPresent(String.self, forKey: .terminalFontFamily) ?? fallback.terminalFontFamily,

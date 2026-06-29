@@ -23,6 +23,16 @@ final class TerminalSession {
     /// background (#74). Drives the amber badge in `tabView`; cleared on focus. Not persisted —
     /// kept out of `TerminalTabState` / `snapshotTabs`.
     var hasBell = false
+    /// Ephemeral busy flag: the surface reported it's working (an in-flight OSC 9;4 progress report),
+    /// cleared when it reports done or its shell command finishes (#93). Drives the spinner-for-dot
+    /// swap in `tabView` when `store.terminalBusySpinner` is on. Live state, *not* cleared on focus
+    /// (unlike `hasBell`) and not persisted.
+    var isBusy = false
+    /// Whether the spinner is actually drawn. Lags `isBusy` by a short debounce so a fast command
+    /// (e.g. `ls`) that flips busy for a few ms via the shell hook (#94) doesn't flicker the tab;
+    /// `busyDebounce` is the pending "show" work item, cancelled if the command finishes first.
+    var busyShown = false
+    var busyDebounce: DispatchWorkItem?
 
     init(view: NSView, title: String, dot: NSColor, origin: TabOrigin, lockTitle: Bool = false) {
         self.view = view
@@ -175,6 +185,9 @@ final class TerminalContainerView: FlippedView {
         guard let app = ghostty.app else { return nil }
         let command: String?
         let workingDirectory: String?
+        // The busy shell hook only applies to a local login shell (a folder tab), not an `ssh`
+        // command — ghostty skips integration for non-shell commands anyway.
+        var env: [(String, String)] = []
         switch conn.kind {
         case let .ssh(host, port, user):
             command = SSHCommand.command(host: host, port: port, user: user, custom: conn.customCommand)
@@ -182,8 +195,10 @@ final class TerminalContainerView: FlippedView {
         case let .localFolder(path):
             command = nil
             workingDirectory = (path as NSString).expandingTildeInPath
+            env = BusyShellIntegration.envVars(enabled: store.terminalBusySpinner, isLocalShell: true)
         }
-        let surface = GhosttySurfaceView(app: app, command: command, workingDirectory: workingDirectory)
+        let surface = GhosttySurfaceView(app: app, command: command,
+                                         workingDirectory: workingDirectory, env: env)
         return wire(TerminalSession(view: surface, title: conn.name, dot: Status.green,
                                     origin: .connection(conn.id.uuidString), lockTitle: true),
                     surface: surface)
@@ -213,7 +228,9 @@ final class TerminalContainerView: FlippedView {
             return TerminalSession(view: TerminalUnavailableView(stage: .application),
                                    title: "terminal", dot: Status.red, origin: .local)
         }
-        let surface = GhosttySurfaceView(app: app)
+        let surface = GhosttySurfaceView(
+            app: app,
+            env: BusyShellIntegration.envVars(enabled: store.terminalBusySpinner, isLocalShell: true))
         return wire(TerminalSession(view: surface, title: "zsh", dot: Status.green, origin: .local),
                     surface: surface)
     }
@@ -241,6 +258,9 @@ final class TerminalContainerView: FlippedView {
         surface.onBell = { [weak self] in
             DispatchQueue.main.async { self?.bellRang(id: id) }
         }
+        surface.onActivity = { [weak self] signal in
+            DispatchQueue.main.async { self?.activityChanged(id: id, signal: signal) }
+        }
         return session
     }
 
@@ -256,6 +276,31 @@ final class TerminalContainerView: FlippedView {
               !session.hasBell else { return }
         session.hasBell = true
         needsLayout = true
+    }
+
+    /// A surface reported an activity signal. Reduce it to a busy/idle decision via the shared
+    /// `TerminalBusyPolicy` rule. Unlike the bell, busy is tracked regardless of the badge setting
+    /// and on the active tab too — the `store.terminalBusySpinner` gate is applied at render time in
+    /// `tabView`. The visible `busyShown` lags `isBusy` by a short debounce: with the shell hook
+    /// (#94) every command flips busy, so a fast `ls` would otherwise flash a spinner. We only show
+    /// it once a command has stayed busy past the delay, and hide it as soon as it finishes.
+    private func activityChanged(id: UUID, signal: TerminalBusySignal) {
+        let busy = TerminalBusyPolicy.isBusy(signal)
+        guard let session = views[id], session.isBusy != busy else { return }
+        session.isBusy = busy
+        session.busyDebounce?.cancel()
+        if busy {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, let s = self.views[id], s.isBusy, !s.busyShown else { return }
+                s.busyShown = true
+                self.needsLayout = true
+            }
+            session.busyDebounce = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+        } else {
+            session.busyDebounce = nil
+            if session.busyShown { session.busyShown = false; needsLayout = true }
+        }
     }
 
     /// Insert a prepared session into the model + map (no relayout, no persist); used to seed the
@@ -626,7 +671,17 @@ final class TerminalContainerView: FlippedView {
         let flagged = session.hasBell && !active
         let underline = BoxView(bg: active ? Status.green : (flagged ? Status.yellow : .clear))
         underline.frame = NSRect(x: 0, y: barH - z(2), width: tw, height: z(2)); tab.addSubview(underline)
-        let d = Dot(flagged ? Status.yellow : session.dot, z(7)); d.frame.origin = NSPoint(x: z(13), y: (barH - z(7)) / 2); tab.addSubview(d)
+        // A busy surface swaps the status dot for a spinner while the user has the setting on (#93).
+        // The spinner is centered on the dot's slot and self-stops when the next strip rebuild
+        // removes it (see `makeSpinner`); `isBusy` is independent of `flagged`, so a busy tab spins
+        // even if it also rang the bell. Without the swap, the existing amber/normal dot is drawn.
+        if store.terminalBusySpinner && session.busyShown {
+            let spinner = makeSpinner(size: z(14))
+            spinner.frame.origin = NSPoint(x: z(13) + (z(7) - z(14)) / 2, y: (barH - z(14)) / 2)
+            tab.addSubview(spinner)
+        } else {
+            let d = Dot(flagged ? Status.yellow : session.dot, z(7)); d.frame.origin = NSPoint(x: z(13), y: (barH - z(7)) / 2); tab.addSubview(d)
+        }
         let nameFrame = NSRect(x: z(28), y: z(8), width: tw - z(28) - z(24), height: z(16))
         if session.id == editingTabId {
             tab.addSubview(renameEditor(session.title, frame: nameFrame, t: t))

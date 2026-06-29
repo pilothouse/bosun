@@ -103,6 +103,14 @@ final class GhosttyApp {
                     }
                     view.onGotoTab?(jump)
                     return true
+                case GHOSTTY_ACTION_PROGRESS_REPORT:
+                    // OSC 9;4: an app reported in-flight progress. Drives the busy-tab spinner (#93).
+                    view.progressReport(action.action.progress_report)
+                    return true
+                case GHOSTTY_ACTION_COMMAND_FINISHED:
+                    // Shell-integration (OSC 133) command end — the spinner's stop safety-net (#93).
+                    view.commandFinished()
+                    return true
                 default:
                     // Unhandled: return false so libghostty keeps its own default behavior.
                     return false

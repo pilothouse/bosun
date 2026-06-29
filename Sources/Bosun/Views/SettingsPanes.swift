@@ -73,18 +73,21 @@ class SettingsPane: NSView {
 final class GeneralPane: SettingsPane {
     private let skipBox: NSButton
     private let bellBox: NSButton
+    private let busyBox: NSButton
     private let iCloudBox: NSButton
     private let iCloudHint: NSTextField
 
     override init(store: Store) {
         skipBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         bellBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        busyBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         iCloudBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         iCloudHint = NSTextField(labelWithString: "Sign in to iCloud to sync connections.")
         super.init(store: store)
 
         configure(skipBox, "Skip repositories without open issues or PRs", #selector(toggleSkip))
         configure(bellBox, "Show an activity badge on background console tabs", #selector(toggleBell))
+        configure(busyBox, "Show a spinner on busy console tabs", #selector(toggleBusy))
         configure(iCloudBox, "Sync connections across your devices via iCloud", #selector(toggleSync))
 
         iCloudHint.font = .systemFont(ofSize: 11)
@@ -100,7 +103,7 @@ final class GeneralPane: SettingsPane {
         iCloudHint.leadingAnchor.constraint(equalTo: iCloudGroup.leadingAnchor, constant: 20).isActive = true
 
         stack.spacing = 12
-        [skipBox, bellBox, iCloudGroup].forEach { stack.addArrangedSubview($0) }
+        [skipBox, bellBox, busyBox, iCloudGroup].forEach { stack.addArrangedSubview($0) }
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -118,6 +121,7 @@ final class GeneralPane: SettingsPane {
     override func refresh() {
         skipBox.state = store.skipEmptyRepos ? .on : .off
         bellBox.state = store.terminalBellBadge ? .on : .off
+        busyBox.state = store.terminalBusySpinner ? .on : .off
         let iCloudAvailable = FileManager.default.ubiquityIdentityToken != nil
         iCloudBox.isEnabled = iCloudAvailable
         iCloudBox.state = (iCloudAvailable && store.syncConnectionsICloud) ? .on : .off
@@ -126,6 +130,7 @@ final class GeneralPane: SettingsPane {
 
     @objc private func toggleSkip(_ sender: NSButton) { store.skipEmptyRepos = sender.state == .on }
     @objc private func toggleBell(_ sender: NSButton) { store.terminalBellBadge = sender.state == .on }
+    @objc private func toggleBusy(_ sender: NSButton) { store.terminalBusySpinner = sender.state == .on }
     @objc private func toggleSync(_ sender: NSButton) { store.syncConnectionsICloud = sender.state == .on }
 }
 

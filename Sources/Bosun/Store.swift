@@ -201,6 +201,11 @@ final class Store {
     /// Global, persisted; the dock reads it in `bellRang` via `TerminalBellPolicy`. On by default.
     var terminalBellBadge = true { didSet { if oldValue != terminalBellBadge { changed() } } }
 
+    /// Whether a busy console tab swaps its status dot for a spinner (#93). Global, persisted; the
+    /// dock gates the swap on it in `tabView` after `TerminalBusyPolicy` flips the session's `isBusy`.
+    /// Off by default — opt-in, since only tools that emit an explicit progress signal drive it.
+    var terminalBusySpinner = false { didSet { if oldValue != terminalBusySpinner { changed() } } }
+
     /// The Ghostty-style terminal options (font, cursor, padding, option-as-alt, notifications) the
     /// Settings TERMINAL pane edits (#67). Mirrors the `uiZoom` precedent: its `didSet` pushes the
     /// value into the `Controls` `terminalConfig` global *even while restoring* (so the seed config a
@@ -419,6 +424,7 @@ final class Store {
             terminalLeading: terminalLeading,
             uiZoomPercent: uiZoom.percent,
             terminalBellBadge: terminalBellBadge,
+            terminalBusySpinner: terminalBusySpinner,
             collapsedFolders: collapsedFolderIds.sorted(),
             syncConnectionsViaICloud: syncConnectionsICloud,
             terminalFontFamily: terminalConfig.fontFamily,
@@ -466,6 +472,7 @@ final class Store {
         terminalFraction = CGFloat(p.terminalFraction)
         terminalLeading = p.terminalLeading
         terminalBellBadge = p.terminalBellBadge
+        terminalBusySpinner = p.terminalBusySpinner
         collapsedFolderIds = Set(p.collapsedFolders ?? [])
         syncConnectionsICloud = p.syncConnectionsViaICloud
         // Like `uiZoom` below, the `didSet` mirrors this into the `Controls` global even while
