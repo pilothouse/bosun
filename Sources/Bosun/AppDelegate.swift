@@ -1,6 +1,7 @@
 import AppKit
 import Application
 import Domain
+import os
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
@@ -125,21 +126,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             do {
                 let user = try await client.currentUser()
-                NSLog("[api-smoke] viewer: \(user.login) (\(user.name ?? "—"))")
+                Log.smoke.debug("viewer: \(user.login, privacy: .public) (\(user.name ?? "—", privacy: .public))")
                 let personal = try await client.viewerRepositories()
-                NSLog("[api-smoke] personal repos: \(personal.count)")
+                Log.smoke.debug("personal repos: \(personal.count)")
                 let orgs = try await client.organizations()
-                NSLog("[api-smoke] organizations: \(orgs.count)")
+                Log.smoke.debug("organizations: \(orgs.count)")
                 for org in orgs.prefix(5) {
                     let top = org.repositories.first.map {
                         "\($0.name) [issues \($0.openIssues), PRs \($0.openPullRequests)]"
                     } ?? "—"
-                    NSLog("[api-smoke]   \(org.login): \(org.repositories.count) repos, e.g. \(top)")
+                    Log.smoke.debug("  \(org.login, privacy: .public): \(org.repositories.count) repos, e.g. \(top, privacy: .public)")
                 }
             } catch let error as GitHubAPIError {
-                NSLog("[api-smoke] GitHubAPIError: \(error)")
+                Log.smoke.error("GitHubAPIError: \(String(describing: error), privacy: .public)")
             } catch {
-                NSLog("[api-smoke] error: \(error)")
+                Log.smoke.error("error: \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -235,9 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The icon is passed explicitly: the panel reads a bundle icon file (absent in a bare executable)
     /// and does NOT fall back to `NSApp.applicationIconImage`, so without this it shows a generic icon.
     @objc private func openAbout() {
-        let info = AppVersion.info(
-            shortVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-            build: Bundle.main.infoDictionary?["CFBundleVersion"] as? String)
+        let info = Self.appVersionInfo()
         // The panel renders "Version <applicationVersion> (<version>)", defaulting each field to the
         // Info.plist's CFBundleShortVersionString / CFBundleVersion. Override BOTH explicitly: feeding
         // the combined string into one field would double-print the build, and an empty `.version`
@@ -294,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyDockIcon() {
         guard let url = Self.bundledResourceURL("AppIcon", withExtension: "png"),
               let mark = NSImage(contentsOf: url) else {
-            NSLog("[icon] AppIcon.png missing from bundle resources")
+            Log.app.notice("AppIcon.png missing from bundle resources")
             return
         }
         let side: CGFloat = 1024
@@ -379,6 +378,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         searchItem.target = self
         editMenu.addItem(searchItem)
         editItem.submenu = editMenu
+
+        // Help ▸ diagnostics affordances (#59). Built in Diagnostics.swift to keep this file lean.
+        installHelpMenu(into: mainMenu)
 
         NSApp.mainMenu = mainMenu
     }

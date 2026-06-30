@@ -1,6 +1,7 @@
 import AppKit
 import CGhostty
 import Domain
+import os
 
 /// Runs `body` with a C-string pointer for `string` (or nil when it's nil), keeping the backing
 /// buffer alive for the duration of the call.
@@ -114,7 +115,7 @@ final class GhosttySurfaceView: NSView {
                 }
             }
         }
-        if surface == nil { NSLog("ghostty_surface_new failed") }
+        if surface == nil { Log.ghostty.error("ghostty_surface_new failed") }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) unsupported") }
@@ -136,7 +137,7 @@ final class GhosttySurfaceView: NSView {
         let ok = action.withCString {
             ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count))
         }
-        if !ok { NSLog("ghostty binding action failed: \(action)") }
+        if !ok { Log.ghostty.error("ghostty binding action failed: \(action, privacy: .public)") }
         GhosttyApp.shared.tick()
     }
 

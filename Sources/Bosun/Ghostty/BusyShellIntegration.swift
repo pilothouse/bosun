@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Opt-in shell hook that makes a console tab's busy spinner cover *plain* foreground commands
 /// (e.g. `sleep`), not just tools that emit OSC 9;4 themselves (#93 covered the latter; #94 this).
@@ -51,7 +52,7 @@ enum BusyShellIntegration {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try zshenv.write(to: dir.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
         } catch {
-            NSLog("BusyShellIntegration: failed to write zsh shim: \(error)")
+            Log.shell.error("failed to write zsh shim: \(String(describing: error), privacy: .public)")
             return nil
         }
         cachedDir = dir.path

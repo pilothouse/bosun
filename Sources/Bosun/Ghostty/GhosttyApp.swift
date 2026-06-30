@@ -1,6 +1,7 @@
 import AppKit
 import CGhostty
 import Domain
+import os
 
 /// Owns the single `ghostty_app_t` for the process and the libghostty runtime
 /// callbacks. Mirrors a trimmed version of Ghostty's own `Ghostty.App`.
@@ -19,7 +20,7 @@ final class GhosttyApp {
     /// shell and surface the error, rather than aborting the process.
     func initializeRuntime() {
         if ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) != GHOSTTY_SUCCESS {
-            NSLog("ghostty_init failed")
+            Log.ghostty.error("ghostty_init failed")
             availability = .unavailable(.runtimeInit)
         }
     }
@@ -34,7 +35,7 @@ final class GhosttyApp {
         // Build the initial config from the default theme's terminal palette. The persisted theme
         // (which may differ) is applied live once it loads, via `applyPalette` (issue #9).
         guard let cfg = makeConfig(Theme.named("operator").terminalPalette) else {
-            NSLog("ghostty_config_new failed")
+            Log.ghostty.error("ghostty_config_new failed")
             availability = .unavailable(.configuration)
             return
         }
@@ -152,7 +153,7 @@ final class GhosttyApp {
         )
 
         guard let app = ghostty_app_new(&runtime, cfg) else {
-            NSLog("ghostty_app_new failed")
+            Log.ghostty.error("ghostty_app_new failed")
             availability = .unavailable(.application)
             return
         }

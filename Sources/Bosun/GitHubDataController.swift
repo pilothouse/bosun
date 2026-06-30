@@ -1,6 +1,7 @@
 import Application
 import Domain
 import Foundation
+import os
 
 /// Thin App-layer controller that drives the live GitHub data into `Store`. It calls the
 /// `GitHubAPI` use case and projects the Domain results onto the presentation structs the views
@@ -752,7 +753,7 @@ final class GitHubDataController {
             case .unauthorized, .rateLimited:
                 throw error   // affects every repo — abort & recover, don't mask it with the fallback
             default:
-                NSLog("[github-data] batched org fetch failed: \(error); falling back to per-repo")
+                Log.githubData.notice("batched org fetch failed: \(String(describing: error), privacy: .public); falling back to per-repo")
                 return try await fetchOrgItemsPerRepo(
                     repoKeys: repoKeys, prStates: prStates, issueStates: issueStates)
             }
@@ -830,7 +831,7 @@ final class GitHubDataController {
                 switch error {
                 case .unauthorized, .rateLimited: throw error   // affects every repo — abort & recover
                 default:
-                    NSLog("[github-data] org item fetch \(key) failed: \(error); using cache")
+                    Log.githubData.notice("org item fetch \(key, privacy: .public) failed: \(String(describing: error), privacy: .public); using cache")
                     return (key, cachedPRs, cachedIssues)
                 }
             }
@@ -918,7 +919,7 @@ final class GitHubDataController {
                 // A detail failure is non-fatal: the lead list item keeps showing, so don't blow
                 // away the whole pane with a global error — just log it.
                 if !(error is CancellationError) {
-                    NSLog("[github-data] detail #\(number) failed: \(error)")
+                    Log.githubData.error("detail #\(number, privacy: .public) failed: \(String(describing: error), privacy: .public)")
                     if isCurrent() { store.isLoadingDetail = false }
                 }
             }
