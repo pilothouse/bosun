@@ -379,6 +379,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(searchItem)
         editItem.submenu = editMenu
 
+        // Terminal ▸ split the focused console tab into panes (#68). Key equivalents fire from the
+        // closed menu before the focused surface sees the keystroke (the same path as the zoom items),
+        // and each action is gated on console focus so ⌘D in a text field doesn't split the terminal.
+        let terminalItem = NSMenuItem()
+        mainMenu.addItem(terminalItem)
+        let terminalMenu = NSMenu(title: "Terminal")
+        addPaneItem(to: terminalMenu, "Split Right", #selector(splitRight), "d", .command)
+        addPaneItem(to: terminalMenu, "Split Down", #selector(splitDown), "d", [.command, .shift])
+        terminalMenu.addItem(.separator())
+        addPaneItem(to: terminalMenu, "Select Next Pane", #selector(selectNextPane), "]", .command)
+        addPaneItem(to: terminalMenu, "Select Previous Pane", #selector(selectPreviousPane), "[", .command)
+        terminalItem.submenu = terminalMenu
+
         // Help ▸ diagnostics affordances (#59). Built in Diagnostics.swift to keep this file lean.
         installHelpMenu(into: mainMenu)
 
@@ -394,4 +407,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.target = self
         menu.addItem(item)
     }
+
+    /// Add one pane-split menu item (#68) targeting self, with an explicit modifier mask so ⇧⌘D reads
+    /// distinctly from ⌘D.
+    private func addPaneItem(to menu: NSMenu, _ title: String, _ action: Selector, _ key: String,
+                            _ mods: NSEvent.ModifierFlags) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.keyEquivalentModifierMask = mods
+        item.target = self
+        menu.addItem(item)
+    }
+
+    // MARK: Pane splits (Terminal menu, #68)
+
+    /// Split / focus-move the focused console pane, but only when the console actually holds focus —
+    /// so the shortcut is inert when the user is typing in a text field (mirrors the contextual zoom).
+    @objc private func splitRight() { guard isConsoleFocused else { return }; root.splitTerminalRight() }
+    @objc private func splitDown() { guard isConsoleFocused else { return }; root.splitTerminalDown() }
+    @objc private func selectNextPane() { guard isConsoleFocused else { return }; root.focusNextPane() }
+    @objc private func selectPreviousPane() { guard isConsoleFocused else { return }; root.focusPreviousPane() }
 }

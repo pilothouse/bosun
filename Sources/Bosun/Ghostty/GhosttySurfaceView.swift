@@ -39,6 +39,11 @@ final class GhosttySurfaceView: NSView {
     /// in `progressReport`/`commandFinished` so the dock stays free of C enums.
     var onActivity: ((TerminalBusySignal) -> Void)?
 
+    /// Invoked when this surface becomes first responder — by a click or programmatically — so the
+    /// dock can mark this pane the focused one in its tab (the focus ring + which pane a split/zoom
+    /// targets + the window title). The single choke point for "this pane now has focus" (#68).
+    var onFocus: (() -> Void)?
+
     /// Latest shell/OSC-reported title for this surface; the dock reads it to label the tab.
     private(set) var title: String?
 
@@ -193,6 +198,7 @@ final class GhosttySurfaceView: NSView {
 
     override func becomeFirstResponder() -> Bool {
         if let surface { ghostty_surface_set_focus(surface, true) }
+        onFocus?()
         return super.becomeFirstResponder()
     }
 

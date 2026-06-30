@@ -6,7 +6,8 @@ import Domain
 /// hit-zone that sits above *both* panes, so the resize target is centered on the seam rather than
 /// carved off one pane and a press from either side starts a drag (#84). `onDrag` reports the signed
 /// move along the split axis (window points), which the container turns into a height or a fraction.
-final class DragHandle: FlippedView {
+/// Subclassed by `PaneDividerHandle` (#68) to carry a split-node path for the in-tab pane dividers.
+class DragHandle: FlippedView {
     /// Which edge this grip lives on — set by the container's `layout()` from `store.splitAxis`.
     var axis: Domain.SplitAxis = .vertical
     var onBegin: (() -> Void)?
@@ -558,6 +559,14 @@ final class BosunView: NSView {
     func zoomTerminalIn() { center.terminal.zoomActiveTerminalIn() }
     func zoomTerminalOut() { center.terminal.zoomActiveTerminalOut() }
     func zoomTerminalReset() { center.terminal.resetActiveTerminalZoom() }
+
+    /// Split the focused terminal pane into panes (#68), routed from the menu when the console is
+    /// focused. ⌘D lays them side by side (Split Right), ⇧⌘D stacks them (Split Down); ⌘] / ⌘[ move
+    /// focus between panes.
+    func splitTerminalRight() { center.terminal.splitFocusedPane(.horizontal) }
+    func splitTerminalDown() { center.terminal.splitFocusedPane(.vertical) }
+    func focusNextPane() { center.terminal.focusNeighborPane(.next) }
+    func focusPreviousPane() { center.terminal.focusNeighborPane(.previous) }
 
     override func layout() {
         super.layout()

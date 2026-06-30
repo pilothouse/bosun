@@ -206,6 +206,16 @@ final class Store {
     /// Off by default — opt-in, since only tools that emit an explicit progress signal drive it.
     var terminalBusySpinner = false { didSet { if oldValue != terminalBusySpinner { changed() } } }
 
+    /// Whether the focused pane of a split terminal tab is outlined with a green border (#68). Global,
+    /// persisted; the dock reads it in `layoutFocusRing`. On by default — the ring only appears once a
+    /// tab is split, and a single-pane tab never shows it.
+    var terminalFocusRing = true { didSet { if oldValue != terminalFocusRing { changed() } } }
+
+    /// Whether the unfocused panes of a split tab are dimmed to emphasize the focused one, like
+    /// Ghostty's `unfocused-split-opacity` (#68). Global, persisted; the dock applies it in
+    /// `layoutPanes`. On by default; only takes effect once a tab is split.
+    var terminalDimUnfocused = true { didSet { if oldValue != terminalDimUnfocused { changed() } } }
+
     /// The Ghostty-style terminal options (font, cursor, padding, option-as-alt, notifications) the
     /// Settings TERMINAL pane edits (#67). Mirrors the `uiZoom` precedent: its `didSet` pushes the
     /// value into the `Controls` `terminalConfig` global *even while restoring* (so the seed config a
@@ -257,8 +267,14 @@ final class Store {
     /// it snapshots them here on every tab change and restores them at launch. Persisted, but not
     /// part of `notify` — the dock manages its own views, so a write here must not rebuild the UI.
     var terminalTabs: [Domain.TerminalTabState] = []
+    /// The per-tab pane split layout (#68): one `SplitNode` tree per open tab, in tab order, with the
+    /// live surface ids mapped to `TerminalTabState`. The source of truth for restoring splits; the
+    /// dock also keeps `terminalTabs` populated with one representative (focused) leaf per tab so an
+    /// older build still reopens the tabs un-split. Not part of `notify` (the dock owns its views).
+    var terminalTabTrees: [Domain.SplitNode<Domain.TerminalTabState>] = []
     /// The active tab keyed by its saved `TerminalTabState.id` (not a positional index), so restore
-    /// survives an earlier tab being dropped. `nil` until the dock first snapshots.
+    /// survives an earlier tab being dropped. With panes this is the *focused pane's* leaf id, which
+    /// also identifies its tab (the tree whose leaves contain it). `nil` until the dock first snapshots.
     var activeTerminalTabId: String?
 
     /// Persistence seam for UI preferences (loaded at launch, saved on change).
@@ -415,6 +431,7 @@ final class Store {
             issueStates: issueStates.map(\.rawValue).sorted(),
             openTabs: terminalTabs.isEmpty ? nil : terminalTabs,
             activeTabId: activeTerminalTabId,
+            openTabTrees: terminalTabTrees.isEmpty ? nil : terminalTabTrees,
             prChecksCollapsed: prChecksCollapsed,
             prFilesCollapsed: prFilesCollapsed,
             prCommentsCollapsed: prCommentsCollapsed,
@@ -425,6 +442,8 @@ final class Store {
             uiZoomPercent: uiZoom.percent,
             terminalBellBadge: terminalBellBadge,
             terminalBusySpinner: terminalBusySpinner,
+            terminalFocusRing: terminalFocusRing,
+            terminalDimUnfocused: terminalDimUnfocused,
             collapsedFolders: collapsedFolderIds.sorted(),
             syncConnectionsViaICloud: syncConnectionsICloud,
             terminalFontFamily: terminalConfig.fontFamily,
@@ -463,6 +482,7 @@ final class Store {
         prStates = Store.states(from: p.prStates, default: [.open])
         issueStates = Store.states(from: p.issueStates, default: [.open]).subtracting([.merged])
         terminalTabs = p.openTabs ?? []
+        terminalTabTrees = p.openTabTrees ?? []
         activeTerminalTabId = p.activeTabId
         prChecksCollapsed = p.prChecksCollapsed
         prFilesCollapsed = p.prFilesCollapsed
@@ -473,6 +493,8 @@ final class Store {
         terminalLeading = p.terminalLeading
         terminalBellBadge = p.terminalBellBadge
         terminalBusySpinner = p.terminalBusySpinner
+        terminalFocusRing = p.terminalFocusRing
+        terminalDimUnfocused = p.terminalDimUnfocused
         collapsedFolderIds = Set(p.collapsedFolders ?? [])
         syncConnectionsICloud = p.syncConnectionsViaICloud
         // Like `uiZoom` below, the `didSet` mirrors this into the `Controls` global even while

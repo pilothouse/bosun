@@ -52,20 +52,66 @@ final class TerminalSession {
     var surfaceView: GhosttySurfaceView? { view as? GhosttySurfaceView }
 }
 
-/// Terminal dock: live tab strip + the active libghostty surface. Order and active selection are
-/// delegated to the pure `TerminalTabs` model (unit-tested in Domain); this view only owns the
-/// id→surface mapping and the AppKit chrome. The detail↔terminal resize grip is owned by the split
-/// container (`CenterColumnView`), not this view (#84). Closing the last tab opens a fresh local one
-/// so the dock is never empty and `exit` never quits the app.
+/// A resize grip between two panes of a split (#68): a `DragHandle` that also carries the split
+/// node's `path` and along-axis `extent`, so the container's drag closures (set once) can turn the
+/// gesture into a `SplitNode.setFraction` on the right node. Reuses `DragHandle`'s modal-loop drag,
+/// which survives the mid-gesture relayout that re-positions this same handle each frame.
+final class PaneDividerHandle: DragHandle {
+    var path: [Int] = []
+    var extent: Double = 1
+}
+
+/// A click-through overlay that outlines the focused pane when a tab is split (#68). `hitTest`
+/// returns nil so it never steals clicks from the surface it sits over; the border is drawn on its
+/// own layer (not the pane's `CAMetalLayer`, which a layer border would fight).
+final class PaneFocusRingView: NSView {
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Terminal dock: live tab strip + the active tab's panes. A tab is a recursive `SplitNode` tree of
+/// live libghostty surfaces (#68); order and active *tab* selection are delegated to the pure
+/// `TerminalTabs` model (unit-tested in Domain), the per-tab pane layout/navigation to the pure
+/// `SplitNode` (also in Domain). This view owns the pane(surface)→session map, the tab→tree map, and
+/// the AppKit chrome (strip, dividers, focus ring). The detail↔terminal resize grip is a *separate*
+/// split owned by `CenterColumnView` (#84). Closing the last pane of the last tab opens a fresh local
+/// one so the dock is never empty and `exit` never quits the app.
 final class TerminalContainerView: FlippedView {
     let store: Store
     private let ghostty: GhosttyApp
     private let available: Bool
 
-    /// Ordering + which tab is active — the tested rule lives in Domain.
+    /// Tab ordering + which *tab* is active — the tested rule lives in Domain. `tabs.ids` are tab ids,
+    /// distinct from pane (surface) ids since #68 (one tab holds a tree of panes).
     private var tabs = TerminalTabs<UUID>()
-    /// id → session (the surface view + label). Kept in sync with `tabs.ids`.
+    /// pane (surface) id → session (the surface view + label). One entry per pane across *all* tabs.
     private var views: [UUID: TerminalSession] = [:]
+    /// tab id → its pane split layout; leaves are pane ids in `views`. The pure tree lives in Domain.
+    private var trees: [UUID: SplitNode<UUID>] = [:]
+    /// tab id → the focused pane id within that tab (drives the focus ring, the window title, and
+    /// which pane a split / pane-zoom targets).
+    private var focusedPane: [UUID: UUID] = [:]
+    /// pane id → its owning tab id (the reverse of the trees' leaves), for routing per-surface
+    /// callbacks (bell/title/close/focus) back to the right tab.
+    private var paneToTab: [UUID: UUID] = [:]
+
+    /// Resize grips for the active tab's split dividers, pooled by divider path so the one being
+    /// dragged persists across the per-frame relayout. The single-overlay focus ring is reused too.
+    private var dividerHandles: [String: PaneDividerHandle] = [:]
+    private let focusRing = PaneFocusRingView()
+
+    /// Live divider-drag state (one gesture at a time), captured on `onBegin` and held for the whole
+    /// gesture so the direction can't flip mid-drag (#65, applied per pane node).
+    private var dragTabId: UUID?
+    private var dragPath: [Int] = []
+    private var dragStartFraction: Double = 0.5
+    private var dragExtent: Double = 1
+    private var dragSign: Double = 1
+    private var dragFloor: Double = SplitLayout.minPane
+
+    /// True while `restoreTabs` rebuilds the dock, so the focus/relayout it does mid-rebuild doesn't
+    /// persist a half-built snapshot — restore re-persists once at the end.
+    private var isRestoring = false
 
     /// Inline-rename state (#30). Lives on the container, not the tab row, because the strip is
     /// rebuilt on every `layout()` — the row that received the first click no longer exists by the
@@ -120,6 +166,9 @@ final class TerminalContainerView: FlippedView {
         self.available = ghostty.availability.isReady
         super.init(frame: .zero)
         wantsLayer = true
+        focusRing.wantsLayer = true
+        focusRing.layer?.backgroundColor = NSColor.clear.cgColor
+        focusRing.isHidden = true
 
         // Seed the dock with one session. When libghostty is down, that's the error placeholder.
         // Persisted tabs (if any) replace this seed once connections load, via `restoreTabs`.
@@ -152,13 +201,26 @@ final class TerminalContainerView: FlippedView {
         ghostty.tick()   // nudge a repaint with the new colors/size
     }
 
+    /// The focused pane of the active tab — what keystrokes, the console zoom, and a split target.
     var activeSurfaceView: GhosttySurfaceView? {
-        tabs.activeID.flatMap { views[$0]?.surfaceView }
+        focusedPaneId.flatMap { views[$0]?.surfaceView }
     }
 
-    /// The active tab's current label, for the macOS window title (#73). `nil` when the dock is empty.
+    /// The active tab's current label (its focused pane's title), for the macOS window title (#73).
     var activeTabTitle: String? {
-        tabs.activeID.flatMap { views[$0]?.title }
+        focusedPaneId.flatMap { views[$0]?.title }
+    }
+
+    /// The focused pane id of the active tab, falling back to the tree's first leaf.
+    private var focusedPaneId: UUID? {
+        guard let tab = tabs.activeID else { return nil }
+        return focusedPane[tab] ?? trees[tab]?.firstLeaf
+    }
+
+    /// The representative session shown for a tab in the strip (title/dot): its focused pane.
+    private func representativeSession(_ tabId: UUID) -> TerminalSession? {
+        guard let pane = focusedPane[tabId] ?? trees[tabId]?.firstLeaf else { return nil }
+        return views[pane]
     }
 
     /// Console-only font zoom (⌥⌘+ / ⌥⌘− / ⌥⌘0): adjust just the focused terminal's font via
@@ -168,7 +230,34 @@ final class TerminalContainerView: FlippedView {
     func zoomActiveTerminalOut() { activeSurfaceView?.runBindingAction("decrease_font_size:1") }
     func resetActiveTerminalZoom() { activeSurfaceView?.runBindingAction("reset_font_size") }
 
-    private var orderedSessions: [TerminalSession] { tabs.ids.compactMap { views[$0] } }
+    // MARK: Pane splits (#68)
+
+    /// Split the focused pane of the active tab into two, with a fresh local shell as the new pane,
+    /// and focus it. `.horizontal` lays them side by side (⌘D / Split Right), `.vertical` stacks them
+    /// (⇧⌘D / Split Down). A no-op when libghostty is down.
+    func splitFocusedPane(_ axis: SplitAxis) {
+        guard available, let tabId = tabs.activeID, let tree = trees[tabId],
+              let focused = focusedPane[tabId] ?? trees[tabId]?.firstLeaf else { return }
+        let session = makeLocalSession()
+        guard session.surfaceView != nil else { return }   // libghostty down → no live surface
+        views[session.id] = session
+        paneToTab[session.id] = tabId
+        trees[tabId] = tree.insertSplit(focused: focused, axis: axis, newLeaf: session.id, newLeafTrailing: true)
+        focusedPane[tabId] = session.id
+        refresh()
+        focusPane(session.id)
+        snapshotTabs()
+    }
+
+    /// Move focus to the next/previous pane of the active tab (⌘] / ⌘[), cycling and wrapping.
+    func focusNeighborPane(_ direction: PaneFocusDirection) {
+        guard let tabId = tabs.activeID, let tree = trees[tabId],
+              let focused = focusedPane[tabId], let neighbor = tree.focusNeighbor(of: focused, direction) else { return }
+        focusedPane[tabId] = neighbor
+        refresh()
+        focusPane(neighbor)
+        snapshotTabs()
+    }
 
     // MARK: Tab lifecycle (public triggers: + button, tab clicks, native ghostty keybindings)
 
@@ -221,13 +310,6 @@ final class TerminalContainerView: FlippedView {
         snapshotTabs()
     }
 
-    /// Close a specific tab (its × button or a native close-tab keybinding), confirming first when
-    /// a foreground process is still running.
-    func requestCloseTab(id: UUID) {
-        let alive = views[id]?.surfaceView?.needsConfirmQuit ?? false
-        requestClose(id: id, processAlive: alive)
-    }
-
     // MARK: Session plumbing
 
     private func makeLocalSession() -> TerminalSession {
@@ -248,7 +330,7 @@ final class TerminalContainerView: FlippedView {
     private func wire(_ session: TerminalSession, surface: GhosttySurfaceView) -> TerminalSession {
         let id = session.id
         surface.onChildExit = { [weak self] processAlive in
-            DispatchQueue.main.async { self?.requestClose(id: id, processAlive: processAlive) }
+            DispatchQueue.main.async { self?.requestClosePane(id: id, processAlive: processAlive) }
         }
         surface.onTitleChange = { [weak self] title in
             self?.updateTitle(id: id, title)
@@ -257,7 +339,9 @@ final class TerminalContainerView: FlippedView {
             DispatchQueue.main.async { self?.openLocalTab() }
         }
         surface.onCloseTab = { [weak self] in
-            DispatchQueue.main.async { self?.requestCloseTab(id: id) }
+            // ghostty's close-tab keybind (⌘W) acts on the focused *pane*: close it, and only when
+            // it's the tab's last pane does the tab itself close (#68).
+            DispatchQueue.main.async { self?.requestClosePane(id: id, processAlive: surface.needsConfirmQuit) }
         }
         surface.onGotoTab = { [weak self] jump in
             DispatchQueue.main.async { self?.gotoTab(jump) }
@@ -268,6 +352,9 @@ final class TerminalContainerView: FlippedView {
         surface.onActivity = { [weak self] signal in
             DispatchQueue.main.async { self?.activityChanged(id: id, signal: signal) }
         }
+        surface.onFocus = { [weak self] in
+            self?.paneFocused(id: id)
+        }
         return session
     }
 
@@ -277,12 +364,41 @@ final class TerminalContainerView: FlippedView {
     /// strip repaint; `needsLayout` (not `refresh()`) keeps it to the strip — no parent relayout
     /// or window retitle.
     private func bellRang(id: UUID) {
-        guard let session = views[id],
-              TerminalBellPolicy.shouldFlag(isActiveTab: id == tabs.activeID,
+        guard let session = views[id], let tabId = paneToTab[id],
+              TerminalBellPolicy.shouldFlag(isActiveTab: tabId == tabs.activeID,
                                             enabled: store.terminalBellBadge),
               !session.hasBell else { return }
         session.hasBell = true
         needsLayout = true
+    }
+
+    /// A pane became first responder (a click, or `focusPane`). Record it as its tab's focused pane,
+    /// move the ring / window title when it's the active tab, and persist the new focus. The single
+    /// choke point for "this pane has focus", reached via `GhosttySurfaceView.onFocus` (#68).
+    private func paneFocused(id: UUID) {
+        guard let tabId = paneToTab[id] else { return }
+        let changed = focusedPane[tabId] != id
+        focusedPane[tabId] = id
+        guard tabId == tabs.activeID else { return }
+        clearBells(inTab: tabId)
+        if changed {
+            needsLayout = true            // move the focus ring + relabel the strip's representative
+            onActiveTitleChange?()        // the focused pane is the window/title-bar label
+            if !isRestoring { snapshotTabs() }
+        }
+    }
+
+    /// Clear the activity badge on every pane of a tab — the tab is now foreground, so the attention
+    /// it asked for is satisfied (#74). Returns whether anything changed.
+    @discardableResult
+    private func clearBells(inTab tabId: UUID) -> Bool {
+        var changed = false
+        for paneId in trees[tabId]?.leafIDs ?? [] where views[paneId]?.hasBell == true {
+            views[paneId]?.hasBell = false
+            changed = true
+        }
+        if changed { needsLayout = true }
+        return changed
     }
 
     /// How long a tab may stay busy with no further signal before the backstop force-clears it (#94).
@@ -348,11 +464,15 @@ final class TerminalContainerView: FlippedView {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.busyBackstop, execute: work)
     }
 
-    /// Insert a prepared session into the model + map (no relayout, no persist); used to seed the
-    /// first tab and to rebuild tabs during restore.
+    /// Insert a prepared session as a brand-new single-pane tab (no relayout, no persist); used to
+    /// seed the first tab, to open a new tab, and for the never-empty-dock fallback.
     private func register(_ session: TerminalSession) {
+        let tabId = UUID()
         views[session.id] = session
-        tabs.open(session.id)
+        paneToTab[session.id] = tabId
+        trees[tabId] = .leaf(session.id)
+        focusedPane[tabId] = session.id
+        tabs.open(tabId)
     }
 
     // MARK: Persistence (reopen tabs on relaunch)
@@ -361,18 +481,34 @@ final class TerminalContainerView: FlippedView {
     /// tab mutation; `register` deliberately doesn't, so the launch seed never overwrites the saved
     /// set before `restoreTabs` runs.
     private func snapshotTabs() {
-        guard available else { return }
-        store.terminalTabs = orderedSessions.map { session in
-            let id = session.id.uuidString
-            switch session.origin {
-            case .local: return TerminalTabState(id: id, kind: .local, title: session.title,
-                                                 locked: session.lockTitle)
-            case .connection(let connId): return TerminalTabState(id: id, kind: .connection(id: connId),
-                                                                  title: session.title, locked: session.lockTitle)
-            }
+        guard available, !isRestoring else { return }
+        var treeStates: [SplitNode<TerminalTabState>] = []
+        var representatives: [TerminalTabState] = []
+        for tabId in tabs.ids {
+            guard let tree = trees[tabId] else { continue }
+            treeStates.append(tree.mapLeaves { paneId in self.tabState(forPane: paneId) })
+            // One representative (focused) leaf per tab so an older build still reopens the tabs.
+            let repPane = focusedPane[tabId] ?? tree.firstLeaf
+            representatives.append(tabState(forPane: repPane))
         }
-        store.activeTerminalTabId = tabs.activeID.map { $0.uuidString }
+        store.terminalTabTrees = treeStates
+        store.terminalTabs = representatives
+        // The active pane (and so the active tab) keyed by its leaf id.
+        store.activeTerminalTabId = tabs.activeID.flatMap { focusedPane[$0]?.uuidString }
         store.persist()
+    }
+
+    /// The persisted shape of one pane (`TerminalTabState`) — local vs. connection, its title + lock.
+    private func tabState(forPane paneId: UUID) -> TerminalTabState {
+        let session = views[paneId]
+        let id = paneId.uuidString
+        switch session?.origin ?? .local {
+        case .local:
+            return TerminalTabState(id: id, kind: .local, title: session?.title ?? "", locked: session?.lockTitle ?? false)
+        case .connection(let connId):
+            return TerminalTabState(id: id, kind: .connection(id: connId),
+                                    title: session?.title ?? "", locked: session?.lockTitle ?? false)
+        }
     }
 
     /// Reopen the saved tabs at launch (called once connections are loaded). Local shells are
@@ -384,38 +520,59 @@ final class TerminalContainerView: FlippedView {
     /// back to a single local shell so the dock is never empty.
     func restoreTabs(connections: [Domain.Connection]) {
         guard available else { return }
-        let states = store.terminalTabs
-        guard !states.isEmpty else { snapshotTabs(); return }   // nothing saved → persist the seed
+        // Prefer the per-tab pane trees (#68); fall back to the legacy flat list (one un-split tab
+        // per entry) from a pre-#68 build. Nothing saved → persist the seed.
+        let savedTrees = store.terminalTabTrees
+        let savedFlat = store.terminalTabs
+        guard !savedTrees.isEmpty || !savedFlat.isEmpty else { snapshotTabs(); return }
+        let persisted = savedTrees.isEmpty ? savedFlat.map { SplitNode.leaf($0) } : savedTrees
 
-        // Drop the seeded session(s) and rebuild from the saved order.
+        isRestoring = true
+
+        // Drop the seeded session(s) and rebuild from the saved layout.
         for session in views.values { session.view.removeFromSuperview() }
-        views.removeAll()
+        views.removeAll(); paneToTab.removeAll(); trees.removeAll(); focusedPane.removeAll()
         tabs = TerminalTabs<UUID>()
 
         let savedActiveId = store.activeTerminalTabId
-        var activeSessionId: UUID?
-        for state in states {
-            let session: TerminalSession?
-            switch state.kind {
-            case .local:
-                session = makeLocalSession()
-            case .connection(let id):
-                session = connections.first(where: { $0.id.uuidString == id }).flatMap(makeConnectionSession)
-            }
-            guard let session else { continue }   // connection was deleted
-            if !state.title.isEmpty { session.title = state.title }   // restore a renamed tab's name
-            if case .local = state.kind { session.lockTitle = state.locked }   // connection tabs stay locked
-            register(session)
-            if state.id == savedActiveId { activeSessionId = session.id }
+        var activeTab: UUID?
+        let connById = Dictionary(connections.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
+
+        for stateTree in persisted {
+            let tabId = UUID()
+            var activePane: UUID?
+            // Rebuild a live session per leaf; a leaf whose connection was deleted maps to nil and is
+            // pruned by `compacted`, collapsing its sibling up (#68).
+            let liveTree = stateTree.mapLeaves { state -> UUID? in
+                let session: TerminalSession?
+                switch state.kind {
+                case .local: session = makeLocalSession()
+                case .connection(let id): session = connById[id].flatMap(makeConnectionSession)
+                }
+                guard let session else { return nil }   // connection was deleted
+                if !state.title.isEmpty { session.title = state.title }
+                if case .local = state.kind { session.lockTitle = state.locked }   // connection tabs stay locked
+                views[session.id] = session
+                paneToTab[session.id] = tabId
+                if state.id == savedActiveId { activePane = session.id }
+                return session.id
+            }.compacted()
+            guard let liveTree else { continue }   // every pane's connection was deleted
+            trees[tabId] = liveTree
+            let focus = activePane.flatMap { liveTree.contains($0) ? $0 : nil } ?? liveTree.firstLeaf
+            focusedPane[tabId] = focus
+            tabs.open(tabId)
+            if activePane != nil { activeTab = tabId }
         }
         if tabs.isEmpty { register(makeLocalSession()) }   // every saved connection was deleted
 
         // Re-select the tab that was active; if it was dropped, fall back to the first surviving tab.
-        if let activeSessionId { tabs.select(activeSessionId) }
+        if let activeTab { tabs.select(activeTab) }
         else if let first = tabs.ids.first { tabs.select(first) }
+        isRestoring = false
         refresh()
         focusActive()
-        snapshotTabs()   // re-persist with fresh session ids, dropping any tabs that couldn't be resolved
+        snapshotTabs()   // re-persist with fresh session ids, dropping any panes that couldn't be resolved
     }
 
     private func add(_ session: TerminalSession) {
@@ -431,29 +588,70 @@ final class TerminalContainerView: FlippedView {
                                                           locked: session.lockTitle) else { return }
         session.title = resolved
         needsLayout = true   // relabel the tab strip; no surface churn
-        if id == tabs.activeID { onActiveTitleChange?() }   // visible tab's server title changed → retitle window
+        // Only the active tab's *focused* pane drives the window/title-bar label.
+        if let tabId = paneToTab[id], tabId == tabs.activeID, focusedPane[tabId] == id { onActiveTitleChange?() }
     }
 
-    private func requestClose(id: UUID, processAlive: Bool) {
-        guard views[id] != nil else { return }   // already gone
-        if TerminalClosePolicy.shouldConfirmClose(processAlive: processAlive) {
-            let alert = NSAlert()
-            alert.messageText = "Close this terminal?"
-            alert.informativeText = "A process is still running."
-            alert.addButton(withTitle: "Close")
-            alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
-        closeSession(id: id)
+    // MARK: Closing panes / tabs (#68)
+
+    /// Close one pane (its ghostty ⌘W, or a shell exit). When it's the tab's last pane, the tab
+    /// closes too. Confirms first when the pane's process is still running.
+    private func requestClosePane(id paneId: UUID, processAlive: Bool) {
+        guard views[paneId] != nil else { return }   // already gone
+        if TerminalClosePolicy.shouldConfirmClose(processAlive: processAlive),
+           !confirmClose(message: "Close this terminal?") { return }
+        closePane(id: paneId)
     }
 
-    private func closeSession(id: UUID) {
-        guard let closing = views[id] else { return }
-        closing.view.removeFromSuperview()   // drops the last strong ref → deinit frees the surface
-        views[id] = nil
-        tabs.close(id)                        // picks the next active per the tested rule
+    /// Close a whole tab (its × button). Confirms when *any* of its panes has a running process.
+    func requestCloseTab(id tabId: UUID) {
+        guard trees[tabId] != nil else { return }
+        let alive = (trees[tabId]?.leafIDs ?? []).contains { views[$0]?.surfaceView?.needsConfirmQuit == true }
+        if TerminalClosePolicy.shouldConfirmClose(processAlive: alive),
+           !confirmClose(message: "Close this terminal tab?") { return }
+        closeTab(tabId)
+    }
 
-        // Never leave the dock empty (and so never let the last `exit` quit the app).
+    private func confirmClose(message: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = "A process is still running."
+        alert.addButton(withTitle: "Close")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func freePane(_ paneId: UUID) {
+        views[paneId]?.view.removeFromSuperview()   // drops the last strong ref → deinit frees the surface
+        views[paneId] = nil
+        paneToTab[paneId] = nil
+    }
+
+    private func closePane(id paneId: UUID) {
+        guard let tabId = paneToTab[paneId], let tree = trees[tabId] else { return }
+        let wasFocused = (focusedPane[tabId] ?? tree.firstLeaf) == paneId
+        let neighbor = tree.focusNeighbor(of: paneId, .next)   // a survivor, or nil if it was the only pane
+        freePane(paneId)
+        guard let newTree = tree.remove(paneId) else { finishCloseTab(tabId); return }   // last pane → close tab
+        trees[tabId] = newTree
+        let focus = wasFocused ? (neighbor ?? newTree.firstLeaf) : (focusedPane[tabId] ?? newTree.firstLeaf)
+        focusedPane[tabId] = focus
+        refresh()
+        focusPane(focus)
+        snapshotTabs()
+    }
+
+    private func closeTab(_ tabId: UUID) {
+        for paneId in trees[tabId]?.leafIDs ?? [] { freePane(paneId) }
+        finishCloseTab(tabId)
+    }
+
+    /// Drop a tab's remaining state and re-activate/refresh. Never leaves the dock empty (so the last
+    /// `exit` never quits the app).
+    private func finishCloseTab(_ tabId: UUID) {
+        trees[tabId] = nil
+        focusedPane[tabId] = nil
+        tabs.close(tabId)   // picks the next active per the tested rule
         if tabs.isEmpty, available {
             add(makeLocalSession())   // `add` snapshots
             return
@@ -463,9 +661,9 @@ final class TerminalContainerView: FlippedView {
         snapshotTabs()
     }
 
-    private func selectSession(id: UUID) {
-        guard tabs.activeID != id else { return }
-        tabs.select(id)
+    private func selectTab(_ tabId: UUID) {
+        guard tabs.activeID != tabId else { return }
+        tabs.select(tabId)
         refresh()
         focusActive()
         snapshotTabs()
@@ -484,16 +682,16 @@ final class TerminalContainerView: FlippedView {
         } else {
             lastTabClickId = id
             lastTabClickAt = now
-            selectSession(id: id)
+            selectTab(id)
         }
     }
 
     /// Enter edit mode on a tab: rebuild the strip so `tabView` swaps that tab's label for an
     /// editable field (focused + select-all happens once it's in the view tree).
-    private func beginRename(id: UUID) {
-        guard views[id] != nil else { return }
+    private func beginRename(id tabId: UUID) {
+        guard representativeSession(tabId) != nil else { return }
         lastTabClickId = nil
-        editingTabId = id
+        editingTabId = tabId
         needsLayout = true
     }
 
@@ -501,7 +699,7 @@ final class TerminalContainerView: FlippedView {
     /// rebuild. Idempotent — clears edit state first, so the end-editing notification that follows
     /// the rebuild is a no-op (no double-commit between Return/Esc and focus-loss).
     private func commitRename() {
-        guard let id = editingTabId, let session = views[id] else { return }
+        guard let id = editingTabId, let session = representativeSession(id) else { return }
         let draft = editField?.stringValue ?? ""
         editingTabId = nil
         editField = nil
@@ -523,9 +721,19 @@ final class TerminalContainerView: FlippedView {
         focusActive()
     }
 
+    /// Focus the active tab's focused pane (the common path for open/close/select/goto/restore/rename).
     private func focusActive() {
-        guard let view = activeSurfaceView else { return }
-        // On the open-tab (#75) and restore paths the active surface is attached to the window only
+        guard let pane = focusedPaneId else { return }
+        focusPane(pane)
+    }
+
+    /// Make `paneId`'s surface first responder, recording it as its tab's focused pane and clearing
+    /// the tab's activity badge (#74). Used for both the active-tab focus paths and the split / focus-
+    /// move actions (#68).
+    private func focusPane(_ paneId: UUID) {
+        guard let view = views[paneId]?.surfaceView else { return }
+        if let tabId = paneToTab[paneId] { focusedPane[tabId] = paneId }
+        // On the open-tab (#75), split, and restore paths the surface is attached to the window only
         // inside layout() (deferred to the display cycle), so it isn't in the window yet when we focus
         // it — and makeFirstResponder on an unattached view is a no-op, leaving the window with no
         // first responder, so the first keystroke beeps ("can't type until you click"). refresh() just
@@ -535,12 +743,9 @@ final class TerminalContainerView: FlippedView {
         // surface still wouldn't be installed.
         layoutSubtreeIfNeeded()
         window?.makeFirstResponder(view)
-        // The single choke point every focus path funnels through, so clearing the badge here
-        // covers click / ⌘-number / next-prev / open / close / restore / rename (#74).
-        if let id = tabs.activeID, let session = views[id], session.hasBell {
-            session.hasBell = false
-            needsLayout = true
-        }
+        // The single choke point every focus path funnels through, so clearing the tab's badge here
+        // covers click / ⌘-number / next-prev / open / close / restore / rename / split (#74).
+        if let tabId = paneToTab[paneId] { clearBells(inTab: tabId) }
     }
 
     private func refresh() {
@@ -561,32 +766,138 @@ final class TerminalContainerView: FlippedView {
         // below removes the old bar (and its scroll view) — mirrors `RepoPanelView`'s `priorListOffset`.
         let priorTabOffset = tabScroll?.contentView.bounds.origin
 
-        // Keep every session view; rebuild only the chrome (strip, status). The resize grip is no
-        // longer a child here — it lives on the split container so it can straddle the seam (#84).
-        let keep = Set(views.values.map { ObjectIdentifier($0.view) })
+        // Keep every pane surface (and the pooled divider grips + focus ring); rebuild only the chrome
+        // (strip, status). The detail↔terminal resize grip lives on the split container (#84); the
+        // in-tab pane dividers are managed separately in `layoutPanes`.
+        var keep = Set(views.values.map { ObjectIdentifier($0.view) })
+        keep.insert(ObjectIdentifier(focusRing))
+        for handle in dividerHandles.values { keep.insert(ObjectIdentifier(handle)) }
         subviews.filter { !keep.contains(ObjectIdentifier($0)) }.forEach { $0.removeFromSuperview() }
         for session in views.values where session.view.superview !== self {
             addSubview(session.view)   // the tab bar is re-added every layout, so it stays above the surfaces
         }
 
-        // The dock fills its whole frame: tab bar across the top, active surface below. The detail↔
-        // terminal divider is owned and drawn by `CenterColumnView` (#84), not carved off here.
+        // The dock fills its whole frame: tab bar across the top, the active tab's pane tree below. The
+        // detail↔terminal divider is owned and drawn by `CenterColumnView` (#84), not carved off here.
         let content = NSRect(x: 0, y: 0, width: w, height: h)
-
         let barH: CGFloat = z(32)
+        let paneArea = NSRect(x: 0, y: content.minY + barH, width: w, height: max(0, content.maxY - content.minY - barH))
+        layoutPanes(in: paneArea)
         layoutTabBar(x: content.minX, w: content.width, y: content.minY, barH: barH, priorOffset: priorTabOffset)
+    }
 
-        // Active surface fills the rest of the content; inactive sessions stay attached but hidden (so
-        // their libghostty surfaces keep their Metal layers instead of being torn down on every switch).
-        let surfaceTop = content.minY + barH
-        let surfaceH = max(0, content.maxY - surfaceTop)
-        let activeID = tabs.activeID
-        for session in views.values {
-            let active = session.id == activeID
-            session.view.isHidden = !active
-            if active { session.view.frame = NSRect(x: content.minX, y: surfaceTop, width: content.width, height: surfaceH) }
+    /// Lay out the active tab's panes within `area` from its `SplitNode` tree, host one resize grip
+    /// per divider, and outline the focused pane. Every other tab's panes are hidden in place so their
+    /// libghostty Metal layers survive the switch (#68).
+    private func layoutPanes(in area: NSRect) {
+        let activeTab = tabs.activeID
+        for (paneId, session) in views where paneToTab[paneId] != activeTab { session.view.isHidden = true }
+
+        guard let activeTab, let tree = trees[activeTab] else { focusRing.isHidden = true; return }
+        let rect = SplitRect(minX: Double(area.minX), minY: Double(area.minY),
+                             width: Double(area.width), height: Double(area.height))
+        let gap = Double(z(6))
+        // Dim the unfocused panes of a split tab (Ghostty's `unfocused-split-opacity`), unless turned
+        // off or the tab has a single pane (then everything is at full opacity).
+        let multiPane = tree.leafCount > 1
+        let focused = focusedPane[activeTab] ?? tree.firstLeaf
+        let dim = multiPane && store.terminalDimUnfocused
+
+        var framesByPane: [UUID: NSRect] = [:]
+        for (paneId, frame) in tree.frames(in: rect, divider: gap) {
+            guard let session = views[paneId] else { continue }
+            let rect = NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height)
+            session.view.isHidden = false
+            session.view.frame = rect
+            session.view.alphaValue = (dim && paneId != focused) ? Self.unfocusedPaneOpacity : 1.0
+            framesByPane[paneId] = rect
+        }
+
+        layoutDividers(tree.dividers(in: rect, divider: gap))
+        layoutFocusRing(tabId: activeTab, multiPane: multiPane, framesByPane: framesByPane)
+    }
+
+    /// The opacity of an unfocused pane when dimming is on — Ghostty's `unfocused-split-opacity`
+    /// default (#68).
+    private static let unfocusedPaneOpacity: CGFloat = 0.7
+
+    /// Pool one `PaneDividerHandle` per divider (keyed by path so the dragged one persists across the
+    /// per-frame relayout), position its fat seam-centered hit-zone, and draw the thin visible seam.
+    private func layoutDividers(_ dividers: [SplitDivider]) {
+        let t = store.theme
+        let hit = z(12)
+        var live = Set<String>()
+        for divider in dividers {
+            let key = pathKey(divider.path)
+            live.insert(key)
+            let handle = dividerHandles[key] ?? {
+                let new = PaneDividerHandle(); configureDividerHandle(new); dividerHandles[key] = new; return new
+            }()
+            handle.path = divider.path
+            handle.extent = divider.extent
+            handle.axis = divider.axis
+            let seam = divider.rect
+            switch divider.axis {
+            case .horizontal:
+                let cx = CGFloat(seam.minX + seam.width / 2)
+                handle.frame = NSRect(x: cx - hit / 2, y: CGFloat(seam.minY), width: hit, height: CGFloat(seam.height))
+            case .vertical:
+                let cy = CGFloat(seam.minY + seam.height / 2)
+                handle.frame = NSRect(x: CGFloat(seam.minX), y: cy - hit / 2, width: CGFloat(seam.width), height: hit)
+            }
+            addSubview(handle)   // re-add → frontmost, above the surfaces
+            handle.subviews.forEach { $0.removeFromSuperview() }
+            let line = BoxView(bg: t.line2)
+            switch divider.axis {
+            case .horizontal: line.frame = NSRect(x: (hit - z(1)) / 2, y: 0, width: z(1), height: handle.frame.height)
+            case .vertical: line.frame = NSRect(x: 0, y: (hit - z(1)) / 2, width: handle.frame.width, height: z(1))
+            }
+            handle.addSubview(line)
+            window?.invalidateCursorRects(for: handle)
+        }
+        for (key, handle) in dividerHandles where !live.contains(key) {
+            handle.removeFromSuperview(); dividerHandles[key] = nil
         }
     }
+
+    /// Set the drag closures on a freshly-pooled divider grip once. They read the grip's current
+    /// `path`/`extent`/`axis` (refreshed each layout) and capture the gesture's start fraction once so
+    /// the direction can't flip mid-drag (#65); the seam moves live and persists on release.
+    private func configureDividerHandle(_ handle: PaneDividerHandle) {
+        handle.onBegin = { [weak self, weak handle] in
+            guard let self, let handle, let tab = self.tabs.activeID else { return }
+            self.dragTabId = tab
+            self.dragPath = handle.path
+            self.dragExtent = max(1, handle.extent)
+            self.dragSign = (handle.axis == .horizontal) ? 1 : -1
+            self.dragFloor = (handle.axis == .horizontal) ? SplitLayout.minPane : SplitLayout.minTerminalHeight
+            self.dragStartFraction = self.trees[tab]?.fraction(at: handle.path) ?? 0.5
+        }
+        handle.onDrag = { [weak self] delta in
+            guard let self, let tab = self.dragTabId, let tree = self.trees[tab] else { return }
+            let raw = self.dragStartFraction + self.dragSign * Double(delta) / self.dragExtent
+            let clamped = SplitLayout.clampFraction(raw, total: self.dragExtent, minPane: self.dragFloor)
+            self.trees[tab] = tree.setFraction(at: self.dragPath, to: clamped)
+            self.needsLayout = true
+        }
+        handle.onEnd = { [weak self] in self?.snapshotTabs() }
+    }
+
+    /// Outline the focused pane when a tab is split; hide the ring for a single-pane tab so the
+    /// common case looks unchanged. The ring is click-through (`PaneFocusRingView`) so it never
+    /// blocks the surface beneath it.
+    private func layoutFocusRing(tabId: UUID, multiPane: Bool, framesByPane: [UUID: NSRect]) {
+        guard store.terminalFocusRing, multiPane, let focused = focusedPane[tabId] ?? trees[tabId]?.firstLeaf,
+              let frame = framesByPane[focused] else { focusRing.isHidden = true; return }
+        focusRing.isHidden = false
+        focusRing.frame = frame
+        focusRing.layer?.borderColor = Status.green.cgColor
+        focusRing.layer?.borderWidth = z(1.5)
+        focusRing.layer?.cornerRadius = z(2)
+        addSubview(focusRing)   // re-add → frontmost
+    }
+
+    private func pathKey(_ path: [Int]) -> String { path.map(String.init).joined(separator: ".") }
 
     private func layoutTabBar(x: CGFloat, w: CGFloat, y: CGFloat, barH: CGFloat, priorOffset: NSPoint?) {
         let t = store.theme
@@ -611,13 +922,14 @@ final class TerminalContainerView: FlippedView {
             let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w - z(36), height: barH))
             var x: CGFloat = 0
             var activeRect: NSRect?
-            tabRowsById.removeAll()   // rebuilt each layout; keyed by id for the drag reflow (#87)
-            for session in orderedSessions {
+            tabRowsById.removeAll()   // rebuilt each layout; keyed by tab id for the drag reflow (#87)
+            for tabId in tabs.ids {
+                guard let session = representativeSession(tabId) else { continue }
                 let tw = tabWidth(for: session.title)
-                let row = tabView(session, width: tw, barH: barH, x: x)
-                tabRowsById[session.id] = row
+                let row = tabView(tabId: tabId, session: session, width: tw, barH: barH, x: x)
+                tabRowsById[tabId] = row
                 doc.addSubview(row)
-                if session.id == tabs.activeID { activeRect = NSRect(x: x, y: 0, width: tw, height: barH) }
+                if tabId == tabs.activeID { activeRect = NSRect(x: x, y: 0, width: tw, height: barH) }
                 x += tw
             }
             tabDoc = doc
@@ -701,6 +1013,11 @@ final class TerminalContainerView: FlippedView {
         min(z(200), max(z(86), fitW(title, sys(11.5, .semibold)) + z(56)))
     }
 
+    /// Whether any pane in the tab has a pending activity badge (#74) — the strip flags the whole tab.
+    private func tabHasBell(_ tabId: UUID) -> Bool {
+        (trees[tabId]?.leafIDs ?? []).contains { views[$0]?.hasBell == true }
+    }
+
     /// The busy indicator to draw in a tab's dot slot, or `nil` to fall back to the dot: a
     /// determinate ring for a reported percentage, a spinner once an indeterminate report has
     /// cleared the debounce (`busyShown`), nothing while idle or still debouncing (#94).
@@ -712,9 +1029,9 @@ final class TerminalContainerView: FlippedView {
         }
     }
 
-    private func tabView(_ session: TerminalSession, width tw: CGFloat, barH: CGFloat, x: CGFloat) -> ClickRow {
+    private func tabView(tabId: UUID, session: TerminalSession, width tw: CGFloat, barH: CGFloat, x: CGFloat) -> ClickRow {
         let t = store.theme
-        let active = session.id == tabs.activeID
+        let active = tabId == tabs.activeID
         // The active tab reads as a continuation of the surface below it, so it shares the terminal bg.
         let tab = ClickRow(bg: active ? t.termBg : nil)
         tab.hoverColor = active ? nil : t.hover
@@ -722,9 +1039,9 @@ final class TerminalContainerView: FlippedView {
         // Click/rename is routed through the drag grip below (so a press can become a drag); the
         // bare `ClickRow` keeps only its hover fill.
 
-        // A background tab that rang/notified reads as "wants attention": amber underline + dot,
-        // mirroring the active tab's green underline (#74). The active tab never flags.
-        let flagged = session.hasBell && !active
+        // A background tab where *any* pane rang/notified reads as "wants attention": amber underline +
+        // dot, mirroring the active tab's green underline (#74). The active tab never flags.
+        let flagged = tabHasBell(tabId) && !active
         let underline = BoxView(bg: active ? Status.green : (flagged ? Status.yellow : .clear))
         underline.frame = NSRect(x: 0, y: barH - z(2), width: tw, height: z(2)); tab.addSubview(underline)
         // A busy surface swaps the status dot for a spinner (indeterminate progress) or a ring
@@ -739,7 +1056,7 @@ final class TerminalContainerView: FlippedView {
             let d = Dot(flagged ? Status.yellow : session.dot, z(7)); d.frame.origin = NSPoint(x: z(13), y: (barH - z(7)) / 2); tab.addSubview(d)
         }
         let nameFrame = NSRect(x: z(28), y: z(8), width: tw - z(28) - z(24), height: z(16))
-        if session.id == editingTabId {
+        if tabId == editingTabId {
             tab.addSubview(renameEditor(session.title, frame: nameFrame, t: t))
         } else {
             let nm = label(session.title, sys(11.5, active ? .semibold : .regular), active ? t.txt : t.txt3)
@@ -749,19 +1066,20 @@ final class TerminalContainerView: FlippedView {
         // Whole-tab drag handle (#87): a press becomes a reorder past the threshold, else a plain
         // select/rename click. Added over the label/dot but *under* the close × (added next), so
         // close stays clickable; skipped while renaming so the inline editor keeps the clicks.
-        if session.id != editingTabId {
+        if tabId != editingTabId {
             let grip = DragGrip(frame: tab.bounds)
-            grip.onDown = { [weak self] e in self?.tabMouseDown(id: session.id, event: e) }
+            grip.onDown = { [weak self] e in self?.tabMouseDown(id: tabId, event: e) }
             grip.onDrag = { [weak self] e in self?.tabMouseDragged(event: e) }
-            grip.onUp = { [weak self] _ in self?.tabMouseUp(id: session.id) }
+            grip.onUp = { [weak self] _ in self?.tabMouseUp(id: tabId) }
             tab.addSubview(grip)
         }
 
-        // Per-tab close (×). Sits above the tab, so its click closes without also selecting.
+        // Per-tab close (×) — closes the whole tab (all its panes). Sits above the tab, so its click
+        // closes without also selecting.
         let close = ClickRow(radius: z(4))
         close.hoverColor = t.hover
         close.frame = NSRect(x: tw - z(22), y: (barH - z(18)) / 2, width: z(18), height: z(18))
-        close.onClick = { [weak self] in self?.requestCloseTab(id: session.id) }
+        close.onClick = { [weak self] in self?.requestCloseTab(id: tabId) }
         let xl = label("×", sys(13), t.txt3, align: .center)
         xl.frame = close.bounds; close.addSubview(xl)
         tab.addSubview(close)
@@ -800,8 +1118,9 @@ final class TerminalContainerView: FlippedView {
         tabDragging = false
     }
 
-    /// A tab's rendered width is a pure function of its title, so it's stable across a drag.
-    private func tabWidth(forId id: UUID) -> CGFloat { tabWidth(for: views[id]?.title ?? "") }
+    /// A tab's rendered width is a pure function of its (representative pane's) title, so it's stable
+    /// across a drag.
+    private func tabWidth(forId id: UUID) -> CGFloat { tabWidth(for: representativeSession(id)?.title ?? "") }
 
     private func beginTabDrag(event: NSEvent) {
         guard let id = tabDownId, let doc = tabDoc, let row = tabRowsById[id] else { return }

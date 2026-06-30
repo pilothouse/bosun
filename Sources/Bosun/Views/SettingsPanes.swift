@@ -285,6 +285,8 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
     private let notifyBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let bellBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let busyBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let focusRingBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let dimBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
 
     /// ghostty `cursor-style` keywords, parallel to the popup's titles.
     private let cursorStyles = ["block", "bar", "underline"]
@@ -322,10 +324,21 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
         configure(notifyBox, "Allow desktop notifications from the terminal", #selector(toggleNotify))
         configure(bellBox, "Play the macOS system bell sound", #selector(toggleBell))
         configure(busyBox, "Show busy/progress on console tabs", #selector(toggleBusy))
+        configure(focusRingBox, "Highlight the focused pane with a green border", #selector(toggleFocusRing))
+        configure(dimBox, "Dim the unfocused panes (like Ghostty)", #selector(toggleDim))
 
         let tabsNote = NSTextField(labelWithString: "Open terminal tabs are restored automatically on relaunch.")
         tabsNote.font = .systemFont(ofSize: 11)
         tabsNote.textColor = .secondaryLabelColor
+
+        // Discoverability for the split keybindings (#68); the border only appears once a tab is split.
+        let splitNote = NSTextField(wrappingLabelWithString:
+            "Split a tab with ⌘D (right) or ⇧⌘D (down); move focus between panes with ⌘] / ⌘[. "
+            + "The border marks which pane has focus and only shows once a tab is split.")
+        splitNote.font = .systemFont(ofSize: 11)
+        splitNote.textColor = .secondaryLabelColor
+        splitNote.translatesAutoresizingMaskIntoConstraints = false
+        splitNote.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
 
         // Sets the right expectation for the busy indicator: it covers shell commands and tools that
         // report OSC 9;4 progress, not long-lived TUIs that emit no such signal (#94).
@@ -345,7 +358,8 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
          sectionLabel("Cursor"), cursorPopup, blinkBox,
          sectionLabel("Window Padding"), padXRow, padYRow, optionBox,
          sectionLabel("Notifications"), notifyBox, bellBox,
-         sectionLabel("Console Tabs"), busyBox, busyNote, tabsNote]
+         sectionLabel("Console Tabs"), busyBox, busyNote, tabsNote,
+         sectionLabel("Split Panes"), focusRingBox, dimBox, splitNote]
             .forEach { stack.addArrangedSubview($0) }
         // A touch more air before each section heading than between a heading and its controls.
         stack.setCustomSpacing(18, after: sizeRow)
@@ -353,6 +367,8 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
         stack.setCustomSpacing(18, after: optionBox)
         stack.setCustomSpacing(18, after: bellBox)
         stack.setCustomSpacing(2, after: busyBox)
+        stack.setCustomSpacing(18, after: tabsNote)
+        stack.setCustomSpacing(2, after: dimBox)
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -414,6 +430,8 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
         notifyBox.state = t.desktopNotifications ? .on : .off
         bellBox.state = t.systemBell ? .on : .off
         busyBox.state = store.terminalBusySpinner ? .on : .off
+        focusRingBox.state = store.terminalFocusRing ? .on : .off
+        dimBox.state = store.terminalDimUnfocused ? .on : .off
     }
 
     // Font family: live-apply on both list selection and typed end-of-edit. Programmatic
@@ -453,6 +471,9 @@ final class TerminalPane: SettingsPane, NSComboBoxDelegate {
     // The busy spinner is a Bosun-app behavior flag, not a ghostty `terminalConfig` field, so it
     // binds straight to the store (like the General-pane toggles) rather than through `terminalConfig`.
     @objc private func toggleBusy(_ sender: NSButton) { store.terminalBusySpinner = sender.state == .on }
+    // The focus-pane border is likewise an App-layer flag, not a ghostty config (#68).
+    @objc private func toggleFocusRing(_ sender: NSButton) { store.terminalFocusRing = sender.state == .on }
+    @objc private func toggleDim(_ sender: NSButton) { store.terminalDimUnfocused = sender.state == .on }
 }
 
 // MARK: - Account

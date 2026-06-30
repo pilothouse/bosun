@@ -399,6 +399,54 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNil(decoded.activeTabId)
     }
 
+    func testTerminalFocusRingDefaultsOnAndRoundTrips() throws {
+        XCTAssertTrue(Preferences.default.terminalFocusRing, "the focused-pane border is on by default (#68)")
+        let data = try JSONEncoder().encode(Preferences(terminalFocusRing: false))
+        XCTAssertFalse(try JSONDecoder().decode(Preferences.self, from: data).terminalFocusRing)
+        // A blob from a build before this field decodes to the default (on).
+        let legacy = Data(#"{"themeKey":"carbon"}"#.utf8)
+        XCTAssertTrue(try JSONDecoder().decode(Preferences.self, from: legacy).terminalFocusRing)
+    }
+
+    func testTerminalDimUnfocusedDefaultsOnAndRoundTrips() throws {
+        XCTAssertTrue(Preferences.default.terminalDimUnfocused, "unfocused panes dim by default, like Ghostty (#68)")
+        let data = try JSONEncoder().encode(Preferences(terminalDimUnfocused: false))
+        XCTAssertFalse(try JSONDecoder().decode(Preferences.self, from: data).terminalDimUnfocused)
+        let legacy = Data(#"{"themeKey":"carbon"}"#.utf8)
+        XCTAssertTrue(try JSONDecoder().decode(Preferences.self, from: legacy).terminalDimUnfocused)
+    }
+
+    func testOpenTabTreesDefaultToNil() {
+        XCTAssertNil(Preferences.default.openTabTrees, "nil means 'no split layout saved — fall back to openTabs'")
+    }
+
+    func testOpenTabTreesRoundTripThroughCodable() throws {
+        // One un-split tab and one split into two panes (#68).
+        let trees: [SplitNode<TerminalTabState>] = [
+            .leaf(TerminalTabState(id: "p1", kind: .local, title: "zsh")),
+            .split(axis: .horizontal, fraction: 0.45,
+                   first: .leaf(TerminalTabState(id: "p2", kind: .connection(id: "forge"), title: "Forge", locked: true)),
+                   second: .leaf(TerminalTabState(id: "p3", kind: .local, title: "logs"))),
+        ]
+        let original = Preferences(activeTabId: "p3", openTabTrees: trees)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded.openTabTrees, trees)
+        XCTAssertEqual(decoded.activeTabId, "p3")
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutOpenTabTreesFallsBackToNil() throws {
+        // A payload from a pre-#68 build (knows openTabs but not the per-tab pane trees).
+        let json = Data(#"{"themeKey":"carbon","activeTabId":"tab-1"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertNil(decoded.openTabTrees, "absent split layout decodes to nil so restore falls back to openTabs")
+    }
+
     func testPRChecksCollapsedDefaultsToFalse() {
         XCTAssertFalse(Preferences.default.prChecksCollapsed,
                        "the PR Actions list starts expanded")

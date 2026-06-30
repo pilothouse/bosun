@@ -65,6 +65,13 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// earlier tab is dropped (a deleted connection). See `TerminalTabState`.
     public var openTabs: [TerminalTabState]?
     public var activeTabId: String?
+    /// The per-tab pane split layout, one `SplitNode` tree per open tab in tab order (#68). A leaf is
+    /// one pane (a `TerminalTabState`); a `.split` carries the divider axis + fraction. `nil` means a
+    /// build that never split (or pre-#68) — fall back to `openTabs`, treating each tab as a single
+    /// leaf. The active *pane* (and so the active tab) is still keyed by `activeTabId` against the
+    /// leaves' `TerminalTabState.id`. `openTabs` stays written alongside this (one representative leaf
+    /// per tab) so an older build still reopens the tabs, just un-split.
+    public var openTabTrees: [SplitNode<TerminalTabState>]?
     /// Whether the PR detail pane's `ACTIONS` (CI checks) section is collapsed. Global — one
     /// app-wide preference shared across every PR, not per-PR. `false` (expanded) by default.
     public var prChecksCollapsed: Bool
@@ -102,6 +109,14 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// shell command (see `TerminalBusyPolicy`). `false` (opt-in) by default: coverage is limited to
     /// tools that emit the explicit signal, so the user turns it on deliberately (#93).
     public var terminalBusySpinner: Bool
+    /// Whether the focused pane of a split terminal tab is outlined with a green border (#68). `true`
+    /// (opt-out) by default — the ring only shows once a tab is split into panes, so a single-pane tab
+    /// is unaffected; the user can turn it off to keep split panes borderless.
+    public var terminalFocusRing: Bool
+    /// Whether the *unfocused* panes of a split terminal tab are dimmed to emphasize the focused one,
+    /// the way Ghostty does by default (`unfocused-split-opacity`). `true` (opt-out) by default; only
+    /// applies once a tab is split, so a single-pane tab is always at full opacity.
+    public var terminalDimUnfocused: Bool
     /// The ids (`Folder.id` uuid strings) of connection-rail folders the user has collapsed, stored
     /// as a sorted array (a `Set` in memory). `nil` means never customized — every folder expanded.
     /// A stored id whose folder no longer exists is simply ignored on render. See #82.
@@ -175,6 +190,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         issueStates: [String]? = nil,
         openTabs: [TerminalTabState]? = nil,
         activeTabId: String? = nil,
+        openTabTrees: [SplitNode<TerminalTabState>]? = nil,
         prChecksCollapsed: Bool = false,
         prFilesCollapsed: Bool = false,
         prCommentsCollapsed: Bool = false,
@@ -185,6 +201,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         uiZoomPercent: Int = 100,
         terminalBellBadge: Bool = true,
         terminalBusySpinner: Bool = false,
+        terminalFocusRing: Bool = true,
+        terminalDimUnfocused: Bool = true,
         collapsedFolders: [String]? = nil,
         syncConnectionsViaICloud: Bool = false,
         terminalFontFamily: String = "JetBrains Mono",
@@ -218,6 +236,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.issueStates = issueStates
         self.openTabs = openTabs
         self.activeTabId = activeTabId
+        self.openTabTrees = openTabTrees
         self.prChecksCollapsed = prChecksCollapsed
         self.prFilesCollapsed = prFilesCollapsed
         self.prCommentsCollapsed = prCommentsCollapsed
@@ -228,6 +247,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.uiZoomPercent = uiZoomPercent
         self.terminalBellBadge = terminalBellBadge
         self.terminalBusySpinner = terminalBusySpinner
+        self.terminalFocusRing = terminalFocusRing
+        self.terminalDimUnfocused = terminalDimUnfocused
         self.collapsedFolders = collapsedFolders
         self.syncConnectionsViaICloud = syncConnectionsViaICloud
         self.terminalFontFamily = terminalFontFamily
@@ -271,6 +292,7 @@ public struct Preferences: Sendable, Equatable, Codable {
             issueStates: try container.decodeIfPresent([String].self, forKey: .issueStates) ?? fallback.issueStates,
             openTabs: try container.decodeIfPresent([TerminalTabState].self, forKey: .openTabs) ?? fallback.openTabs,
             activeTabId: try container.decodeIfPresent(String.self, forKey: .activeTabId) ?? fallback.activeTabId,
+            openTabTrees: try container.decodeIfPresent([SplitNode<TerminalTabState>].self, forKey: .openTabTrees) ?? fallback.openTabTrees,
             prChecksCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prChecksCollapsed) ?? fallback.prChecksCollapsed,
             prFilesCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prFilesCollapsed) ?? fallback.prFilesCollapsed,
             prCommentsCollapsed: try container.decodeIfPresent(Bool.self, forKey: .prCommentsCollapsed) ?? fallback.prCommentsCollapsed,
@@ -281,6 +303,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             uiZoomPercent: try container.decodeIfPresent(Int.self, forKey: .uiZoomPercent) ?? fallback.uiZoomPercent,
             terminalBellBadge: try container.decodeIfPresent(Bool.self, forKey: .terminalBellBadge) ?? fallback.terminalBellBadge,
             terminalBusySpinner: try container.decodeIfPresent(Bool.self, forKey: .terminalBusySpinner) ?? fallback.terminalBusySpinner,
+            terminalFocusRing: try container.decodeIfPresent(Bool.self, forKey: .terminalFocusRing) ?? fallback.terminalFocusRing,
+            terminalDimUnfocused: try container.decodeIfPresent(Bool.self, forKey: .terminalDimUnfocused) ?? fallback.terminalDimUnfocused,
             collapsedFolders: try container.decodeIfPresent([String].self, forKey: .collapsedFolders) ?? fallback.collapsedFolders,
             syncConnectionsViaICloud: try container.decodeIfPresent(Bool.self, forKey: .syncConnectionsViaICloud) ?? fallback.syncConnectionsViaICloud,
             terminalFontFamily: try container.decodeIfPresent(String.self, forKey: .terminalFontFamily) ?? fallback.terminalFontFamily,
