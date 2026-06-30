@@ -10,9 +10,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dataController: GitHubDataController!
     private var store: Store?
     let ghostty = GhosttyApp.shared
+    /// In-app auto-update via Sparkle (#57). Created at launch so the menu and Settings can ask whether
+    /// updates are offered (they aren't on the Mac App Store). The only owner of the Sparkle dependency.
+    private var updater: UpdaterController!
     /// The standard preferences window (#88), built on first open and reused thereafter — so it keeps
     /// its toolbar selection and frame for the session. Replaces the old in-window settings overlay.
-    private lazy var settingsWindowController = SettingsWindowController(store: root.store, auth: authController)
+    private lazy var settingsWindowController = SettingsWindowController(store: root.store, auth: authController,
+                                                                         updater: updater)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Make hover tooltips (e.g. the truncated issue/PR titles in the right list) appear quickly
@@ -22,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 300])
 
         ghostty.start()
+        // Build the updater before the menu so installMenu() can decide whether to show "Check for
+        // Updates…" (hidden on a Mac App Store build, where Sparkle is disabled).
+        updater = UpdaterController()
         installMenu()
         applyDockIcon()
 
@@ -344,6 +351,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         appMenu.addItem(settingsItem)
+        // "Check for Updates…" (Sparkle, #57). Omitted entirely on a Mac App Store build, where the
+        // updater is disabled. The item validates against Sparkle (greys out mid-check) via the
+        // UpdaterController's NSMenuItemValidation.
+        if updater.isAvailable {
+            appMenu.addItem(.separator())
+            let updatesItem = NSMenuItem(title: "Check for Updates…",
+                                         action: #selector(UpdaterController.checkForUpdates(_:)),
+                                         keyEquivalent: "")
+            updatesItem.target = updater
+            appMenu.addItem(updatesItem)
+        }
         appMenu.addItem(.separator())
         // Zoom is grouped under a single "Zoom ▸" submenu in the Bosun menu. Each item zooms
         // contextually — the focused console, else the whole app (see `zoomIn`). Key equivalents fire

@@ -10,6 +10,7 @@ import Domain
 final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private let store: Store
     private let auth: GitHubAuthController
+    private let updater: UpdaterController
 
     /// Toolbar sections, in order. Each maps 1:1 to a cached pane built on first selection.
     private let specs: [(id: String, label: String, symbol: String)] = [
@@ -27,9 +28,10 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     /// Titlebar + toolbar height fallback before the window is first realized (`.preference` style).
     private static let chromeFallback: CGFloat = 78
 
-    init(store: Store, auth: GitHubAuthController) {
+    init(store: Store, auth: GitHubAuthController, updater: UpdaterController) {
         self.store = store
         self.auth = auth
+        self.updater = updater
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: SettingsPane.paneWidth, height: 420),
                               styleMask: [.titled, .closable, .miniaturizable],
                               backing: .buffered, defer: false)
@@ -81,7 +83,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         case "appearance": pane = AppearancePane(store: store)
         case "terminal": pane = TerminalPane(store: store)
         case "account": pane = AccountPane(store: store, auth: auth)
-        default: pane = GeneralPane(store: store)
+        default: pane = GeneralPane(store: store, updater: updater)
         }
         panes[identifier] = pane
         return pane

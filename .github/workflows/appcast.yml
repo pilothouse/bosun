@@ -1,0 +1,125 @@
+name: Appcast
+
+# Publish the signed Sparkle appcast when a GitHub Release is published.
+#
+# release.yml builds a tag into a notarized Bosun.dmg attached to a DRAFT release; a human reviews and
+# *publishes* it. This workflow fires on that publish (not the draft), so the appcast only ever advertises
+# a build whose assets are live. It signs the published DMG with the EdDSA private key, prepends an <item>
+# to the cumulative appcast.xml (committed in the repo), and uploads appcast.xml as a Release asset — so
+# the app's feed URL, https://github.com/Jeckerson/bosun/releases/latest/download/appcast.xml, always
+# resolves to the newest published release's appcast. See docs/updates.md.
+#
+# NO-OP without the SPARKLE_ED_PRIVATE_KEY secret (forks): the appcast can't be signed, so the job exits 0
+# without touching anything — exactly like notarize.sh degrades without Apple credentials.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to (re)build the appcast for, e.g. v1.2.3'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: appcast
+  cancel-in-progress: false
+
+jobs:
+  appcast:
+    name: Sign DMG & publish appcast
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: meta
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$EVENT_TAG}"
+          [ -n "$TAG" ] || { echo "::error::No release tag to build an appcast for." >&2; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Guard — require the signing key
+        id: guard
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
+            echo "::warning::SPARKLE_ED_PRIVATE_KEY not set — skipping appcast (no-op)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download Sparkle CLI tools
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          SPARKLE_VERSION: 2.9.3
+        run: |
+          set -euo pipefail
+          curl -fsSL -o sparkle-tools.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p sparkle-tools
+          tar -xJf sparkle-tools.tar.xz -C sparkle-tools bin/sign_update
+          ./sparkle-tools/bin/sign_update --help >/dev/null
+
+      - name: Download the published DMG
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: gh release download "$TAG" --pattern 'Bosun.dmg' --dir .
+
+      - name: Sign DMG & update appcast.xml
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          REPO: ${{ github.repository }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+        run: |
+          set -euo pipefail
+          # Sign with the EdDSA private key via a temp key file (not argv, which `ps` would expose) →
+          # "sparkle:edSignature=… length=…".
+          KEYFILE="$(mktemp)"; printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEYFILE"
+          SIG_LINE="$(./sparkle-tools/bin/sign_update --ed-key-file "$KEYFILE" Bosun.dmg)"
+          rm -f "$KEYFILE"
+          echo "signature: $SIG_LINE"
+          # scripts/update-appcast.py prepends the signed <item> into the cumulative appcast.xml.
+          export SIG_LINE
+          export ENCLOSURE_URL="https://github.com/${REPO}/releases/download/${TAG}/Bosun.dmg"
+          python3 scripts/update-appcast.py
+
+      - name: Commit appcast.xml
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- appcast.xml; then
+            echo "No appcast change to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add appcast.xml
+            # [skip ci] so the appcast commit doesn't kick off ci.yml.
+            git commit -m "Appcast: add $TAG [skip ci]"
+            git push origin "HEAD:${GITHUB_REF_NAME:-master}" || git push origin HEAD:master
+          fi
+
+      - name: Upload appcast.xml to the Release
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: gh release upload "$TAG" appcast.xml --clobber

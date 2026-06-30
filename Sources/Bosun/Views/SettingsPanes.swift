@@ -66,23 +66,30 @@ class SettingsPane: NSView {
 
 // MARK: - General
 
-/// Skip-empty-repos, console activity badge, and iCloud connection sync — the single-toggle sections
-/// that the old sheet listed separately, grouped here. Mirrors `SettingsSheet`'s wiring: each toggle
-/// flips its `Store` property (which persists and `changed()`s the app), and the iCloud row is disabled
-/// with a hint when the user isn't signed into iCloud.
+/// Auto-update, skip-empty-repos, console activity badge, and iCloud connection sync — the single-toggle
+/// sections that the old sheet listed separately, grouped here. Mirrors `SettingsSheet`'s wiring: each
+/// toggle flips its `Store` property (which persists and `changed()`s the app), and the iCloud row is
+/// disabled with a hint when the user isn't signed into iCloud. The update toggle is the exception: it
+/// reads/writes Sparkle's own `automaticallyChecksForUpdates` (not the `bosun.preferences` blob), and the
+/// row is hidden entirely on a Mac App Store build, where Sparkle is disabled (#57).
 final class GeneralPane: SettingsPane {
+    private let updater: UpdaterController
+    private let updateBox: NSButton
     private let skipBox: NSButton
     private let bellBox: NSButton
     private let iCloudBox: NSButton
     private let iCloudHint: NSTextField
 
-    override init(store: Store) {
+    init(store: Store, updater: UpdaterController) {
+        self.updater = updater
+        updateBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         skipBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         bellBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         iCloudBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         iCloudHint = NSTextField(labelWithString: "Sign in to iCloud to sync connections.")
         super.init(store: store)
 
+        configure(updateBox, "Automatically check for updates", #selector(toggleAutoUpdate))
         configure(skipBox, "Skip repositories without open issues or PRs", #selector(toggleSkip))
         configure(bellBox, "Show an activity badge on background console tabs", #selector(toggleBell))
         configure(iCloudBox, "Sync connections across your devices via iCloud", #selector(toggleSync))
@@ -100,7 +107,7 @@ final class GeneralPane: SettingsPane {
         iCloudHint.leadingAnchor.constraint(equalTo: iCloudGroup.leadingAnchor, constant: 20).isActive = true
 
         stack.spacing = 12
-        [skipBox, bellBox, iCloudGroup].forEach { stack.addArrangedSubview($0) }
+        [updateBox, skipBox, bellBox, iCloudGroup].forEach { stack.addArrangedSubview($0) }
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -116,6 +123,10 @@ final class GeneralPane: SettingsPane {
     }
 
     override func refresh() {
+        // The update toggle is absent on a Mac App Store build (no Sparkle); otherwise it mirrors
+        // Sparkle's own background-check preference.
+        updateBox.isHidden = !updater.isAvailable
+        updateBox.state = updater.automaticallyChecksForUpdates ? .on : .off
         skipBox.state = store.skipEmptyRepos ? .on : .off
         bellBox.state = store.terminalBellBadge ? .on : .off
         let iCloudAvailable = FileManager.default.ubiquityIdentityToken != nil
@@ -124,6 +135,9 @@ final class GeneralPane: SettingsPane {
         iCloudHint.isHidden = iCloudAvailable
     }
 
+    @objc private func toggleAutoUpdate(_ sender: NSButton) {
+        updater.automaticallyChecksForUpdates = sender.state == .on
+    }
     @objc private func toggleSkip(_ sender: NSButton) { store.skipEmptyRepos = sender.state == .on }
     @objc private func toggleBell(_ sender: NSButton) { store.terminalBellBadge = sender.state == .on }
     @objc private func toggleSync(_ sender: NSButton) { store.syncConnectionsICloud = sender.state == .on }

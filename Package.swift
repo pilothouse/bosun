@@ -21,6 +21,11 @@ let package = Package(
         // no linker settings of its own — so it's added to the Bosun target alone and leaves
         // the vendored libghostty link flags untouched. Renders issue/PR/comment bodies (issue #27).
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.6.0"),
+        // In-app auto-update via a signed appcast (issue #57). Distributed as a binary xcframework,
+        // so the linker references `@rpath/Sparkle.framework`; scripts/package-app.sh copies the
+        // framework into Bosun.app/Contents/Frameworks and the rpath below resolves it at runtime.
+        // App-layer only — Sparkle is confined to Sources/Bosun/UpdaterController.swift.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
         // C shim exposing libghostty's embedding header to Swift. (App-layer detail.)
@@ -59,13 +64,19 @@ let package = Package(
         .executableTarget(
             name: "Bosun",
             dependencies: ["CGhostty", "Application", "Infrastructure", "Domain",
-                           .product(name: "Markdown", package: "swift-markdown")],
+                           .product(name: "Markdown", package: "swift-markdown"),
+                           .product(name: "Sparkle", package: "Sparkle")],
             // The app icon (a copy of Assets/AppIcon/bosun-pipe.png). Bare SwiftPM executables have no
             // .app bundle/Info.plist, so the dock icon is set at runtime from this bundled resource
             // via NSApp.applicationIconImage (see AppDelegate).
             resources: [.process("Resources")],
             linkerSettings: [
-                .unsafeFlags(["-L", "Vendor", "-lghostty"]),
+                // The `-rpath @executable_path/../Frameworks` lets the packaged app find the embedded
+                // Sparkle.framework (copied there by package-app.sh). It must go through `-Xlinker` —
+                // the Swift driver forwards `-L`/`-l` itself but not a bare `-rpath`. A `swift run` dev
+                // build resolves the framework through SPM's own build-dir rpath, so both paths work.
+                .unsafeFlags(["-L", "Vendor", "-lghostty",
+                              "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
                 .linkedFramework("AppKit"),
                 .linkedFramework("Metal"),
                 .linkedFramework("MetalKit"),

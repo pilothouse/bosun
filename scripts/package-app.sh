@@ -28,9 +28,11 @@
 #   - With a Developer ID Application identity: hardened runtime + entitlements + secure timestamp,
 #     then (if notary credentials are set) `notarytool` submit + `stapler` staple of BOTH the .app
 #     and the .dmg → a Gatekeeper-clean download that opens with no right-click workaround.
-#   - With no identity: an ad-hoc signature (identity "-"), still with the hardened runtime so the
-#     convenience build behaves identically. This path is NOT notarized — Gatekeeper quarantines it
-#     on first open; the recipient clears it once (right-click → Open, or `xattr -dr com.apple.quarantine`).
+#   - With no identity: an ad-hoc signature (identity "-"), WITHOUT the hardened runtime. Once
+#     Sparkle.framework is embedded, a team-less ad-hoc + hardened runtime fails library validation and
+#     the app is SIGKILLed at launch (see §5); the convenience build is never notarized, so it drops the
+#     hardened runtime to stay launchable. This path is NOT notarized — Gatekeeper quarantines it on first
+#     open; the recipient clears it once (right-click → Open, or `xattr -dr com.apple.quarantine`).
 # Either way the build is single-architecture (the host arch — arm64 on CI and Apple Silicon Macs);
 # a universal notarized DMG is the release workflow's job, not this convenience script's.
 #
@@ -57,6 +59,15 @@ BUNDLE_ID="com.jeckerson.bosun"
 ICON_SRC="$ROOT/Sources/Bosun/Resources/AppIcon.png"
 ENTITLEMENTS="$ROOT/scripts/Bosun.entitlements"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+
+# Sparkle auto-update (issue #57). The feed is the signed appcast attached to the latest GitHub
+# Release; `releases/latest/download/<asset>` always resolves to the newest *published* release.
+# SU_PUBLIC_ED_KEY is the EdDSA public key — NOT a secret; it's pinned in every shipped Info.plist and
+# verifies the appcast's signature. It pairs with a private key the maintainer holds (login Keychain,
+# account "bosun") and stores as the CI secret SPARKLE_ED_PRIVATE_KEY. To rotate, run
+# `scripts/.../generate_keys` and replace BOTH this value and the secret (see docs/updates.md).
+SU_FEED_URL="https://github.com/Jeckerson/bosun/releases/latest/download/appcast.xml"
+SU_PUBLIC_ED_KEY="Kj1rSUcSqZQLkP6KAw+vKhJJZ9pYAF3jHrL9rr2BRI8="
 
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
@@ -121,27 +132,83 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>NSHighResolutionCapable</key> <true/>
 	<key>NSPrincipalClass</key>        <string>NSApplication</string>
 	<key>NSHumanReadableCopyright</key> <string>Bosun</string>
+	<key>SUFeedURL</key>               <string>$SU_FEED_URL</string>
+	<key>SUPublicEDKey</key>           <string>$SU_PUBLIC_ED_KEY</string>
 </dict>
 </plist>
 PLIST
 
-# ---- 5. code signature (hardened runtime) ----
-# Sign the .app EXPLICITLY, never with `--deep`: the only nested item is the resource bundle, which
-# has no Info.plist and so isn't a signable code bundle — `--deep` would try to sign it and fail.
-# Signing the bundle (without --deep) signs the main Mach-O and seals the resource bundle as a plain
-# resource, which is exactly what we want. `--options runtime` enables the hardened runtime that
-# notarization requires; the entitlements file is empty today (see scripts/Bosun.entitlements).
+# ---- 4b. embed Sparkle.framework (auto-update, issue #57) ----
+# The executable links @rpath/Sparkle.framework; Package.swift adds an @executable_path/../Frameworks
+# rpath, so the framework must live in Contents/Frameworks for the packaged app to launch. SwiftPM stages
+# a ready (universal arm64+x86_64) copy next to the executable in BIN_DIR; fall back to the resolved
+# binary artifact if a future toolchain stops doing that.
+FRAMEWORKS="$APP/Contents/Frameworks"
+SPARKLE_FW="$BIN_DIR/Sparkle.framework"
+if [ ! -d "$SPARKLE_FW" ]; then
+  SPARKLE_FW="$(find "$ROOT/.build" -type d -name Sparkle.framework -path '*macos*' 2>/dev/null | head -1)"
+fi
+[ -n "$SPARKLE_FW" ] && [ -d "$SPARKLE_FW" ] || {
+  echo "ERROR: Sparkle.framework not found (looked in $BIN_DIR and .build/artifacts) — run 'swift build' first" >&2
+  exit 1
+}
+echo "==> embedding Sparkle.framework from $SPARKLE_FW"
+mkdir -p "$FRAMEWORKS"
+# -R preserves the Versions/Current and top-level symlinks codesign expects in a framework bundle.
+cp -R "$SPARKLE_FW" "$FRAMEWORKS/"
+
+# ---- 5. code signature ----
+# Sign the .app EXPLICITLY, never with `--deep`: the resource bundle has no Info.plist and so isn't a
+# signable code bundle (`--deep` would fail on it), and Sparkle.framework's nested helpers must be sealed
+# in a specific inside-out order (below). Signing each bundle without --deep signs its main Mach-O and
+# seals plain resources, which is what we want.
 #
-# With a Developer ID identity we add `--timestamp` (a secure Apple timestamp, mandatory for
-# notarization). Ad-hoc (identity "-") can't use Apple's TSA, so it omits `--timestamp` — Apple
-# Silicon still needs *a* signature to launch, and the hardened runtime keeps both paths identical.
+# Hardened runtime + entitlements — the load-bearing subtlety once Sparkle.framework is embedded. Both
+# depend on the signature carrying a real Team ID, which only a Developer ID identity has:
+#   • Developer ID build: sign with `--options runtime` (notarization requires it) AND the full
+#     entitlements. The app and the re-signed framework share one Team ID, so hardened-runtime *library
+#     validation* lets the app load the framework with no extra entitlement (Sparkle's documented
+#     same-certificate embedding), and that team owns the iCloud KVS container the entitlement names.
+#   • Ad-hoc convenience build: sign WITHOUT hardened runtime AND WITHOUT entitlements. A team-less ad-hoc
+#     signature breaks both: under hardened runtime, library validation aborts the app when it loads the
+#     framework (and `disable-library-validation` can't rescue it — a restricted entitlement is ignored on
+#     an ad-hoc signature); and AMFI SIGKILLs an ad-hoc app that *claims* the iCloud KVS entitlement it
+#     can't own. This build is never notarized and can't use iCloud, so it loses nothing by dropping both
+#     and stays launchable for local testing. (Before Sparkle there was no embedded framework, so the
+#     library-validation half didn't bite.)
+# A real Developer ID identity also adds `--timestamp` (Apple's secure TSA, mandatory for notarization);
+# ad-hoc can't reach the TSA, so it omits it.
+# `sign_runtime` seals one nested code object with the path-appropriate flags: hardened runtime +
+# secure timestamp for Developer ID, a bare ad-hoc signature otherwise (see the rationale above).
+sign_runtime() {
+  if [ -n "$SIGN_IDENTITY" ]; then
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$1"
+  else
+    codesign --force --sign - "$1"
+  fi
+}
+
+# Sign the embedded Sparkle.framework INSIDE-OUT: its own helpers (the Installer/Downloader XPC services,
+# the Autoupdate tool, the Updater.app) are each a separate code object that must be sealed before the
+# framework bundle that contains them, and the outer app is signed last (below).
+echo "==> signing embedded Sparkle.framework (inside-out)"
+FW_V="$FRAMEWORKS/Sparkle.framework/Versions/B"
+for item in \
+  "$FW_V/XPCServices/Installer.xpc" \
+  "$FW_V/XPCServices/Downloader.xpc" \
+  "$FW_V/Autoupdate" \
+  "$FW_V/Updater.app"; do
+  [ -e "$item" ] && sign_runtime "$item"
+done
+sign_runtime "$FRAMEWORKS/Sparkle.framework"
+
 if [ -n "$SIGN_IDENTITY" ]; then
-  echo "==> signing $APP_NAME.app with Developer ID: $SIGN_IDENTITY"
-  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --timestamp \
+  echo "==> signing $APP_NAME.app with Developer ID: $SIGN_IDENTITY (hardened runtime)"
+  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
     --sign "$SIGN_IDENTITY" "$APP"
 else
-  echo "==> ad-hoc signing $APP_NAME.app (no SIGN_IDENTITY — un-notarizable convenience build)"
-  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP"
+  echo "==> ad-hoc signing $APP_NAME.app (no SIGN_IDENTITY — un-notarizable convenience build, no hardened runtime/entitlements)"
+  codesign --force --sign - "$APP"
 fi
 codesign --verify --strict --deep --verbose=2 "$APP" && echo "   signature verified"
 codesign --display --entitlements - --verbose=2 "$APP" 2>/dev/null || true
