@@ -770,7 +770,6 @@ final class GitHubDataController {
                                       issueStates: Set<GitHubItemState>)
         async throws -> (prs: [GitHubItem], issues: [GitHubItem]) {
         let api = self.api
-        let cache = self.cache
         var prsByRepo: [String: [GitHubItem]] = [:]
         var issuesByRepo: [String: [GitHubItem]] = [:]
         for (owner, keys) in Dictionary(grouping: repoKeys, by: { $0.owner }) {
