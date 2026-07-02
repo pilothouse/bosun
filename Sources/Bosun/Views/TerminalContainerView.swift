@@ -592,6 +592,23 @@ final class TerminalContainerView: FlippedView {
         if let tabId = paneToTab[id], tabId == tabs.activeID, focusedPane[tabId] == id { onActiveTitleChange?() }
     }
 
+    /// Relabel every open console pane belonging to a connection when that connection is renamed.
+    /// Connection tabs lock their title to the connection name (#29), so a rename in the edit sheet
+    /// has to be pushed here directly — the server/OSC path can't touch a locked title. Updates all
+    /// matching panes across every tab, relabels the strip, re-titles the window, and re-persists so
+    /// the new label survives relaunch. A no-op when no open tab references the connection.
+    func renameConnectionTabs(connectionId: String, to name: String) {
+        var changed = false
+        for session in views.values where session.origin == .connection(connectionId) && session.title != name {
+            session.title = name
+            changed = true
+        }
+        guard changed else { return }
+        needsLayout = true       // relabel the tab strip; no surface churn
+        onActiveTitleChange?()   // the active pane may be one of these → re-title the window
+        snapshotTabs()           // persist the new label
+    }
+
     // MARK: Closing panes / tabs (#68)
 
     /// Close one pane (its ghostty ⌘W, or a shell exit). When it's the tab's last pane, the tab

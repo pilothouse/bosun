@@ -39,6 +39,12 @@ extension Org {
     /// GraphQL org node id (and stays consistent across launches for the follow/order persistence).
     static let personalID = "viewer:personal"
 
+    /// Stable sentinel id for the synthetic "All organizations" aggregate row. Not a real entry in
+    /// `store.orgs` — resolved to the union of every visible org's repos wherever an org is looked
+    /// up by id (see `Store.allOrgRepos`). Prefixed like `personalID` so it can't collide with a
+    /// GraphQL org node id and stays consistent across launches for the scope-restore persistence.
+    static let allOrgsID = "viewer:allOrgs"
+
     /// A deterministic accent per org (keyed off the login's scalars, not `hashValue`, which is
     /// per-process randomized) so the sidebar squares stay consistent within and across launches.
     private static func color(forLogin login: String) -> NSColor {

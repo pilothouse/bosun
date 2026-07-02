@@ -198,6 +198,27 @@ final class RepoPanelView: FlippedView {
             return (doc, y + z(44))
         }
 
+        // A permanent aggregator pinned above the per-org rows: selecting it shows every visible
+        // org's PRs/issues (the personal group included) as per-repo sections. It's not an entry in
+        // `store.orgs` — so it can't be hidden/reordered in the manage sheet — and is backed by the
+        // `Org.allOrgsID` sentinel, which the controller/store resolve to the union of visible repos.
+        // A leaf row: no expand caret, since expanding would just duplicate the per-org rows below.
+        let allSelected = store.selectedOrgId == Org.allOrgsID
+        let allRow = ClickRow(bg: allSelected ? t.accentbg : nil, radius: z(6))
+        allRow.hoverColor = t.hover
+        allRow.frame = NSRect(x: 0, y: y, width: w, height: z(36))
+        allRow.onClick = { [weak self] in self?.onSelectOrg?(Org.allOrgsID) }
+        let allSq = BoxView(bg: allSelected ? t.accent : t.accentbg2, radius: z(6))
+        allSq.frame = NSRect(x: z(14), y: z(7), width: z(22), height: z(22))
+        let allGlyph = label("▦", sys(12, .bold), allSelected ? .white : t.accent, align: .center)
+        allGlyph.frame = NSRect(x: 0, y: z(4), width: z(22), height: z(15))
+        allSq.addSubview(allGlyph); allRow.addSubview(allSq)
+        let allName = label("All organizations", sys(12.5, .semibold), t.txt)
+        allName.frame = NSRect(x: z(46), y: z(9), width: w - z(46) - z(60), height: z(18)); allRow.addSubview(allName)
+        let allCount = label("\(store.allOrgRepos.count)", mono(10), t.txt4, align: .right)
+        allCount.frame = NSRect(x: w - z(56), y: z(9), width: z(24), height: z(18)); allRow.addSubview(allCount)
+        doc.addSubview(allRow); y += z(36)
+
         for org in orgs {
             let expanded = store.expandedOrgs.contains(org.id)
             let selectedOrg = store.selectedOrgId == org.id
@@ -380,15 +401,17 @@ final class RepoPanelView: FlippedView {
     }
 
     /// A collapsible section header for the aggregate org view — one per repo, showing the repo's
-    /// short name and its item count. Clicking it toggles the section's collapse, keyed in
-    /// `collapsedItems` by the repo's `owner/name` (which can't collide with an item's `repo#number`).
-    private func repoSectionHeader(_ repoKey: String, count: Int, collapsed: Bool,
+    /// name and its item count. Clicking it toggles the section's collapse, keyed in `collapsedItems`
+    /// by the repo's `owner/name` (which can't collide with an item's `repo#number`). In the "All
+    /// organizations" scope the sections span multiple owners, so `showOwner` renders the full
+    /// `owner/name` for disambiguation; a single org's sections share its owner and show just the name.
+    private func repoSectionHeader(_ repoKey: String, count: Int, collapsed: Bool, showOwner: Bool,
                                    width w: CGFloat, t: Theme) -> ClickRow {
         let row = ClickRow(bg: nil, radius: z(6))
         row.hoverColor = t.hover
         row.frame = NSRect(x: z(8), y: 0, width: w - z(16), height: z(26))
         row.onClick = { [weak self] in self?.toggleCollapse(repoKey) }
-        let shortName = String(repoKey.split(separator: "/").last ?? Substring(repoKey))
+        let shortName = showOwner ? repoKey : String(repoKey.split(separator: "/").last ?? Substring(repoKey))
         let caret = label(collapsed ? "▸" : "▾", sys(9), t.txt4, align: .center)
         caret.frame = NSRect(x: z(6), y: z(6), width: z(12), height: z(14)); row.addSubview(caret)
         let nm = label(shortName, sys(11.5, .semibold), t.txt2)
@@ -679,6 +702,7 @@ final class RepoPanelView: FlippedView {
                 guard let repoItems = byRepo[repoKey], !repoItems.isEmpty else { continue }
                 let collapsed = store.collapsedItems.contains(repoKey)
                 let header = repoSectionHeader(repoKey, count: repoItems.count, collapsed: collapsed,
+                                               showOwner: store.selectedOrgId == Org.allOrgsID,
                                                width: w, t: t)
                 header.frame.origin.y = ly; doc.addSubview(header); ly += z(30)
                 if collapsed { continue }

@@ -261,15 +261,33 @@ final class BosunView: NSView {
 
     private func upsert(_ connection: Domain.Connection) {
         if let idx = store.domainConnections.firstIndex(where: { $0.id == connection.id }) {
+            let renamed = store.domainConnections[idx].name != connection.name
             store.domainConnections[idx] = connection
+            // Keep any open console tab's label in step with the rename (connection tabs are locked
+            // to the connection name, #29), so an edit doesn't leave a stale title on the strip.
+            if renamed {
+                center.terminal.renameConnectionTabs(connectionId: connection.id.uuidString, to: connection.name)
+            }
         } else {
             store.domainConnections.append(connection)
         }
         store.selectedConnId = connection.id.uuidString
     }
 
+    /// Delete a connection. Confirms first with an `NSAlert` (mirrors `deleteFolder`) since the
+    /// removal is permanent; on confirm the optimistic store update runs, then the use case persists.
     private func deleteConnection(_ id: String) {
-        guard let uuid = UUID(uuidString: id) else { return }
+        guard let uuid = UUID(uuidString: id),
+              let conn = store.domainConnections.first(where: { $0.id == uuid }) else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete connection “\(conn.name)”?"
+        alert.informativeText = "This cannot be undone."
+        alert.addButton(withTitle: "Delete")   // first button = default (Return)
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
         store.domainConnections.removeAll { $0.id == uuid }
         if store.selectedConnId == id {
             store.selectedConnId = store.domainConnections.first?.id.uuidString ?? ""

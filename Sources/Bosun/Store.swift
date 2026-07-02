@@ -378,7 +378,10 @@ final class Store {
     /// The breadcrumb/header title for the active scope: the org's name in org scope, otherwise the
     /// selected repo's `owner/name` (empty when nothing is selected).
     var scopeTitle: String {
-        if isOrgScope { return visibleOrgs.first { $0.id == selectedOrgId }?.name ?? selectedOrgId }
+        if isOrgScope {
+            if selectedOrgId == Org.allOrgsID { return "All organizations" }
+            return visibleOrgs.first { $0.id == selectedOrgId }?.name ?? selectedOrgId
+        }
         return selectedRepoTitle
     }
 
@@ -387,10 +390,28 @@ final class Store {
     /// titlebar directly when it changes, avoiding a full UI rebuild on every shell-title update.
     var activeConsoleTitle = ""
 
+    /// Every repo across all visible orgs, in panel order (org order, then repo order within each),
+    /// deduplicated by `owner/name`. Both the fetch scope and the per-repo section order for the
+    /// "All organizations" aggregate (`Org.allOrgsID`), which unions the whole visible tree — so it
+    /// respects the manage/hide (`followedOrgs`) choice and includes the synthetic personal group.
+    var allOrgRepos: [Repo] {
+        var seen = Set<String>()
+        var repos: [Repo] = []
+        for org in visibleOrgs {
+            for rp in org.repos where seen.insert("\(rp.owner)/\(rp.name)").inserted {
+                repos.append(rp)
+            }
+        }
+        return repos
+    }
+
     /// `owner/name` of the selected org's repos in panel order — the section order for the aggregate
-    /// org view. Empty when no org is selected.
+    /// org view. The `Org.allOrgsID` sentinel resolves to every visible org's repos (`allOrgRepos`);
+    /// a real org resolves to its own repos. Empty when no org is selected.
     var selectedOrgRepoKeys: [String] {
-        guard isOrgScope, let org = visibleOrgs.first(where: { $0.id == selectedOrgId }) else { return [] }
+        guard isOrgScope else { return [] }
+        if selectedOrgId == Org.allOrgsID { return allOrgRepos.map { "\($0.owner)/\($0.name)" } }
+        guard let org = visibleOrgs.first(where: { $0.id == selectedOrgId }) else { return [] }
         return org.repos.map { "\($0.owner)/\($0.name)" }
     }
 

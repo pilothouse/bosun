@@ -168,9 +168,12 @@ final class GitHubDataController {
 
         // Restore a remembered aggregate-org scope first (org and repo selection are mutually
         // exclusive). loadOrgItems reconciles the remembered open item against the aggregate, so the
-        // org, its sections, and the open issue all come back together.
-        if !store.selectedOrgId.isEmpty,
-           store.visibleOrgs.contains(where: { $0.id == store.selectedOrgId }) {
+        // org, its sections, and the open issue all come back together. The "All organizations"
+        // sentinel isn't in `visibleOrgs`, so it's restorable whenever any org is visible to union.
+        let orgScopeRestorable = store.selectedOrgId == Org.allOrgsID
+            ? !store.visibleOrgs.isEmpty
+            : store.visibleOrgs.contains(where: { $0.id == store.selectedOrgId })
+        if !store.selectedOrgId.isEmpty, orgScopeRestorable {
             selectOrg(id: store.selectedOrgId)
             return
         }
@@ -686,9 +689,17 @@ final class GitHubDataController {
         detailTask?.cancel()
         store.dataError = nil
         blockedByLoaded.remove("org:\(orgId)")   // a fresh load re-fetches blockers if "By blocked-by" is on
-        guard let org = store.visibleOrgs.first(where: { $0.id == orgId }) else { clearItems(); return }
+        // The "All organizations" sentinel unions every visible org's repos; a real org resolves to
+        // its own. Everything downstream (the `OrgItemScope` filter, the batched-by-owner fetch, the
+        // per-repo delta/cache) is scope-agnostic, so a multi-owner union just flows through.
+        let repos: [Repo]
+        if orgId == Org.allOrgsID {
+            repos = store.allOrgRepos
+        } else if let org = store.visibleOrgs.first(where: { $0.id == orgId }) {
+            repos = org.repos
+        } else { clearItems(); return }
         let openOnly = store.prStates == [.open] && store.issueStates == [.open]
-        let repoKeys = org.repos
+        let repoKeys = repos
             .filter { OrgItemScope.includesRepo(open: $0.open, openOnly: openOnly) }
             .map { (owner: $0.owner, name: $0.name) }
         let prStates = store.prStates
