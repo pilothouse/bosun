@@ -46,6 +46,25 @@ final class RepoPanelView: FlippedView {
     /// restored across the repaint.
     private var listIdentity = ""
 
+    /// Cached issue/PR list document, reused across rebuilds when the list's *content* is unchanged
+    /// (see `installListDoc`). `rebuild()` runs on every `layout()` — so ~60×/sec while the orgs↔issues
+    /// divider is dragged, and once per store change (e.g. expanding an org). Building the list eagerly
+    /// materializes one card view per item (~1000 `NSTextField`s + per-row `fitW()` measurement for a
+    /// few-hundred-item repo), which is the drag lag (#91). A *strong* ref keeps the built document
+    /// alive through `rebuild()`'s teardown so it can be reparented into the fresh scroll view — the
+    /// same reparent `repopulateList()` already relies on. `cachedListContentH` is the doc's natural
+    /// (content) height, kept so the reused doc can be re-stretched to fill a resized viewport.
+    private var cachedListDoc: FlippedView?
+    private var cachedListSig: Int?
+    private var cachedListContentH: CGFloat = 0
+    /// Cached orgs document, reused across rebuilds when the orgs' content is unchanged — the same
+    /// scheme as `cachedListDoc`. During a divider drag only `store.orgsListHeight` changes (not in the
+    /// signature), so this is reused every frame; expanding/collapsing an org changes the signature so
+    /// it rebuilds once. Reusing it also avoids the `AvatarView` initials-flash on relayout.
+    private var cachedOrgsDoc: FlippedView?
+    private var cachedOrgsSig: Int?
+    private var cachedOrgsContentH: CGFloat = 0
+
     /// Live free-text filter over the loaded issues/PRs (title / number / labels). Like the rail's
     /// "Search connections" field (`ConnectionRailView`), the query is panel-local transient state,
     /// deliberately *not* in `Store`: a `store.notify()` per keystroke would tear the whole panel down
@@ -241,6 +260,41 @@ final class RepoPanelView: FlippedView {
         return (doc, y)
     }
 
+    /// A cheap fingerprint of everything `orgRows` renders, so `ensureOrgsDoc` can tell a pure
+    /// geometry change (the divider drag) — where nothing here changes — from a real content change
+    /// (loading, selection, expand/collapse, a data refresh). Folds into one `Int` via `Hasher`;
+    /// over-inclusion only costs a spurious rebuild, which never happens mid-drag.
+    private func orgsSignature(width w: CGFloat, t: Theme) -> Int {
+        var h = Hasher()
+        h.combine(w); h.combine(uiScale); h.combine(t.key)
+        h.combine(store.isLoadingOrgs); h.combine(store.dataError ?? "")
+        // `authState` isn't Hashable and only its *case* drives the empty-state hint, so fold a
+        // discriminator: signed-in shows orgs/hint, everything else shows the sign-in prompt.
+        h.combine({ if case .signedIn = store.authState { return true } else { return false } }())
+        h.combine(store.selectedOrgId); h.combine(store.selectedRepoKey ?? "")
+        for id in store.expandedOrgs.sorted() { h.combine(id) }
+        for org in store.visibleOrgs {
+            h.combine(org.id); h.combine(org.name); h.combine(org.repos.count)
+            for rp in org.repos { h.combine(rp.owner); h.combine(rp.name); h.combine(rp.open) }
+        }
+        return h.finalize()
+    }
+
+    /// Return the orgs document to install, building it via `orgRows` only when its signature changed;
+    /// otherwise reuse the cached view (reparented into the fresh scroll view by the caller). Returns
+    /// the natural content height so the caller can size/clamp the scroll region. See `cachedOrgsDoc`.
+    private func ensureOrgsDoc(width w: CGFloat, t: Theme) -> CGFloat {
+        let sig = orgsSignature(width: w, t: t)
+        if sig != cachedOrgsSig || cachedOrgsDoc == nil {
+            let (built, contentH) = orgRows(width: w, t: t)
+            cachedOrgsDoc = built
+            cachedOrgsSig = sig
+            cachedOrgsContentH = contentH
+        }
+        cachedOrgsDoc?.frame.size.width = w
+        return cachedOrgsContentH
+    }
+
     private func itemCard(_ it: Item, width w: CGFloat, t: Theme) -> ClickRow {
         let selected = store.selectedItemId == it.id
         let card = ClickRow(bg: t.card, radius: z(9))
@@ -362,20 +416,23 @@ final class RepoPanelView: FlippedView {
         let lb = BoxView(bg: t.line)
         lb.frame = NSRect(x: 0, y: 0, width: 1, height: bounds.height); addSubview(lb)
 
-        // 1. Orgs (scroll region; the user-draggable cap from `store.orgsListHeight`, shrinking to
-        // fit content). The cap is clamped so the orgs region keeps its floor and the chrome + list
-        // below it keep theirs — the same `SplitLayout` clamp the divider drag uses (#91).
-        let (orgsDoc, orgsContentH) = orgRows(width: w, t: t)
+        // 1. Orgs (scroll region; the user-draggable cap from `store.orgsListHeight`). The cap is
+        // clamped so the orgs region keeps its floor and the chrome + list below it keep theirs — the
+        // same `SplitLayout` clamp the divider drag uses (#91). The document is cached and reused when
+        // its content is unchanged, so the divider drag doesn't rebuild it every frame.
+        let orgsContentH = ensureOrgsDoc(width: w, t: t)
         let orgsCap = CGFloat(SplitLayout.clampExtent(
             Double(store.orgsListHeight), total: Double(bounds.height),
             minTerminal: SplitLayout.minOrgsListHeight, minDetail: Double(orgsBottomReserve)))
-        let orgsH: CGFloat = min(orgsContentH, orgsCap)
+        // Once there are orgs, hold the region at its (clamped) cap and let it scroll internally, so
+        // expanding/collapsing an org never resizes the issues list below it. Before any orgs load,
+        // hug the small sign-in/loading hint rather than showing a tall empty box.
+        let orgsH: CGFloat = store.visibleOrgs.isEmpty ? min(orgsContentH, orgsCap) : orgsCap
         let orgsScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: w, height: orgsH))
         orgsScroll.drawsBackground = false
         orgsScroll.hasVerticalScroller = true
         orgsScroll.autohidesScrollers = true
-        orgsDoc.frame.size.width = w
-        orgsScroll.documentView = orgsDoc
+        orgsScroll.documentView = cachedOrgsDoc
         addSubview(orgsScroll)
         self.orgsScroll = orgsScroll
         if let token = orgsScrollObserver { NotificationCenter.default.removeObserver(token) }
@@ -390,7 +447,7 @@ final class RepoPanelView: FlippedView {
         } else {
             targetY = priorOrgsOffset?.y ?? 0
         }
-        let maxOrgsY = max(0, orgsDoc.frame.height - orgsScroll.contentView.bounds.height)
+        let maxOrgsY = max(0, (cachedOrgsDoc?.frame.height ?? 0) - orgsScroll.contentView.bounds.height)
         orgsScroll.contentView.scroll(to: NSPoint(x: 0, y: min(max(0, targetY), maxOrgsY)))
         orgsScroll.reflectScrolledClipView(orgsScroll.contentView)
         // Mirror the user's scroll into the store for persistence — only after the cross-launch
@@ -496,8 +553,11 @@ final class RepoPanelView: FlippedView {
         listScroll.drawsBackground = false
         listScroll.hasVerticalScroller = true
         listScroll.autohidesScrollers = true
-        let (doc, selectedRect) = buildListDoc(width: w, minHeight: listScroll.frame.height, t: t)
-        listScroll.documentView = doc
+        // Reuse the cached document when the list content is unchanged (e.g. the divider drag), so a
+        // few-hundred-item list isn't rebuilt every frame (#91). `selectedRect` is nil on the reuse
+        // path — safe, because `selectedItemId` is in the signature, so any selection change takes the
+        // build path (which recomputes it); the focus block below only fires on a selection change.
+        let (doc, selectedRect) = installListDoc(into: listScroll, width: w, t: t)
         addSubview(listScroll)
         self.listScroll = listScroll
 
@@ -679,13 +739,67 @@ final class RepoPanelView: FlippedView {
         return (doc, selectedRect)
     }
 
+    /// A cheap fingerprint of everything `buildListDoc` renders, so `installListDoc` can tell a pure
+    /// geometry change (the divider drag, which keeps width and content fixed) from a real content
+    /// change. There is no revision counter in `Store` (`listItems` is derived from `prs`/`issues`) and
+    /// `Item` isn't `Hashable`, so we fold the render-relevant fields explicitly. Over-inclusion only
+    /// costs a spurious rebuild, which never happens mid-drag since none of these change then. Folding
+    /// a few-hundred items is microseconds against the ~1000 text fields + `fitW()` measurements a
+    /// rebuild would otherwise do every frame (#91).
+    private func listSignature(width w: CGFloat, t: Theme) -> Int {
+        var h = Hasher()
+        h.combine(w); h.combine(uiScale); h.combine(t.key)
+        h.combine(store.tab.rawValue); h.combine(store.groupBy.storageKey)
+        h.combine(store.isOrgScope)
+        for k in store.selectedOrgRepoKeys { h.combine(k) }
+        for id in store.collapsedItems.sorted() { h.combine(id) }
+        h.combine(store.selectedItemId)          // the selected card is styled differently
+        h.combine(store.listTruncated); h.combine(store.isLoadingItems)
+        h.combine(searchQuery)
+        for it in store.listItems {
+            h.combine(it.id); h.combine(it.number); h.combine(it.state.rawValue)
+            h.combine(it.title); h.combine(it.num); h.combine(it.glyph); h.combine(it.statusLabel)
+            h.combine(it.metaLeft); h.combine(it.metaRight); h.combine(it.isAgent)
+            h.combine(it.epic); h.combine(it.blocked ?? ""); h.combine(it.parent ?? "")
+            for l in it.labels { h.combine(l) }
+            h.combine(it.repo)
+        }
+        return h.finalize()
+    }
+
+    /// Install the list document into `scroll`, building it via `buildListDoc` only when its content
+    /// changed (per `listSignature`); otherwise reuse the cached document (reparenting an `NSView` into
+    /// the fresh scroll view is cheap). Builds with `minHeight: 0` so the cached height is the natural
+    /// content height, then stretches the installed doc to fill the (possibly resized) viewport —
+    /// reproducing `buildListDoc`'s `max(ly, minHeight)` while the divider drag changes the viewport
+    /// height every frame. Returns the installed doc and, on the *build* path only, the open item's
+    /// card rect for scroll-into-view (nil on reuse — safe, see `rebuild`). See `cachedListDoc`.
+    private func installListDoc(into scroll: NSScrollView, width w: CGFloat, t: Theme)
+        -> (doc: FlippedView, selectedRect: NSRect?) {
+        let sig = listSignature(width: w, t: t)
+        var selectedRect: NSRect?
+        if sig != cachedListSig || cachedListDoc == nil {
+            let built = buildListDoc(width: w, minHeight: 0, t: t)   // minHeight 0 → doc.height == content
+            cachedListDoc = built.doc
+            cachedListSig = sig
+            cachedListContentH = built.doc.frame.height
+            selectedRect = built.selectedRect
+        }
+        guard let doc = cachedListDoc else { return (FlippedView(frame: scroll.bounds), nil) }
+        doc.frame.size.width = w
+        doc.frame.size.height = max(cachedListContentH, scroll.frame.height)
+        scroll.documentView = doc
+        return (doc, selectedRect)
+    }
+
     /// Rebuild only the list document in response to a search keystroke, leaving the (sibling) search
     /// field untouched so it keeps first-responder status and its insertion point. Resets to the top
     /// (a filtered list is a new list); the open-item scroll-into-view is intentionally not run here.
+    /// Routed through `installListDoc` so the cache stays coherent — otherwise the first divider-drag
+    /// frame after a keystroke would do one wasted full rebuild.
     private func repopulateList() {
         guard let scroll = listScroll else { return }
-        let (doc, _) = buildListDoc(width: scroll.frame.width, minHeight: scroll.frame.height, t: store.theme)
-        scroll.documentView = doc
+        _ = installListDoc(into: scroll, width: scroll.frame.width, t: store.theme)
     }
 
     /// The live search field row above the list: a borderless `NSTextField` in a card with a ⌕ glyph,
