@@ -23,6 +23,7 @@ final class GitHubDataController {
     /// `editItem` edits an issue/PR's title/body/labels/assignees.
     private let addCommentUseCase: AddCommentUseCase
     private let mergePullRequestUseCase: MergePullRequestUseCase
+    private let closePullRequestUseCase: ClosePullRequestUseCase
     private let editItemUseCase: EditItemUseCase
     private let manageReviewersUseCase: ManageReviewersUseCase
 
@@ -66,13 +67,14 @@ final class GitHubDataController {
     private var blockedByLoaded: Set<String> = []
 
     init(api: GitHubAPI, cache: GitHubCacheStore, store: Store, addComment: AddCommentUseCase,
-         mergePullRequest: MergePullRequestUseCase, editItem: EditItemUseCase,
-         manageReviewers: ManageReviewersUseCase) {
+         mergePullRequest: MergePullRequestUseCase, closePullRequest: ClosePullRequestUseCase,
+         editItem: EditItemUseCase, manageReviewers: ManageReviewersUseCase) {
         self.api = api
         self.cache = cache
         self.store = store
         self.addCommentUseCase = addComment
         self.mergePullRequestUseCase = mergePullRequest
+        self.closePullRequestUseCase = closePullRequest
         self.editItemUseCase = editItem
         self.manageReviewersUseCase = manageReviewers
     }
@@ -449,6 +451,50 @@ final class GitHubDataController {
             } catch {
                 completion(false, Self.mergeMessage(for: error))
             }
+        }
+    }
+
+    /// Close the open PR without merging and, if `deleteBranch`, remove its head branch. Mirrors
+    /// `mergePullRequest`: resolve the selected item, perform the write behind the port, and on success
+    /// re-fetch (the PR now reports `closed`, so the close control hides itself via `PRClosePolicy`).
+    /// A close failure keeps the pane's form open with a reason. If the PR closed but the branch delete
+    /// failed, the close still counts as success — the leftover-branch reason is surfaced as a
+    /// non-blocking banner (`store.dataError`), not treated as a failed close.
+    func closePullRequest(deleteBranch: Bool, completion: @escaping (Bool, String?) -> Void) {
+        let selectedId = store.selectedItemId
+        guard let item = (store.prs + store.issues).first(where: { $0.id == selectedId }),
+              let repo = item.ownerRepo else {
+            completion(false, nil); return
+        }
+        let number = item.number
+        let branch = item.branch
+        Task { @MainActor in
+            do {
+                let result = try await closePullRequestUseCase(
+                    owner: repo.owner, repo: repo.name, number: number,
+                    branch: branch, deleteBranch: deleteBranch)
+                if case let .failed(reason) = result.branchDeletion {
+                    store.dataError = "Closed #\(number), but couldn't delete branch "
+                        + "\(branch ?? ""): \(reason)."
+                }
+                completion(true, nil)
+                // Re-fetch only if the user is still on this item; the detail now reports `closed`.
+                if store.selectedItemId == selectedId { refreshDetail() }
+            } catch {
+                completion(false, Self.closeMessage(for: error))
+            }
+        }
+    }
+
+    /// Close failures need their own wording for the codes the generic `message(for:)` would flatten to
+    /// "check your connection": a 403 is a permission denial (the token can't write this repo). A merge
+    /// isn't in play here, so there's no 405/409 nuance — everything else defers to `message(for:)`.
+    private static func closeMessage(for error: Error) -> String {
+        switch error as? GitHubAPIError {
+        case .http(403):
+            return "You don't have permission to close this pull request."
+        default:
+            return message(for: error)
         }
     }
 

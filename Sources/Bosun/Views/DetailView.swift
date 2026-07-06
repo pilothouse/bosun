@@ -35,6 +35,12 @@ final class DetailView: FlippedView {
     /// form and surfaces `message`.
     var onMergePullRequest: ((PRMergeRequest, @escaping (Bool, String?) -> Void) -> Void)?
 
+    /// Called when the user confirms closing the PR without merging. The view hands over whether to
+    /// also delete the head branch (the checkbox) and a completion the controller runs on the main
+    /// actor: `(true, nil)` closed (the controller refreshes the item to `closed`, hiding the section);
+    /// `(false, message)` keeps the form and surfaces `message`.
+    var onClosePullRequest: ((Bool, @escaping (Bool, String?) -> Void) -> Void)?
+
     /// Called when the user saves a title/body edit or toggles a label/assignee (issue #71). The view
     /// hands over a `GitHubItemEdit` (only the changed fields) and a completion the controller runs on
     /// the main actor: `(true, nil)` applied (the controller updates the item in place); `(false,
@@ -84,6 +90,19 @@ final class DetailView: FlippedView {
     /// The measured height of the elastic commit-message field, so `textDidChange` only relayouts
     /// when a line is actually added/removed (not on every keystroke within a line).
     private var mergeBodyContentH: CGFloat = 0
+
+    // Close-control state, on the view for the same survives-`rebuild()` reason as the merge state:
+    // whether the inline confirm form is expanded, whether the close should also delete the head
+    // branch, an in-flight close, and the last error.
+    /// Whether the inline confirm form is expanded. Collapsed (false) shows just the "Close pull
+    /// request" button; clicking it expands the delete-branch checkbox + Confirm/Cancel.
+    private var closeConfirming = false
+    /// Whether closing also deletes the head branch. On by default (GitHub's "Close + remove branch").
+    private var deleteBranchChecked = true
+    private var isClosing = false
+    private var closeError: String?
+    /// The id the close form belongs to, so switching items collapses the form and re-arms the checkbox.
+    private var closeItemId = ""
 
     // Edit-mode state (issue #71), on the view for the same survives-`rebuild()` reason as the
     // composer/merge state: whether the item's being edited, the in-progress title/body drafts, the
@@ -320,6 +339,14 @@ final class DetailView: FlippedView {
             mergeBodyContentH = 0
         }
 
+        // A new item collapses the close form and re-arms the delete-branch checkbox (on by default,
+        // GitHub's "Close + remove branch"), so no close state leaks across a selection change.
+        if it.id != closeItemId {
+            closeItemId = it.id
+            closeConfirming = false; isClosing = false; closeError = nil
+            deleteBranchChecked = true
+        }
+
         // Selection change: re-seed the always-editable label/assignee drafts from the new item, close
         // any open picker, drop the previous repo's picker choices, and abandon any title/body edit
         // (its drafts belonged to the old item).
@@ -474,7 +501,10 @@ final class DetailView: FlippedView {
         let auth = label(it.author, sys(12, .semibold), t.txt2); auth.frame = NSRect(x: rx, y: y + z(3), width: fitW(auth), height: z(16)); doc.addSubview(auth); rx += auth.frame.width + z(9)
         let opened = label("opened \(it.age)", sys(12), t.txt4); opened.frame = NSRect(x: rx, y: y + z(3), width: fitW(opened), height: z(16)); doc.addSubview(opened); rx += opened.frame.width + z(9)
         if let branch = it.branch {
-            let b = badge("⎇ \(branch)", fg: t.accent, bg: t.accentbg2)
+            // GitHub-style head → base: the PR's branch and, once the detail is hydrated, the branch a
+            // merge lands on. Base-less (lead) rows show just the head branch until the detail arrives.
+            let text = it.baseRef.map { "⎇ \(branch) → \($0)" } ?? "⎇ \(branch)"
+            let b = badge(text, fg: t.accent, bg: t.accentbg2)
             b.frame.origin = NSPoint(x: rx, y: y); doc.addSubview(b); rx += b.frame.width + z(9)
         }
         if let a = it.add, let d = it.del {
@@ -688,9 +718,14 @@ final class DetailView: FlippedView {
         }
 
         // Merge control (open PRs only). A closed/merged PR has no merge affordance; an open one
-        // shows the split-button when mergeable, or a disabled bar with the reason when not.
+        // shows the split-button when mergeable, or a disabled bar with the reason when not. The
+        // "Close pull request" button rides the same row, right-aligned (GitHub keeps close beside
+        // merge); its confirm form (delete-branch checkbox + Confirm/Cancel) expands just below.
         if it.kind == .pr && it.state == .open {
             y = layoutMergeSection(for: it, into: doc, t: t, padX: padX, cw: cw, y: y)
+            if closeConfirming || isClosing {
+                y = layoutCloseSection(for: it, into: doc, t: t, padX: padX, cw: cw, y: y)
+            }
         }
 
         // Comments. The header is a disclosure mirroring ACTIONS/FILES CHANGED: it toggles the
@@ -1188,22 +1223,30 @@ final class DetailView: FlippedView {
             kind: .pullRequest, state: it.state,
             mergeable: it.mergeable, mergeStateStatus: it.mergeStateStatus)
 
-        // Caption, mirroring the ACTIONS/FILES CHANGED/COMMENTS section captions; names the base
-        // branch when known so the user sees what a merge lands on.
-        let caption = it.baseRef.map { "MERGE · into \($0)" } ?? "MERGE"
-        let hdr = label(caption, mono(9.5, .semibold), t.txt4)
+        // Caption, mirroring the ACTIONS/FILES CHANGED/COMMENTS section captions. The merge
+        // destination isn't named here — it rides the head → base branch chip up by the title.
+        let hdr = label("MERGE", mono(9.5, .semibold), t.txt4)
         hdr.frame = NSRect(x: padX, y: y, width: cw, height: z(14)); doc.addSubview(hdr)
         y += z(22)
 
+        // The collapsed "Close pull request" button shares the merge action row, right-aligned. Once
+        // the close form is expanded (or a close is in flight) it renders below the row instead, so the
+        // button is dropped from the row here.
+        let canOfferClose = PRClosePolicy.canClose(kind: .pullRequest, state: it.state)
+            && !closeConfirming && !isClosing
+        let closeBtnW = z(150)
+
         if case let .blocked(reason) = availability {
             let barH = z(34)
+            let barW = canOfferClose ? cw - closeBtnW - z(10) : cw
             let bar = BoxView(bg: t.card, radius: z(8), border: t.cardbr)
-            bar.frame = NSRect(x: padX, y: y, width: cw, height: barH)
+            bar.frame = NSRect(x: padX, y: y, width: barW, height: barH)
             let glyph = label("⊘", sys(12), t.txt4, align: .center)
             glyph.frame = NSRect(x: z(12), y: z(9), width: z(16), height: z(16)); bar.addSubview(glyph)
             let msg = label(reason, sys(12), t.txt4)
-            msg.frame = NSRect(x: z(34), y: z(9), width: cw - z(46), height: z(16)); bar.addSubview(msg)
+            msg.frame = NSRect(x: z(34), y: z(9), width: barW - z(46), height: z(16)); bar.addSubview(msg)
             doc.addSubview(bar)
+            if canOfferClose { doc.addSubview(makeCloseRowButton(t: t, x: padX + cw - closeBtnW, y: y, width: closeBtnW)) }
             return y + barH + z(18)
         }
 
@@ -1293,11 +1336,20 @@ final class DetailView: FlippedView {
             cl.frame = NSRect(x: 0, y: z(9), width: caretW, height: z(16)); caret.addSubview(cl)
             doc.addSubview(caret)
 
+            // Right-aligned Close button on the same row (GitHub keeps close beside merge).
+            if canOfferClose {
+                doc.addSubview(makeCloseRowButton(t: t, x: padX + cw - closeBtnW, y: y, width: closeBtnW))
+            }
+
             let statusX = padX + btnW + z(14)
             let check = label("✓", sys(12, .bold), Status.green, align: .center)
             check.frame = NSRect(x: statusX, y: y + z(9), width: z(14), height: z(16)); doc.addSubview(check)
+            // Status sits between the merge button and the (right-aligned) close button; bound its
+            // width to the close button's left edge so the two never overlap on a narrow pane.
+            let statusRight = canOfferClose ? padX + cw - closeBtnW - z(12) : padX + cw
+            let statusW = max(z(20), statusRight - (statusX + z(20)))
             let statusLbl = label("No conflicts with base branch", sys(12), t.txt3)
-            statusLbl.frame = NSRect(x: statusX + z(20), y: y + z(9), width: cw - btnW - z(38), height: z(16))
+            statusLbl.frame = NSRect(x: statusX + z(20), y: y + z(9), width: statusW, height: z(16))
             doc.addSubview(statusLbl)
 
             // Method picker: built at the button's bottom but added to `doc` last (in `rebuild()`) so
@@ -1310,6 +1362,81 @@ final class DetailView: FlippedView {
 
         if let mergeError {
             let err = label(mergeError, sys(11), Status.red, lines: 0)
+            err.preferredMaxLayoutWidth = cw
+            err.frame = NSRect(x: padX, y: y, width: cw, height: z(32))
+            doc.addSubview(err); y += z(36)
+        }
+        return y + z(10)
+    }
+
+    /// The collapsed, bordered "Close pull request" button that shares the merge action row (placed
+    /// right-aligned by the caller). Clicking it expands the inline close-confirm form below via
+    /// `beginCloseConfirm`. Subordinate (bordered) styling so it doesn't rival the merge CTA.
+    private func makeCloseRowButton(t: Theme, x: CGFloat, y: CGFloat, width: CGFloat) -> NSView {
+        let btn = ClickRow(bg: t.card, radius: z(8))
+        btn.layer?.borderWidth = 1; btn.layer?.borderColor = t.cardbr.cgColor
+        btn.frame = NSRect(x: x, y: y, width: width, height: z(34))
+        btn.onClick = { [weak self] in self?.beginCloseConfirm() }
+        let bl = label("Close pull request", sys(12, .semibold), t.txt2, align: .center)
+        bl.frame = NSRect(x: 0, y: z(9), width: width, height: z(16)); btn.addSubview(bl)
+        return btn
+    }
+
+    /// Lay out the *expanded* close-confirm form below the merge action row (the collapsed trigger is
+    /// the right-aligned button on that row — see `makeCloseRowButton`). Only called while the close
+    /// form is open or a close is in flight: a "Delete branch" checkbox (only when
+    /// `PRClosePolicy.branchDeletable`, so a fork PR's branch — which can't be deleted from here — isn't
+    /// offered), then Confirm/Cancel. Same no-modal pattern as the merge confirm; red confirm text as a
+    /// caution cue.
+    private func layoutCloseSection(for it: Item, into doc: NSView, t: Theme,
+                                    padX: CGFloat, cw: CGFloat, y startY: CGFloat) -> CGFloat {
+        var y = startY
+        let barH = z(34)
+        if isClosing {
+            let spinner = makeSpinner(size: z(16))
+            spinner.frame.origin = NSPoint(x: padX + z(4), y: y + z(8)); doc.addSubview(spinner)
+            let lbl = label("Closing…", sys(12.5, .semibold), t.txt3)
+            lbl.frame = NSRect(x: padX + z(28), y: y + z(8), width: cw - z(40), height: z(18)); doc.addSubview(lbl)
+            y += barH + z(8)
+        } else {
+            // The delete-branch checkbox — shown only when the head branch is deletable (same-repo,
+            // not the base). A fork PR (or the base branch) gets a plain close with no checkbox.
+            if PRClosePolicy.branchDeletable(branch: it.branch, baseRefName: it.baseRef,
+                                             isCrossRepository: it.isCrossRepository),
+               let branch = it.branch {
+                let row = ClickRow(bg: nil, radius: z(6))
+                row.frame = NSRect(x: padX, y: y, width: cw, height: z(24))
+                row.onClick = { [weak self] in self?.toggleDeleteBranch() }
+                let box = label(deleteBranchChecked ? "☑" : "☐", sys(13), t.txt2)
+                box.frame = NSRect(x: 0, y: z(3), width: z(18), height: z(18)); row.addSubview(box)
+                let lbl = label("Delete branch \(branch) after closing", sys(12), t.txt2)
+                lbl.frame = NSRect(x: z(22), y: z(4), width: cw - z(24), height: z(16)); row.addSubview(lbl)
+                doc.addSubview(row); y += z(30)
+            }
+
+            let confirmW = z(150), cancelW = z(86), gap = z(8)
+            // Filled-neutral confirm with red *text* — a caution cue for the (reversible) close plus a
+            // possible branch delete, without an alarming red fill.
+            let confirm = ClickRow(bg: t.card, radius: z(8))
+            confirm.layer?.borderWidth = 1; confirm.layer?.borderColor = t.cardbr.cgColor
+            confirm.frame = NSRect(x: padX, y: y, width: confirmW, height: barH)
+            confirm.onClick = { [weak self] in self?.performClose() }
+            let cl = label("Close pull request", sys(12, .semibold), Status.red, align: .center)
+            cl.frame = NSRect(x: 0, y: z(9), width: confirmW, height: z(16)); confirm.addSubview(cl)
+            doc.addSubview(confirm)
+
+            let cancel = ClickRow(bg: t.card, radius: z(8))
+            cancel.layer?.borderWidth = 1; cancel.layer?.borderColor = t.cardbr.cgColor
+            cancel.frame = NSRect(x: padX + confirmW + gap, y: y, width: cancelW, height: barH)
+            cancel.onClick = { [weak self] in self?.cancelCloseConfirm() }
+            let cancl = label("Cancel", sys(12, .semibold), t.txt2, align: .center)
+            cancl.frame = NSRect(x: 0, y: z(9), width: cancelW, height: z(16)); cancel.addSubview(cancl)
+            doc.addSubview(cancel)
+            y += barH + z(8)
+        }
+
+        if let closeError {
+            let err = label(closeError, sys(11), Status.red, lines: 0)
             err.preferredMaxLayoutWidth = cw
             err.frame = NSRect(x: padX, y: y, width: cw, height: z(32))
             doc.addSubview(err); y += z(36)
@@ -1412,6 +1539,46 @@ final class DetailView: FlippedView {
                 self.mergeConfirming = false   // the controller refreshes to `merged`, hiding the section
             } else if let message {
                 self.mergeError = message       // keep the form open so the user can retry
+            }
+            self.needsLayout = true
+        }
+    }
+
+    /// Expand the inline confirm form for closing the PR. No modal — the form's Close button confirms.
+    private func beginCloseConfirm() {
+        guard !isClosing else { return }
+        closeConfirming = true
+        closeError = nil
+        needsLayout = true
+    }
+
+    /// Collapse the confirm form without closing.
+    private func cancelCloseConfirm() {
+        closeConfirming = false
+        closeError = nil
+        needsLayout = true
+    }
+
+    /// Toggle whether closing also deletes the head branch.
+    private func toggleDeleteBranch() { deleteBranchChecked.toggle(); needsLayout = true }
+
+    /// Close the open PR (and, if the checkbox is on, delete its head branch) — the confirm form's
+    /// action. No-ops while a close is in flight. Flips to the in-flight state and hands the choice to
+    /// the controller via `onClosePullRequest`, which calls back to collapse on success (the controller
+    /// refreshes to `closed`, hiding the section) or surface the error (keeping the form) on failure.
+    private func performClose() {
+        guard !isClosing, let onClosePullRequest else { return }
+        closeError = nil
+        isClosing = true
+        needsLayout = true
+        onClosePullRequest(deleteBranchChecked) { [weak self] ok, message in
+            guard let self else { return }
+            self.isClosing = false
+            if ok {
+                self.closeError = nil
+                self.closeConfirming = false
+            } else if let message {
+                self.closeError = message
             }
             self.needsLayout = true
         }

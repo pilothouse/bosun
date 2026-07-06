@@ -145,6 +145,15 @@ public protocol GitHubAPI: Sendable {
     /// Only cancels *pending* requests — a submitted review can't be removed through this endpoint.
     func removeRequestedReviewers(owner: String, repo: String, number: Int,
                                   logins: [String]) async throws -> [GitHubReviewer]
+    /// Close an open pull request without merging it, returning the PR as GitHub stored it (now
+    /// `closed`). Implemented as REST `PATCH /repos/{owner}/{repo}/issues/{number}` with
+    /// `{"state":"closed"}` — the issues endpoint serves PRs and keeps the `pull_request` marker, so
+    /// the response decodes back as a PR. A permission denial surfaces as `GitHubAPIError.http`.
+    func closePullRequest(owner: String, repo: String, number: Int) async throws -> GitHubItem
+    /// Delete a branch (git ref) in a repo (REST `DELETE /repos/{owner}/{repo}/git/refs/heads/{branch}`).
+    /// Used after closing a PR to remove its head branch. A missing branch (404), a protected branch
+    /// (422), or a permission denial (403) surface as `GitHubAPIError.http` from the adapter.
+    func deleteBranch(owner: String, repo: String, branch: String) async throws
     /// The labels a repository defines, for the edit pane's label picker (REST
     /// `GET /repos/{owner}/{repo}/labels`). Read-only — no business rule, so callers use it directly.
     func repositoryLabels(owner: String, repo: String) async throws -> [GitHubLabel]

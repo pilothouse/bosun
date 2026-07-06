@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let data = GitHubDataController(api: githubServices.api, cache: githubServices.cache,
                                         store: store, addComment: githubServices.addComment,
                                         mergePullRequest: githubServices.mergePullRequest,
+                                        closePullRequest: githubServices.closePullRequest,
                                         editItem: githubServices.editItem,
                                         manageReviewers: githubServices.manageReviewers)
         self.dataController = data

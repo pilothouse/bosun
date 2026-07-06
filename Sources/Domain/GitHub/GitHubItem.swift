@@ -75,6 +75,12 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
     /// section appears once the detail lands. Optional so an older cache written before this key
     /// still decodes (to nil); the presentation layer treats nil as "none".
     public let reviewers: [GitHubReviewer]?
+    /// Whether this PR's head branch lives in a *different* repository (a fork). PR-only and
+    /// detail-hydrated; nil for issues / un-hydrated items. Drives whether the detail pane offers to
+    /// delete the head branch on close — a fork's branch can't be deleted from the base repo (see
+    /// `PRClosePolicy.branchDeletable`). Optional so an older cache written before this key still
+    /// decodes (to nil), and so a nil (un-hydrated) reading hides the delete affordance until known.
+    public let isCrossRepository: Bool?
 
     public init(id: String, number: Int, kind: GitHubItemKind, title: String,
                 state: GitHubItemState, author: GitHubActor, createdAt: Date, body: String,
@@ -85,7 +91,7 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
                 assignees: [GitHubActor]? = nil, milestone: String? = nil,
                 labelColors: [String: String]? = nil, mergeable: Bool? = nil,
                 mergeStateStatus: String? = nil, baseRefName: String? = nil,
-                reviewers: [GitHubReviewer]? = nil) {
+                reviewers: [GitHubReviewer]? = nil, isCrossRepository: Bool? = nil) {
         self.id = id
         self.number = number
         self.kind = kind
@@ -112,5 +118,6 @@ public struct GitHubItem: Sendable, Equatable, Identifiable, Codable {
         self.mergeStateStatus = mergeStateStatus
         self.baseRefName = baseRefName
         self.reviewers = reviewers
+        self.isCrossRepository = isCrossRepository
     }
 }

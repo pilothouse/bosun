@@ -458,6 +458,44 @@ final class GitHubAPIClientTests: XCTestCase {
         XCTAssertEqual(body["labels"] as? [String], ["bug"])
     }
 
+    func testClosePullRequestPatchesClosedStateToIssuesEndpointAndKeepsPRKind() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.ok(request), json("""
+            { "number": 482, "title": "Ship it", "state": "closed", "labels": [], "assignees": [],
+              "created_at": "2024-01-01T00:00:00Z", "pull_request": {} }
+            """))
+        }
+        let item = try await makeClient().closePullRequest(owner: "acme-corp", repo: "api-gateway", number: 482)
+
+        // The issues endpoint's `pull_request` marker keeps it typed as a PR (not an issue), now closed.
+        XCTAssertEqual(item.kind, .pullRequest)
+        XCTAssertEqual(item.state, .closed)
+
+        // PATCHes `{ "state": "closed" }` to the issues endpoint (which serves PRs too).
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.httpMethod, "PATCH")
+        XCTAssertEqual(request.url?.path, "/repos/acme-corp/api-gateway/issues/482")
+        let sent = try XCTUnwrap(bodyData(request))
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: String])
+        XCTAssertEqual(body, ["state": "closed"])
+    }
+
+    func testDeleteBranchDeletesTheHeadRefKeepingSlashesAsRefSegments() async throws {
+        let captured = RequestBox()
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return (self.status(request, 204), Data())   // GitHub returns 204 No Content, no body
+        }
+        try await makeClient().deleteBranch(owner: "acme-corp", repo: "api-gateway", branch: "feature/foo")
+
+        // DELETEs the git ref; the branch's slash stays a path separator (heads/feature/foo).
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.httpMethod, "DELETE")
+        XCTAssertEqual(request.url?.path, "/repos/acme-corp/api-gateway/git/refs/heads/feature/foo")
+    }
+
     func testRequestReviewersPostsLoginsAndDecodesPendingSet() async throws {
         let captured = RequestBox()
         StubURLProtocol.handler = { request in

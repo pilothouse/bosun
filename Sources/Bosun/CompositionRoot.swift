@@ -35,6 +35,8 @@ struct GitHubAuthServices {
     let addComment: AddCommentUseCase
     /// Merge a pull request — the second write. Shares `api`'s client (same token).
     let mergePullRequest: MergePullRequestUseCase
+    /// Close a PR without merging and (optionally) delete its head branch. Shares `api`'s client.
+    let closePullRequest: ClosePullRequestUseCase
     /// Edit an issue/PR's title/body/labels/assignees — the third write. Shares `api`'s client.
     let editItem: EditItemUseCase
     /// Request/remove a PR's reviewers (issue #70) — the fourth write. Shares `api`'s client.
@@ -83,7 +85,7 @@ enum CompositionRoot {
     static func makeGitHubAuthServices() -> GitHubAuthServices {
         let tokenStore = KeychainTokenStore()                  // concrete adapters chosen here only
         let auth = GitHubDeviceAuthClient(clientId: githubClientID(), scope: oauthScopes)
-        let client = GitHubAPIClient(tokenStore: tokenStore)   // one client: reads + the two writes
+        let client = GitHubAPIClient(tokenStore: tokenStore)   // one client: reads + the writes
         return GitHubAuthServices(
             tokenStore: tokenStore,
             authenticate: AuthenticateWithGitHubUseCase(
@@ -92,6 +94,7 @@ enum CompositionRoot {
             cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL()),
             addComment: AddCommentUseCase(api: client),
             mergePullRequest: MergePullRequestUseCase(api: client),
+            closePullRequest: ClosePullRequestUseCase(api: client),
             editItem: EditItemUseCase(api: client),
             manageReviewers: ManageReviewersUseCase(api: client)
         )

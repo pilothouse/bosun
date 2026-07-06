@@ -154,6 +154,10 @@ struct Item {
     var mergeable: Bool? = nil
     var mergeStateStatus: String? = nil
     var baseRef: String? = nil
+    /// Whether the PR's head branch lives in a fork (cross-repository). Detail-hydrated; nil for
+    /// issues / un-hydrated rows. Gates the "Delete branch" option on close via `PRClosePolicy` — a
+    /// fork's branch can't be deleted from the base repo.
+    var isCrossRepository: Bool? = nil
 }
 
 extension Item {

@@ -121,7 +121,8 @@ extension Item {
             // PR mergeability for the detail pane's merge control (nil for issues / lead rows).
             mergeable: it.mergeable,
             mergeStateStatus: it.mergeStateStatus,
-            baseRef: it.baseRefName
+            baseRef: it.baseRefName,
+            isCrossRepository: it.isCrossRepository
         )
     }
 

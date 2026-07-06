@@ -131,7 +131,7 @@ enum GitHubGraphQLQueries {
           }
           ... on PullRequest {
             id number title body createdAt state
-            isDraft additions deletions headRefName
+            isDraft additions deletions headRefName isCrossRepository
             mergeable mergeStateStatus baseRefName
             author { login avatarUrl }
             labels(first: 20) { nodes { name color } }

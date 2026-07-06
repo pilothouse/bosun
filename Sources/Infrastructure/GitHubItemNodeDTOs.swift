@@ -61,6 +61,7 @@ struct ItemNode: Decodable {
     let additions: Int?
     let deletions: Int?
     let headRefName: String?
+    let isCrossRepository: Bool?
     let mergeable: String?
     let mergeStateStatus: String?
     let baseRefName: String?
@@ -80,7 +81,7 @@ struct ItemNode: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id, number, title, body, createdAt, state, author, labels
-        case isDraft, additions, deletions, headRefName, commits, files, parent
+        case isDraft, additions, deletions, headRefName, isCrossRepository, commits, files, parent
         case assignees, milestone, mergeable, mergeStateStatus, baseRefName
         case reviewRequests, latestReviews
         case typeName = "__typename"
@@ -128,7 +129,7 @@ struct ItemNode: Decodable {
             milestone: milestone?.title,
             labelColors: labelColorMap,
             mergeable: mergeableBool, mergeStateStatus: mergeStateStatus, baseRefName: baseRefName,
-            reviewers: reviewers)
+            reviewers: reviewers, isCrossRepository: isCrossRepository)
     }
 
     /// GitHub's `MergeableState` enum (MERGEABLE/CONFLICTING/UNKNOWN) flattened to the Domain's

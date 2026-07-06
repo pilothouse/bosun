@@ -198,6 +198,29 @@ public actor GitHubAPIClient: GitHubAPI {
         return dto.toDomain()
     }
 
+    public func closePullRequest(owner: String, repo: String, number: Int) async throws -> GitHubItem {
+        // Close-without-merge: REST `PATCH .../issues/{number}` with `{"state":"closed"}`. The issues
+        // endpoint serves PRs and its response keeps the `pull_request` marker, so `IssueRESTDTO`
+        // decodes it back as a PR (the `pulls` endpoint's object lacks that marker and would mis-type
+        // as an issue). A 403 permission denial surfaces as `GitHubAPIError` from `validate`.
+        let payload = try JSONEncoder().encode(CloseStateBody(state: "closed"))
+        let url = restURL(path: "/repos/\(owner)/\(repo)/issues/\(number)")
+        let request = try await authorizedRequest(url: url, method: "PATCH", body: payload)
+        let (data, _) = try await perform(request)
+        let dto: IssueRESTDTO = try decode(data)
+        return dto.toDomain(owner: owner, repo: repo)
+    }
+
+    public func deleteBranch(owner: String, repo: String, branch: String) async throws {
+        // REST `DELETE .../git/refs/heads/{branch}` → 204 (no body). A slash in the branch name
+        // (`feature/foo`) becomes nested ref path segments, exactly GitHub's ref layout. `validate`
+        // throws on a non-2xx (404 already-gone / 422 protected / 403 forbidden), which the
+        // `ClosePullRequestUseCase` folds into the close result rather than failing the whole close.
+        let url = restURL(path: "/repos/\(owner)/\(repo)/git/refs/heads/\(branch)")
+        let request = try await authorizedRequest(url: url, method: "DELETE")
+        _ = try await perform(request)
+    }
+
     public func repositoryLabels(owner: String, repo: String) async throws -> [GitHubLabel] {
         let labels: [LabelDTO] = try await getPaged(path: "/repos/\(owner)/\(repo)/labels")
         return labels.map { $0.toDomain() }

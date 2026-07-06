@@ -44,6 +44,13 @@ struct EditItemBody: Encodable {
     }
 }
 
+/// The `PATCH .../issues/{number}` request body for a close-without-merge — GitHub takes
+/// `{ "state": "closed" }`. Kept separate from `EditItemBody` so closing stays a distinct write
+/// rather than an edit field. The success body is the issue object, decoded via `IssueRESTDTO`.
+struct CloseStateBody: Encodable {
+    let state: String
+}
+
 /// The `PATCH .../issues/{number}` success body (also the shape `GET .../issues/{number}` returns) —
 /// the REST issue object, which serves PRs too. Mapped to a `GitHubItem` carrying the fields an edit
 /// can change; the PR-only detail fields (checks/files/mergeability) aren't in this payload and stay
