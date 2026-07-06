@@ -136,8 +136,42 @@ final class RepoPanelView: FlippedView {
     func apply() { needsLayout = true }
     override func layout() { super.layout(); rebuild() }
 
-    /// Highlight the row immediately, then ask the data controller to hydrate its detail.
+    // The panel itself takes keyboard focus (never a row) so arrow navigation survives `rebuild()`,
+    // which recreates every subview on each selection change but never the panel object. When the
+    // terminal or the search field's editor is first responder instead, they receive keys — so
+    // arrows only drive the list once the user has clicked into it.
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with e: NSEvent) {
+        switch e.keyCode {
+        case 125: moveSelection(by: 1)      // Down arrow → next visible item
+        case 126: moveSelection(by: -1)     // Up arrow → previous visible item
+        default:  super.keyDown(with: e)    // let everything else flow up the responder chain
+        }
+    }
+
+    /// Move the selection by one visible row (clamped, no wrap), then select it — scrolling it into
+    /// view and opening its detail, exactly as a click would. Reads `visibleListRows()` so it honors
+    /// the live search / grouping / collapse / org sectioning. With nothing selected (or the selection
+    /// filtered or collapsed out of view), Down selects the first visible item and Up the last.
+    private func moveSelection(by delta: Int) {
+        let items = visibleListRows().compactMap { $0.item }
+        guard !items.isEmpty else { return }
+        let target: Int
+        if let cur = items.firstIndex(where: { $0.id == store.selectedItemId }) {
+            let next = min(max(cur + delta, 0), items.count - 1)   // clamp at the ends
+            guard next != cur else { return }                      // already at an end: true no-op
+            target = next
+        } else {
+            target = delta > 0 ? 0 : items.count - 1               // nothing visible-selected yet
+        }
+        selectItem(items[target])
+    }
+
+    /// Highlight the row immediately, then ask the data controller to hydrate its detail. Grabbing
+    /// first responder here is what enables arrow navigation after a click (see `keyDown`).
     private func selectItem(_ it: Item) {
+        window?.makeFirstResponder(self)
         store.selectedItemId = it.id
         onSelectItem?(it)
     }
@@ -428,9 +462,11 @@ final class RepoPanelView: FlippedView {
         // (e.g. opening an item, which hydrates its detail) can restore it instead of jumping to top.
         let priorListOffset = listScroll?.contentView.bounds.origin
         let priorOrgsOffset = orgsScroll?.contentView.bounds.origin
-        // Keep the persistent orgs splitter out of the teardown so an in-flight drag isn't
-        // interrupted (it's repositioned below); everything else is rebuilt from scratch.
-        subviews.forEach { if $0 !== orgsHandle { $0.removeFromSuperview() } }
+        // Keep the persistent orgs splitter AND the list scroll view out of the teardown; everything
+        // else is rebuilt from scratch. Reusing the list scroll view (rather than recreating it every
+        // rebuild) is what lets an in-flight trackpad/momentum scroll survive a repaint — removing it
+        // from the hierarchy mid-scroll would halt the gesture (the aggregate-org scroll-stops bug).
+        subviews.forEach { if $0 !== orgsHandle && $0 !== self.listScroll { $0.removeFromSuperview() } }
         let t = store.theme
         layer?.backgroundColor = t.panel.cgColor
         let w = bounds.width
@@ -571,28 +607,31 @@ final class RepoPanelView: FlippedView {
         }
         let listTop = y + z(42)
 
-        // 4. List body.
-        let listScroll = NSScrollView(frame: NSRect(x: 0, y: listTop, width: w, height: bounds.height - listTop - z(8)))
+        // 4. List body. Reuse the persistent scroll view (kept out of the teardown above) rather than
+        // recreating it, so a live scroll survives the repaint; only its frame is updated here.
+        let listScroll = self.listScroll ?? NSScrollView()
+        listScroll.frame = NSRect(x: 0, y: listTop, width: w, height: bounds.height - listTop - z(8))
         listScroll.drawsBackground = false
         listScroll.hasVerticalScroller = true
         listScroll.autohidesScrollers = true
         // Reuse the cached document when the list content is unchanged (e.g. the divider drag), so a
-        // few-hundred-item list isn't rebuilt every frame (#91). `selectedRect` is nil on the reuse
-        // path — safe, because `selectedItemId` is in the signature, so any selection change takes the
-        // build path (which recomputes it); the focus block below only fires on a selection change.
-        let (doc, selectedRect) = installListDoc(into: listScroll, width: w, t: t)
-        addSubview(listScroll)
+        // few-hundred-item list isn't rebuilt every frame (#91). `selectedRect`/`docChanged` are the
+        // reuse signal: on the reuse path the doc is untouched, so any selection change takes the build
+        // path (which recomputes them); the focus block below only fires on a selection change.
+        let (doc, selectedRect, docChanged) = installListDoc(into: listScroll, width: w, t: t)
+        if listScroll.superview == nil { addSubview(listScroll) }
         self.listScroll = listScroll
 
         // Preserve the user's place across a plain repaint; reset to the top only when the list
-        // itself changed (repo/tab/grouping/status-filter switch). The selection-focus below can
-        // still override this to bring a newly-opened item into view.
+        // itself changed (repo/tab/grouping/status-filter switch). Only needed when the document view
+        // was actually swapped (which zeroes the scroll) — on the reuse path the position (and a live
+        // momentum scroll) is kept naturally, so we must NOT call scroll(to:), which would halt it.
         let identity = [store.selectedOrgId, store.selectedRepoKey ?? "", store.tab.rawValue, store.groupBy.storageKey,
                         store.sortField.rawValue + (store.sortAscending ? "↑" : "↓"),
                         store.prStates.map(\.rawValue).sorted().joined(separator: ","),
                         store.issueStates.map(\.rawValue).sorted().joined(separator: ",")]
             .joined(separator: "|")
-        if identity == listIdentity, let off = priorListOffset {
+        if docChanged, identity == listIdentity, let off = priorListOffset {
             // Clamp to the new content height in case the list shrank, so we never land in empty space.
             let maxY = max(0, doc.frame.height - listScroll.contentView.bounds.height)
             listScroll.contentView.scroll(to: NSPoint(x: off.x, y: min(off.y, maxY)))
@@ -673,26 +712,48 @@ final class RepoPanelView: FlippedView {
         }
     }
 
-    /// Build the (search-filtered) issue/PR list as a fresh document view, plus the open item's card
-    /// rect (so the caller can scroll it into view). Each item is narrowed by the current
-    /// `searchQuery` via the pure `GitHubItemSearch` rule (an empty query yields the full list).
-    /// Factored out of `rebuild()` so a keystroke can rebuild just this document — keeping the sibling
-    /// search field focused — via `repopulateList()`, not the whole panel.
-    private func buildListDoc(width w: CGFloat, minHeight: CGFloat, t: Theme) -> (doc: FlippedView, selectedRect: NSRect?) {
-        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
-        var ly: CGFloat = z(6)
-        var selectedRect: NSRect?   // the open item's card, captured so we can scroll it into view
-        let all = store.listItems
+    /// One entry in the list's visible, search/scope/group/collapse-aware order — the single source
+    /// of truth shared by rendering (`buildListDoc`) and keyboard navigation (`moveSelection`), so the
+    /// two can never disagree about what's on screen or in what order. Non-navigable chrome (the
+    /// loading spinner and the "no match"/truncation notes) is intentionally *not* modeled here; it
+    /// stays in `buildListDoc`. `.section`/`.sectionGap` carry the aggregate-org layout but have no
+    /// `item`, so navigation skips them.
+    private enum ListRow {
+        case section(repoKey: String, count: Int, collapsed: Bool)   // aggregate-org repo header
+        case card(Item)                                              // single-repo flat card
+        case tree(Item, depth: Int, hasChildren: Bool)              // grouped / org-section row
+        case sectionGap                                              // trailing gap below a section
+
+        /// The selectable item this row represents, or nil for headers/spacers.
+        var item: Item? {
+            switch self {
+            case .section, .sectionGap: return nil
+            case let .card(it), let .tree(it, _, _): return it
+            }
+        }
+    }
+
+    /// The active tab's items narrowed by the live search query (an empty query yields the full list),
+    /// via the pure `GitHubItemSearch` rule. The one place the filter is defined, so `visibleListRows`
+    /// and the "no match" note agree.
+    private func filteredListItems() -> [Item] {
         let needle = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let items = needle.isEmpty ? all
-            : all.filter { GitHubItemSearch.matches(query: needle, title: $0.title,
-                                                    number: $0.number, labels: $0.labels) }
-        if store.isLoadingItems && all.isEmpty {
-            // First load of this repo's items: a spinner where the cards will appear.
-            let spinner = makeSpinner()
-            spinner.frame.origin = NSPoint(x: (w - z(20)) / 2, y: z(16)); doc.addSubview(spinner)
-            ly += z(52)
-        } else if store.isOrgScope {
+        guard !needle.isEmpty else { return store.listItems }
+        return store.listItems.filter {
+            GitHubItemSearch.matches(query: needle, title: $0.title, number: $0.number, labels: $0.labels)
+        }
+    }
+
+    /// The list rows in display order — THE ordering authority. Applies the same search filter, org
+    /// sectioning (`selectedOrgRepoKeys` + collapse), grouping (`groupedTreeRows`) and collapse the
+    /// panel draws, so `buildListDoc` (which renders these) and `moveSelection` (which walks the
+    /// navigable ones) share one definition. Returns `[]` on the loading-empty branch (the spinner is
+    /// drawn separately) and for a genuinely empty list.
+    private func visibleListRows() -> [ListRow] {
+        if store.isLoadingItems && store.listItems.isEmpty { return [] }
+        let items = filteredListItems()
+        var rows: [ListRow] = []
+        if store.isOrgScope {
             // Aggregate org view: one collapsible section per repo (in panel order). Within a section
             // the active grouping still applies — "By parent"/"By blocked-by" nest that repo's items
             // into a tree (relationships are same-repo), "Flat list" lists them flat. Items keep their
@@ -701,56 +762,80 @@ final class RepoPanelView: FlippedView {
             for repoKey in store.selectedOrgRepoKeys {
                 guard let repoItems = byRepo[repoKey], !repoItems.isEmpty else { continue }
                 let collapsed = store.collapsedItems.contains(repoKey)
-                let header = repoSectionHeader(repoKey, count: repoItems.count, collapsed: collapsed,
-                                               showOwner: store.selectedOrgId == Org.allOrgsID,
-                                               width: w, t: t)
-                header.frame.origin.y = ly; doc.addSubview(header); ly += z(30)
+                rows.append(.section(repoKey: repoKey, count: repoItems.count, collapsed: collapsed))
                 if collapsed { continue }
                 if store.groupBy == .none {
-                    for it in repoItems {
-                        let gr = groupedRow(it, indent: 0, hasChildren: false, width: w, t: t)
-                        gr.frame.origin.y = ly; doc.addSubview(gr)
-                        if it.id == store.selectedItemId { selectedRect = gr.frame }
-                        ly += z(29)
-                    }
+                    for it in repoItems { rows.append(.tree(it, depth: 0, hasChildren: false)) }
                 } else {
                     let byId = Dictionary(repoItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
                     for r in groupedTreeRows(repoItems) {
                         guard let it = byId[r.id] else { continue }
-                        let gr = groupedRow(it, indent: CGFloat(r.depth) * z(18), hasChildren: r.hasChildren,
-                                            width: w, t: t)
-                        gr.frame.origin.y = ly; doc.addSubview(gr)
-                        if it.id == store.selectedItemId { selectedRect = gr.frame }
-                        ly += z(29)
+                        rows.append(.tree(it, depth: r.depth, hasChildren: r.hasChildren))
                     }
                 }
-                ly += z(4)
+                rows.append(.sectionGap)
             }
         } else if store.groupBy == .none {
-            for it in items {
-                let c = itemCard(it, width: w, t: t)
-                c.frame.origin.y = ly; doc.addSubview(c)
-                if it.id == store.selectedItemId { selectedRect = c.frame }
-                ly += z(58)
-            }
+            for it in items { rows.append(.card(it)) }
         } else {
             // Grouped tree (single repo): nest by the active mode's relationship — sub-issue parent
             // ("By parent") or first blocker ("By blocked-by"), honoring collapse.
             let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             for r in groupedTreeRows(items) {
                 guard let it = byId[r.id] else { continue }
-                let gr = groupedRow(it, indent: CGFloat(r.depth) * z(18), hasChildren: r.hasChildren,
-                                    width: w, t: t)
-                gr.frame.origin.y = ly; doc.addSubview(gr)
-                if it.id == store.selectedItemId { selectedRect = gr.frame }
-                ly += z(29)
+                rows.append(.tree(it, depth: r.depth, hasChildren: r.hasChildren))
             }
         }
-        // A live query that hid every row — distinct from a genuinely empty list, so say so.
-        if !needle.isEmpty, items.isEmpty, !all.isEmpty {
-            let note = label("No items match “\(needle)”.", sys(11.5), t.txt4, lines: 2)
-            note.frame = NSRect(x: z(14), y: ly + z(4), width: w - z(28), height: z(30)); doc.addSubview(note)
-            ly += z(38)
+        return rows
+    }
+
+    /// Build the (search-filtered) issue/PR list as a fresh document view, plus the open item's card
+    /// rect (so the caller can scroll it into view). Renders `visibleListRows()` 1:1 into laid-out
+    /// views — that helper owns the ordering, this owns the geometry. Factored out of `rebuild()` so a
+    /// keystroke can rebuild just this document — keeping the sibling search field focused — via
+    /// `repopulateList()`, not the whole panel.
+    private func buildListDoc(width w: CGFloat, minHeight: CGFloat, t: Theme) -> (doc: FlippedView, selectedRect: NSRect?) {
+        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
+        var ly: CGFloat = z(6)
+        var selectedRect: NSRect?   // the open item's card, captured so we can scroll it into view
+        let all = store.listItems
+        let needle = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if store.isLoadingItems && all.isEmpty {
+            // First load of this repo's items: a spinner where the cards will appear.
+            let spinner = makeSpinner()
+            spinner.frame.origin = NSPoint(x: (w - z(20)) / 2, y: z(16)); doc.addSubview(spinner)
+            ly += z(52)
+        } else {
+            let rows = visibleListRows()
+            for row in rows {
+                switch row {
+                case let .section(repoKey, count, collapsed):
+                    let header = repoSectionHeader(repoKey, count: count, collapsed: collapsed,
+                                                   showOwner: store.selectedOrgId == Org.allOrgsID,
+                                                   width: w, t: t)
+                    header.frame.origin.y = ly; doc.addSubview(header); ly += z(30)
+                case let .card(it):
+                    let c = itemCard(it, width: w, t: t)
+                    c.frame.origin.y = ly; doc.addSubview(c)
+                    if it.id == store.selectedItemId { selectedRect = c.frame }
+                    ly += z(58)
+                case let .tree(it, depth, hasChildren):
+                    let gr = groupedRow(it, indent: CGFloat(depth) * z(18), hasChildren: hasChildren,
+                                        width: w, t: t)
+                    gr.frame.origin.y = ly; doc.addSubview(gr)
+                    if it.id == store.selectedItemId { selectedRect = gr.frame }
+                    ly += z(29)
+                case .sectionGap:
+                    ly += z(4)
+                }
+            }
+            // A live query that hid every row — distinct from a genuinely empty list, so say so.
+            // (org items always belong to the org's repos, so "no navigable row" ⇔ filter matched none.)
+            if !needle.isEmpty, !rows.contains(where: { $0.item != nil }), !all.isEmpty {
+                let note = label("No items match “\(needle)”.", sys(11.5), t.txt4, lines: 2)
+                note.frame = NSRect(x: z(14), y: ly + z(4), width: w - z(28), height: z(30)); doc.addSubview(note)
+                ly += z(38)
+            }
         }
         // When the closed/merged history was bounded, say so rather than implying the list is complete.
         if store.listTruncated && !(store.isLoadingItems && all.isEmpty) {
@@ -799,7 +884,7 @@ final class RepoPanelView: FlippedView {
     /// height every frame. Returns the installed doc and, on the *build* path only, the open item's
     /// card rect for scroll-into-view (nil on reuse — safe, see `rebuild`). See `cachedListDoc`.
     private func installListDoc(into scroll: NSScrollView, width w: CGFloat, t: Theme)
-        -> (doc: FlippedView, selectedRect: NSRect?) {
+        -> (doc: FlippedView, selectedRect: NSRect?, docChanged: Bool) {
         let sig = listSignature(width: w, t: t)
         var selectedRect: NSRect?
         if sig != cachedListSig || cachedListDoc == nil {
@@ -809,11 +894,16 @@ final class RepoPanelView: FlippedView {
             cachedListContentH = built.doc.frame.height
             selectedRect = built.selectedRect
         }
-        guard let doc = cachedListDoc else { return (FlippedView(frame: scroll.bounds), nil) }
+        guard let doc = cachedListDoc else { return (FlippedView(frame: scroll.bounds), nil, true) }
         doc.frame.size.width = w
         doc.frame.size.height = max(cachedListContentH, scroll.frame.height)
-        scroll.documentView = doc
-        return (doc, selectedRect)
+        // Only reassign the document view when it actually changed — reassigning halts a live
+        // trackpad/momentum scroll. On the reuse path (a detail-load or background repaint with
+        // unchanged list content) the same doc stays installed, so the user's scroll is never
+        // interrupted (the aggregate-org scroll-stops bug).
+        let docChanged = scroll.documentView !== doc
+        if docChanged { scroll.documentView = doc }
+        return (doc, selectedRect, docChanged)
     }
 
     /// Rebuild only the list document in response to a search keystroke, leaving the (sibling) search
