@@ -103,6 +103,10 @@ public protocol GitHubAPI: Sendable {
     /// closed/merged history (see `GitHubItemList.reachedHistoryCap`).
     func items(owner: String, repo: String, kind: GitHubItemKind,
                states: Set<GitHubItemState>) async throws -> GitHubItemList
+    /// Search a repo's issues (REST `GET /search/issues?q=repo:{owner}/{repo}+is:issue+{query}`),
+    /// newest first, for the "close as duplicate" parent picker. Returns lead-field `GitHubItem`s
+    /// (like `items`). Read-only with no business rule, so callers use it directly.
+    func searchIssues(owner: String, repo: String, query: String) async throws -> [GitHubItem]
     /// Open issues or PRs across many of `owner`'s `repos` in as few GraphQL round-trips as
     /// possible: one request aliases a fixed batch of repos (the rate-limit win over one `items`
     /// call per repo), paging only the repos whose first page overflowed. Returns one
@@ -150,6 +154,11 @@ public protocol GitHubAPI: Sendable {
     /// `{"state":"closed"}` — the issues endpoint serves PRs and keeps the `pull_request` marker, so
     /// the response decodes back as a PR. A permission denial surfaces as `GitHubAPIError.http`.
     func closePullRequest(owner: String, repo: String, number: Int) async throws -> GitHubItem
+    /// Close an open issue with a `state_reason` (REST `PATCH /repos/{owner}/{repo}/issues/{number}`
+    /// with `{"state":"closed","state_reason":"<reason>"}`) and return the issue as GitHub stored it.
+    /// A permission denial surfaces as `GitHubAPIError.http`.
+    func closeIssue(owner: String, repo: String, number: Int,
+                    reason: IssueCloseReason) async throws -> GitHubItem
     /// Delete a branch (git ref) in a repo (REST `DELETE /repos/{owner}/{repo}/git/refs/heads/{branch}`).
     /// Used after closing a PR to remove its head branch. A missing branch (404), a protected branch
     /// (422), or a permission denial (403) surface as `GitHubAPIError.http` from the adapter.

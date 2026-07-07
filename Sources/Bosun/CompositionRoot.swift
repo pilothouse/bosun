@@ -37,6 +37,8 @@ struct GitHubAuthServices {
     let mergePullRequest: MergePullRequestUseCase
     /// Close a PR without merging and (optionally) delete its head branch. Shares `api`'s client.
     let closePullRequest: ClosePullRequestUseCase
+    /// Close an open issue with a state reason (completed / not planned / duplicate). Shares `api`'s client.
+    let closeIssue: CloseIssueUseCase
     /// Edit an issue/PR's title/body/labels/assignees — the third write. Shares `api`'s client.
     let editItem: EditItemUseCase
     /// Request/remove a PR's reviewers (issue #70) — the fourth write. Shares `api`'s client.
@@ -95,6 +97,7 @@ enum CompositionRoot {
             addComment: AddCommentUseCase(api: client),
             mergePullRequest: MergePullRequestUseCase(api: client),
             closePullRequest: ClosePullRequestUseCase(api: client),
+            closeIssue: CloseIssueUseCase(api: client),
             editItem: EditItemUseCase(api: client),
             manageReviewers: ManageReviewersUseCase(api: client)
         )

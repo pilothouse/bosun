@@ -41,6 +41,18 @@ final class DetailView: FlippedView {
     /// `(false, message)` keeps the form and surfaces `message`.
     var onClosePullRequest: ((Bool, @escaping (Bool, String?) -> Void) -> Void)?
 
+    /// Called when the user confirms closing an open issue with the chosen `IssueCloseReason`. The
+    /// second argument is the parent issue number when closing as a duplicate (else nil), so the
+    /// controller can post the `Duplicate of #N` marker before closing. The completion runs on the main
+    /// actor: `(true, nil)` closed (the controller refreshes the item to `closed`, hiding the button);
+    /// `(false, message)` keeps the form and surfaces `message`.
+    var onCloseIssue: ((IssueCloseReason, Int?, @escaping (Bool, String?) -> Void) -> Void)?
+
+    /// Called as the user types in the "close as duplicate" parent search. The view hands the query and
+    /// a completion the controller runs on the main actor with the matching issues (presentation
+    /// `Item`s, the current issue excluded). Debounced by the view; a blank query yields no results.
+    var onSearchIssues: ((String, @escaping ([Item]) -> Void) -> Void)?
+
     /// Called when the user saves a title/body edit or toggles a label/assignee (issue #71). The view
     /// hands over a `GitHubItemEdit` (only the changed fields) and a completion the controller runs on
     /// the main actor: `(true, nil)` applied (the controller updates the item in place); `(false,
@@ -103,6 +115,32 @@ final class DetailView: FlippedView {
     private var closeError: String?
     /// The id the close form belongs to, so switching items collapses the form and re-arms the checkbox.
     private var closeItemId = ""
+
+    // Issue-close state — separate from the PR-close state above because issues close with a reason
+    // (completed / not planned / duplicate) and have no branch to delete.
+    private var isClosingIssue = false
+    private var closeIssueError: String?
+    private var closeIssueItemId = ""
+    /// The reason the primary close button will apply — chosen from the caret dropdown, which now only
+    /// *selects* (re-labelling the button); the issue closes only when the primary button is pressed.
+    private var selectedCloseReason: IssueCloseReason = .completed
+    /// The chosen duplicate parent (nil until picked). `.duplicate` disables the primary button until
+    /// one is set; on close the number is threaded to `onCloseIssue` so a `Duplicate of #N` is posted.
+    private var duplicateParentNumber: Int?
+    private var duplicateParentTitle: String?
+    /// The live duplicate-search text (survives `rebuild()`), its last results, and whether the results
+    /// overlay is showing. The search is debounced through `dupSearchWork`.
+    private var duplicateQuery = ""
+    private var duplicateResults: [Item] = []
+    private var duplicateMenuOpen = false
+    private weak var duplicateSearchField: NSTextField?
+    /// The duplicate-results overlay + its search card, in their *own* slots (not `editMenuOverlay`):
+    /// a metadata picker up top and this picker down here can both be open in one rebuild. Added to the
+    /// document last so the results float; the card is excluded from the click-outside dismiss check.
+    private var closeDupOverlay: NSView?
+    private weak var closeDupButton: NSView?
+    /// The pending debounced search; cancelled on each keystroke so only the last one fires.
+    private var dupSearchWork: DispatchWorkItem?
 
     // Edit-mode state (issue #71), on the view for the same survives-`rebuild()` reason as the
     // composer/merge state: whether the item's being edited, the in-progress title/body drafts, the
@@ -304,9 +342,15 @@ final class DetailView: FlippedView {
         // Same focus/caret preservation for the elastic edit-body field (recreated below).
         let editBodyHadFocus = editBodyField != nil && window?.firstResponder === editBodyField
         let editBodySelection: NSRange? = (editBodyField?.selectedRanges.first as? NSValue)?.rangeValue
+        // Same for the duplicate-search field — an NSTextField's caret lives on its shared field editor,
+        // so read the selection off `currentEditor()` rather than `selectedRanges` (NSTextView-only).
+        let dupHadFocus = duplicateSearchField != nil && window?.firstResponder === duplicateSearchField?.currentEditor()
+        let dupSelection: NSRange? = duplicateSearchField?.currentEditor()?.selectedRange
         mergeMenuOverlay = nil   // rebuilt below if the method picker is open; added last so it floats
         editMenuOverlay = nil    // same for the label/assignee picker
         editMenuButton = nil
+        closeDupOverlay = nil    // same for the duplicate-results picker (its own slot)
+        closeDupButton = nil
 
         let padX: CGFloat = z(26)
         let cw = avail - padX * 2
@@ -345,6 +389,16 @@ final class DetailView: FlippedView {
             closeItemId = it.id
             closeConfirming = false; isClosing = false; closeError = nil
             deleteBranchChecked = true
+        }
+
+        if it.id != closeIssueItemId {
+            closeIssueItemId = it.id
+            isClosingIssue = false; closeIssueError = nil
+            // A new item starts from the default reason with no duplicate picked and a clean search.
+            selectedCloseReason = .completed
+            duplicateParentNumber = nil; duplicateParentTitle = nil
+            duplicateQuery = ""; duplicateResults = []; duplicateMenuOpen = false
+            dupSearchWork?.cancel()
         }
 
         // Selection change: re-seed the always-editable label/assignee drafts from the new item, close
@@ -763,8 +817,10 @@ final class DetailView: FlippedView {
             }
 
             // Composer. The avatar is the signed-in viewer (real image once it loads, initials until
-            // then); the field is editable and Send posts the comment. Inside the collapse gate, so
-            // collapsing COMMENTS hides the thread and its input together.
+            // then); the field is editable and Return/Comment posts the comment. The button row sits
+            // below the text box (outside it), matching the Merge PR split-button style: for open
+            // issues "Close issue" (primary) + "▾" (caret dropdown) on the left, green "Comment" on
+            // the right; for PRs/closed issues only "Comment" on the right.
             let cav = AvatarView(size: z(26), cornerRadius: z(13), url: store.viewer?.avatarURL,
                                  placeholderColor: store.viewer?.color ?? Status.dim,
                                  initials: store.viewer?.initials ?? "?",
@@ -772,6 +828,7 @@ final class DetailView: FlippedView {
             cav.frame.origin = NSPoint(x: padX, y: y); doc.addSubview(cav)
 
             let compW = cw - z(37)
+            let showCloseMenu = it.kind == .issue && it.state == .open
             let comp = BoxView(bg: t.card, radius: z(10), border: t.cardbr)
             comp.frame = NSRect(x: padX + z(37), y: y, width: compW, height: z(38))
 
@@ -788,22 +845,134 @@ final class DetailView: FlippedView {
             field.action = #selector(composerReturn)   // Return submits; fires only on Enter, not on blur
             field.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
             field.isEnabled = !isPosting
-            field.frame = NSRect(x: z(12), y: z(9), width: compW - z(84), height: z(20))
+            field.frame = NSRect(x: z(12), y: z(9), width: compW - z(24), height: z(20))
             comp.addSubview(field)
             composerField = field
+            doc.addSubview(comp); y += z(46)
+
+            // Close-as-duplicate parent picker, between the comment field and the button row (so the
+            // whole row shifts down naturally). Until a parent is picked it's a search field with a
+            // floating results overlay; once picked it's a removable chip. Duplicate reason only.
+            let dupX = padX + z(37)
+            if showCloseMenu && selectedCloseReason == .duplicate {
+                if let n = duplicateParentNumber {
+                    let chip = editableChip("#\(n) \(duplicateParentTitle ?? "")", color: nil, t: t,
+                                            onRemove: { [weak self] in
+                        self?.duplicateParentNumber = nil; self?.duplicateParentTitle = nil
+                        self?.needsLayout = true
+                    })
+                    chip.frame.origin = NSPoint(x: dupX, y: y + z(2)); doc.addSubview(chip)
+                    y += z(30)
+                } else {
+                    let card = BoxView(bg: t.card, radius: z(8), border: t.cardbr)
+                    card.frame = NSRect(x: dupX, y: y, width: compW, height: z(32))
+                    let mag = label("⌕", sys(13), t.txt4)
+                    mag.frame = NSRect(x: z(10), y: z(7), width: z(16), height: z(18)); card.addSubview(mag)
+                    let dupField = NSTextField(string: duplicateQuery)
+                    dupField.font = sys(12.5)
+                    dupField.placeholderString = "Find the duplicate's parent issue…"
+                    dupField.isBezeled = false
+                    dupField.drawsBackground = false
+                    dupField.focusRingType = .none
+                    dupField.textColor = t.txt
+                    dupField.lineBreakMode = .byTruncatingTail
+                    dupField.delegate = self
+                    dupField.appearance = NSAppearance(named: t.key == "light" ? .aqua : .darkAqua)
+                    dupField.isEnabled = !isClosingIssue
+                    dupField.frame = NSRect(x: z(30), y: z(7), width: compW - z(40), height: z(18))
+                    card.addSubview(dupField)
+                    duplicateSearchField = dupField
+                    closeDupButton = card
+                    doc.addSubview(card); y += z(40)
+
+                    // Results overlay: built here, added to `doc` last so it floats over the content
+                    // below. Only while the query is non-empty; an empty result set says so.
+                    if duplicateMenuOpen && !duplicateQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                        let rows = duplicateResults.prefix(20).map { m in
+                            ChecklistRow(title: "\(m.num)  \(m.title)", tint: nil, on: false,
+                                         action: { [weak self] in
+                                self?.duplicateParentNumber = m.number
+                                self?.duplicateParentTitle = m.title
+                                self?.duplicateQuery = ""; self?.duplicateResults = []
+                                self?.duplicateMenuOpen = false
+                                self?.needsLayout = true
+                            })
+                        }
+                        closeDupOverlay = makeChecklistMenu(t: t, x: dupX, y: card.frame.maxY + z(4),
+                                                            width: compW, empty: "No matching issues",
+                                                            rows: Array(rows))
+                    }
+                }
+            }
+
+            // Button row below the text box. Green Comment stays right-aligned; the Close split-button
+            // (open issues only) sits immediately to its left. Mirrors the Merge PR split-button pattern.
+            let btnRowH: CGFloat = z(34)
+            let btnX = padX + z(37)
+            let commentW: CGFloat = z(88)
+            let commentX = btnX + compW - commentW
+
+            if showCloseMenu {
+                let caretW: CGFloat = z(30), gap: CGFloat = z(5), closeGap: CGFloat = z(8)
+                let primaryTitle = selectedCloseReason.buttonTitle
+                let primaryW = fitW(primaryTitle, sys(12, .semibold)) + z(24)   // dynamic: reasons differ in width
+                let closeGroupW = primaryW + gap + caretW
+                let closeGroupX = max(btnX, commentX - closeGap - closeGroupW)   // clamp: never past the left edge
+                if isClosingIssue {
+                    let spinner = makeSpinner(size: z(14))
+                    spinner.frame.origin = NSPoint(x: closeGroupX + primaryW / 2, y: y + z(10))
+                    doc.addSubview(spinner)
+                } else {
+                    // The primary Close is disabled until a duplicate parent is chosen (duplicate only).
+                    let closeEnabled = selectedCloseReason != .duplicate || duplicateParentNumber != nil
+                    let primary = ClickRow(bg: t.txt.withAlphaComponent(closeEnabled ? 0.08 : 0.04), radius: z(8))
+                    primary.frame = NSRect(x: closeGroupX, y: y, width: primaryW, height: btnRowH)
+                    if closeEnabled {
+                        primary.hoverColor = t.hover
+                        primary.onClick = { [weak self] in self?.submitCurrentClose() }
+                    }
+                    let pl = label(primaryTitle, sys(12, .semibold), closeEnabled ? t.txt2 : t.txt4, align: .center)
+                    pl.frame = NSRect(x: 0, y: z(9), width: primaryW, height: z(16)); primary.addSubview(pl)
+                    doc.addSubview(primary)
+
+                    let caret = ClickRow(bg: t.txt.withAlphaComponent(0.08), radius: z(8))
+                    caret.frame = NSRect(x: closeGroupX + primaryW + gap, y: y, width: caretW, height: btnRowH)
+                    caret.onClick = { [weak self, weak caret] in
+                        guard let self, let caret else { return }
+                        let menu = NSMenu()
+                        let reasons: [IssueCloseReason] = [.completed, .notPlanned, .duplicate]
+                        for (i, reason) in reasons.enumerated() {
+                            let item = NSMenuItem(title: reason.menuTitle,
+                                                  action: #selector(self.closeIssueMenuAction(_:)),
+                                                  keyEquivalent: "")
+                            item.tag = i
+                            item.target = self
+                            item.state = (reason == self.selectedCloseReason) ? .on : .off
+                            menu.addItem(item)
+                        }
+                        menu.popUp(positioning: nil,
+                                   at: NSPoint(x: 0, y: caret.bounds.height + z(4)),
+                                   in: caret)
+                    }
+                    let cl = label("▾", sys(11), t.txt2, align: .center)
+                    cl.frame = NSRect(x: 0, y: z(9), width: caretW, height: z(16)); caret.addSubview(cl)
+                    doc.addSubview(caret)
+                }
+            }
 
             if isPosting {
                 let spinner = makeSpinner(size: z(14))
-                spinner.frame.origin = NSPoint(x: compW - z(64) + z(21), y: z(12)); comp.addSubview(spinner)
+                spinner.frame.origin = NSPoint(x: commentX + commentW / 2, y: y + z(10))
+                doc.addSubview(spinner)
             } else {
-                let send = ClickRow(bg: t.accent, radius: z(7))
-                send.frame = NSRect(x: compW - z(64), y: z(7), width: z(56), height: z(24))
-                send.onClick = { [weak self] in self?.submitComposer() }
-                let sl = label("Send", sys(11, .semibold), t.onacc, align: .center)
-                sl.frame = NSRect(x: 0, y: z(4), width: z(56), height: z(16)); send.addSubview(sl)
-                comp.addSubview(send)
+                let commentBtn = ClickRow(bg: Status.green, radius: z(8))
+                commentBtn.frame = NSRect(x: commentX, y: y, width: commentW, height: btnRowH)
+                commentBtn.onClick = { [weak self] in self?.submitComposer() }
+                let cl = label("Comment", sys(12, .semibold), .white, align: .center)
+                cl.frame = NSRect(x: 0, y: z(9), width: commentW, height: z(16)); commentBtn.addSubview(cl)
+                doc.addSubview(commentBtn)
             }
-            doc.addSubview(comp); y += z(46)
+            y += btnRowH + z(8)
 
             if let composerError {
                 let err = label(composerError, sys(11), Status.red, lines: 0)
@@ -811,16 +980,24 @@ final class DetailView: FlippedView {
                 err.frame = NSRect(x: padX + z(37), y: y, width: compW, height: z(30))
                 doc.addSubview(err); y += z(22)
             }
+            if let closeIssueError {
+                let err = label(closeIssueError, sys(11), Status.red, lines: 0)
+                err.preferredMaxLayoutWidth = compW
+                err.frame = NSRect(x: padX + z(37), y: y, width: compW, height: z(30))
+                doc.addSubview(err); y += z(22)
+            }
         }
         y += z(8)
 
-        // The open method / label / assignee pickers float over later content: added last so they're
-        // on top, and their height (not position) extends the document so they can't be clipped.
+        // The open method / label / assignee / duplicate pickers float over later content: added last
+        // so they're on top, and their height (not position) extends the document so they can't be clipped.
         if let menu = mergeMenuOverlay { doc.addSubview(menu) }
         if let menu = editMenuOverlay { doc.addSubview(menu) }
+        if let menu = closeDupOverlay { doc.addSubview(menu) }
         doc.frame.size.height = max(y + z(10),
                                     (mergeMenuOverlay?.frame.maxY ?? 0) + z(10),
-                                    (editMenuOverlay?.frame.maxY ?? 0) + z(10))
+                                    (editMenuOverlay?.frame.maxY ?? 0) + z(10),
+                                    (closeDupOverlay?.frame.maxY ?? 0) + z(10))
 
         // Replacing the document view resets the scroll to the top. Restore the prior offset when
         // we're re-rendering the same item (a detail hydrating, a comment landing, a resize) so the
@@ -846,6 +1023,12 @@ final class DetailView: FlippedView {
         if editBodyHadFocus, let tv = editBodyField {
             window?.makeFirstResponder(tv)
             if let editBodySelection { tv.setSelectedRange(editBodySelection) }
+        }
+        // Same for the rebuilt duplicate-search field, so each keystroke (which relayouts to refresh
+        // the results overlay) doesn't drop focus. The caret lives on the field editor.
+        if dupHadFocus, let tf = duplicateSearchField {
+            window?.makeFirstResponder(tf)
+            if let dupSelection { tf.currentEditor()?.selectedRange = dupSelection }
         }
     }
 
@@ -971,10 +1154,13 @@ final class DetailView: FlippedView {
     /// picker is open and the click missed both the overlay and its toggle button (else a click on the
     /// button would close-then-reopen it, and a click on a menu row wouldn't register).
     func dismissPickers(forWindowClickAt pointInWindow: NSPoint) {
-        guard labelMenuOpen || assigneeMenuOpen || reviewerMenuOpen else { return }
+        guard labelMenuOpen || assigneeMenuOpen || reviewerMenuOpen || duplicateMenuOpen else { return }
         if let overlay = editMenuOverlay, overlay.convert(overlay.bounds, to: nil).contains(pointInWindow) { return }
         if let button = editMenuButton, button.convert(button.bounds, to: nil).contains(pointInWindow) { return }
+        if let overlay = closeDupOverlay, overlay.convert(overlay.bounds, to: nil).contains(pointInWindow) { return }
+        if let button = closeDupButton, button.convert(button.bounds, to: nil).contains(pointInWindow) { return }
         labelMenuOpen = false; assigneeMenuOpen = false; reviewerMenuOpen = false
+        duplicateMenuOpen = false
         needsLayout = true
     }
 
@@ -1610,6 +1796,36 @@ final class DetailView: FlippedView {
 
     @objc private func composerReturn() { submitComposer() }
 
+    /// A reason-dropdown pick now only *selects* the reason and re-labels the primary button — it does
+    /// NOT close. Closing happens when the user presses the (re-labelled) primary button. Leaving the
+    /// duplicate reason clears the parent picker so a stale parent can't ride a later close.
+    @objc private func closeIssueMenuAction(_ sender: NSMenuItem) {
+        let reasons: [IssueCloseReason] = [.completed, .notPlanned, .duplicate]
+        guard sender.tag < reasons.count else { return }
+        selectedCloseReason = reasons[sender.tag]
+        if selectedCloseReason != .duplicate {
+            duplicateParentNumber = nil; duplicateParentTitle = nil
+            duplicateQuery = ""; duplicateResults = []; duplicateMenuOpen = false
+            dupSearchWork?.cancel()
+        }
+        needsLayout = true
+    }
+
+    /// Close the issue with the currently-selected reason (fired by the primary button). Threads the
+    /// duplicate parent number so a duplicate close posts the `Duplicate of #N` marker; guards against a
+    /// duplicate close with no parent (the button is disabled then, but belt-and-suspenders).
+    private func submitCurrentClose() {
+        guard !isClosingIssue, let onCloseIssue else { return }
+        if selectedCloseReason == .duplicate && duplicateParentNumber == nil { return }
+        isClosingIssue = true; closeIssueError = nil; needsLayout = true
+        onCloseIssue(selectedCloseReason, duplicateParentNumber) { [weak self] ok, message in
+            guard let self else { return }
+            self.isClosingIssue = false
+            if !ok { self.closeIssueError = message }
+            self.needsLayout = true
+        }
+    }
+
     /// Open the selected item's GitHub page in the default browser. Wired to the `#num` anchor link
     /// in the id row.
     private func openItemURL(_ url: String) {
@@ -1658,6 +1874,26 @@ extension DetailView: NSTextFieldDelegate {
         if field === composerField { composerDraft = field.stringValue }
         else if field === mergeTitleField { mergeTitleDraft = field.stringValue }
         else if field === editTitleField { editTitleDraft = field.stringValue }
+        else if field === duplicateSearchField {
+            // Debounce the duplicate-parent search so a fast typist doesn't hammer GitHub's rate-limited
+            // search API; only the last keystroke in a 250ms window fires. Stale results (query moved on)
+            // are dropped in the completion. No relayout on the keystroke itself — the field keeps focus;
+            // the results overlay refreshes when the search returns.
+            duplicateQuery = field.stringValue
+            dupSearchWork?.cancel()
+            let q = duplicateQuery
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.duplicateQuery == q else { return }
+                self.onSearchIssues?(q) { [weak self] results in
+                    guard let self, self.duplicateQuery == q else { return }
+                    self.duplicateResults = results
+                    self.duplicateMenuOpen = !q.trimmingCharacters(in: .whitespaces).isEmpty
+                    self.needsLayout = true
+                }
+            }
+            dupSearchWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+        }
     }
 }
 

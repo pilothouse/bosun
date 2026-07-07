@@ -24,6 +24,7 @@ final class GitHubDataController {
     private let addCommentUseCase: AddCommentUseCase
     private let mergePullRequestUseCase: MergePullRequestUseCase
     private let closePullRequestUseCase: ClosePullRequestUseCase
+    private let closeIssueUseCase: CloseIssueUseCase
     private let editItemUseCase: EditItemUseCase
     private let manageReviewersUseCase: ManageReviewersUseCase
 
@@ -68,13 +69,15 @@ final class GitHubDataController {
 
     init(api: GitHubAPI, cache: GitHubCacheStore, store: Store, addComment: AddCommentUseCase,
          mergePullRequest: MergePullRequestUseCase, closePullRequest: ClosePullRequestUseCase,
-         editItem: EditItemUseCase, manageReviewers: ManageReviewersUseCase) {
+         closeIssue: CloseIssueUseCase, editItem: EditItemUseCase,
+         manageReviewers: ManageReviewersUseCase) {
         self.api = api
         self.cache = cache
         self.store = store
         self.addCommentUseCase = addComment
         self.mergePullRequestUseCase = mergePullRequest
         self.closePullRequestUseCase = closePullRequest
+        self.closeIssueUseCase = closeIssue
         self.editItemUseCase = editItem
         self.manageReviewersUseCase = manageReviewers
     }
@@ -486,6 +489,50 @@ final class GitHubDataController {
         }
     }
 
+    /// Close an open issue with a reason. Mirrors `closePullRequest` but without branch deletion.
+    /// `duplicateOf` (the parent issue number) is threaded to the use case so a "close as duplicate"
+    /// posts the `Duplicate of #N` marker comment before closing. Re-fetches the detail on success so
+    /// the close button disappears (issue now reports `closed`).
+    func closeIssue(reason: IssueCloseReason, duplicateOf: Int?,
+                    completion: @escaping (Bool, String?) -> Void) {
+        let selectedId = store.selectedItemId
+        guard let item = (store.prs + store.issues).first(where: { $0.id == selectedId }),
+              let repo = item.ownerRepo else {
+            completion(false, nil); return
+        }
+        Task { @MainActor in
+            do {
+                _ = try await closeIssueUseCase(
+                    owner: repo.owner, repo: repo.name,
+                    number: item.number, reason: reason, duplicateOf: duplicateOf)
+                completion(true, nil)
+                if store.selectedItemId == selectedId { refreshDetail() }
+            } catch {
+                completion(false, Self.closeIssueMessage(for: error))
+            }
+        }
+    }
+
+    /// Search the open item's repo for issues matching `query`, projected to presentation `Item`s for
+    /// the "close as duplicate" parent picker. Mirrors `loadEditChoices`: routes to the item's own repo
+    /// (correct in aggregate-org scope), drops the item itself from the results, and reports on the main
+    /// actor only while it's still selected. A blank query returns nothing without a round-trip; a
+    /// failed search yields an empty list (the picker just shows "no matches").
+    func searchIssues(query: String, completion: @escaping ([Item]) -> Void) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedId = store.selectedItemId
+        guard !trimmed.isEmpty,
+              let item = (store.prs + store.issues).first(where: { $0.id == selectedId }),
+              let repo = item.ownerRepo else {
+            completion([]); return
+        }
+        Task { @MainActor in
+            let found = (try? await api.searchIssues(owner: repo.owner, repo: repo.name, query: trimmed)) ?? []
+            let results = found.map(Item.init(domain:)).filter { $0.number != item.number }
+            if store.selectedItemId == selectedId { completion(results) }
+        }
+    }
+
     /// Close failures need their own wording for the codes the generic `message(for:)` would flatten to
     /// "check your connection": a 403 is a permission denial (the token can't write this repo). A merge
     /// isn't in play here, so there's no 405/409 nuance — everything else defers to `message(for:)`.
@@ -493,6 +540,15 @@ final class GitHubDataController {
         switch error as? GitHubAPIError {
         case .http(403):
             return "You don't have permission to close this pull request."
+        default:
+            return message(for: error)
+        }
+    }
+
+    private static func closeIssueMessage(for error: Error) -> String {
+        switch error as? GitHubAPIError {
+        case .http(403):
+            return "You don't have permission to close this issue."
         default:
             return message(for: error)
         }

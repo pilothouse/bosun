@@ -239,6 +239,10 @@ final class BosunView: NSView {
         center.detail.onRefreshDetail = { [weak self] in self?.data.refreshDetail() }
         center.detail.onMergePullRequest = { [weak self] merge, done in self?.data.mergePullRequest(merge, completion: done) }
         center.detail.onClosePullRequest = { [weak self] deleteBranch, done in self?.data.closePullRequest(deleteBranch: deleteBranch, completion: done) }
+        center.detail.onCloseIssue = { [weak self] reason, dup, done in
+            self?.data.closeIssue(reason: reason, duplicateOf: dup, completion: done)
+        }
+        center.detail.onSearchIssues = { [weak self] query, done in self?.data.searchIssues(query: query, completion: done) }
         center.detail.onEditItem = { [weak self] edit, done in self?.data.editItem(edit, completion: done) }
         center.detail.onLoadEditChoices = { [weak self] done in self?.data.loadEditChoices(completion: done) }
         center.detail.onManageReviewers = { [weak self] action, logins, done in

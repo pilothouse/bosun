@@ -39,7 +39,9 @@ final class AddCommentUseCaseTests: XCTestCase {
         func removeRequestedReviewers(owner: String, repo: String, number: Int, logins: [String]) throws -> [GitHubReviewer] { throw Unused() }
         func repositoryLabels(owner: String, repo: String) throws -> [GitHubLabel] { throw Unused() }
         func assignableUsers(owner: String, repo: String) throws -> [GitHubActor] { throw Unused() }
+        func searchIssues(owner: String, repo: String, query: String) throws -> [GitHubItem] { throw Unused() }
         func closePullRequest(owner: String, repo: String, number: Int) throws -> GitHubItem { throw Unused() }
+        func closeIssue(owner: String, repo: String, number: Int, reason: IssueCloseReason) throws -> GitHubItem { throw Unused() }
         func deleteBranch(owner: String, repo: String, branch: String) throws { throw Unused() }
     }
 

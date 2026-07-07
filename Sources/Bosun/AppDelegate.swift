@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                         store: store, addComment: githubServices.addComment,
                                         mergePullRequest: githubServices.mergePullRequest,
                                         closePullRequest: githubServices.closePullRequest,
+                                        closeIssue: githubServices.closeIssue,
                                         editItem: githubServices.editItem,
                                         manageReviewers: githubServices.manageReviewers)
         self.dataController = data

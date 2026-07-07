@@ -51,6 +51,18 @@ struct CloseStateBody: Encodable {
     let state: String
 }
 
+/// The `PATCH .../issues/{number}` request body for closing an issue with a reason — GitHub takes
+/// `{ "state": "closed", "state_reason": "<reason>" }` where reason is `completed`, `not_planned`,
+/// or `duplicate`. PRs use `CloseStateBody` (no `state_reason`); this struct is issues-only.
+struct CloseIssueBody: Encodable {
+    let state: String
+    let stateReason: String
+    enum CodingKeys: String, CodingKey {
+        case state
+        case stateReason = "state_reason"
+    }
+}
+
 /// The `PATCH .../issues/{number}` success body (also the shape `GET .../issues/{number}` returns) —
 /// the REST issue object, which serves PRs too. Mapped to a `GitHubItem` carrying the fields an edit
 /// can change; the PR-only detail fields (checks/files/mergeability) aren't in this payload and stay
@@ -97,6 +109,10 @@ struct IssueRESTDTO: Decodable {
             labelColors: colors.isEmpty ? nil : colors)
     }
 }
+
+/// `GET /search/issues` wraps its matches under `items`; each element is the same issue object the
+/// `IssueRESTDTO` decodes elsewhere, so results reuse `IssueRESTDTO.toDomain(owner:repo:)`.
+struct IssueSearchDTO: Decodable { let items: [IssueRESTDTO] }
 
 /// One repository label from `GET .../labels` (and an item's `labels[]`) — its name and hex color.
 struct LabelDTO: Decodable {

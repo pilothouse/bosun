@@ -211,6 +211,17 @@ public actor GitHubAPIClient: GitHubAPI {
         return dto.toDomain(owner: owner, repo: repo)
     }
 
+    public func closeIssue(owner: String, repo: String, number: Int,
+                           reason: IssueCloseReason) async throws -> GitHubItem {
+        let payload = try JSONEncoder().encode(
+            CloseIssueBody(state: "closed", stateReason: reason.rawValue))
+        let url = restURL(path: "/repos/\(owner)/\(repo)/issues/\(number)")
+        let request = try await authorizedRequest(url: url, method: "PATCH", body: payload)
+        let (data, _) = try await perform(request)
+        let dto: IssueRESTDTO = try decode(data)
+        return dto.toDomain(owner: owner, repo: repo)
+    }
+
     public func deleteBranch(owner: String, repo: String, branch: String) async throws {
         // REST `DELETE .../git/refs/heads/{branch}` → 204 (no body). A slash in the branch name
         // (`feature/foo`) becomes nested ref path segments, exactly GitHub's ref layout. `validate`
@@ -229,6 +240,21 @@ public actor GitHubAPIClient: GitHubAPI {
     public func assignableUsers(owner: String, repo: String) async throws -> [GitHubActor] {
         let users: [UserRefDTO] = try await getPaged(path: "/repos/\(owner)/\(repo)/assignees")
         return users.map { $0.toDomain() }
+    }
+
+    public func searchIssues(owner: String, repo: String, query: String) async throws -> [GitHubItem] {
+        // Scope the search to this repo's issues (never PRs) and cap it — the picker only needs a
+        // short, newest-first candidate list. Results decode through the same `IssueRESTDTO`.
+        let searchTerm = "repo:\(owner)/\(repo) is:issue \(query)"
+        let url = restURL(path: "/search/issues", query: [
+            URLQueryItem(name: "q", value: searchTerm),
+            URLQueryItem(name: "per_page", value: "20"),
+            URLQueryItem(name: "sort", value: "updated")
+        ])
+        let request = try await authorizedRequest(url: url, method: "GET")
+        let (data, _) = try await perform(request)
+        let dto: IssueSearchDTO = try decode(data)
+        return dto.items.map { $0.toDomain(owner: owner, repo: repo) }
     }
 
     // MARK: - REST transport

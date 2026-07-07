@@ -53,6 +53,8 @@ final class ClosePullRequestUseCaseTests: XCTestCase {
         func removeRequestedReviewers(owner: String, repo: String, number: Int, logins: [String]) throws -> [GitHubReviewer] { throw Unused() }
         func repositoryLabels(owner: String, repo: String) throws -> [GitHubLabel] { throw Unused() }
         func assignableUsers(owner: String, repo: String) throws -> [GitHubActor] { throw Unused() }
+        func searchIssues(owner: String, repo: String, query: String) throws -> [GitHubItem] { throw Unused() }
+        func closeIssue(owner: String, repo: String, number: Int, reason: IssueCloseReason) throws -> GitHubItem { throw Unused() }
     }
 
     private let pr = GitHubItem(id: "acme/api#7", number: 7, kind: .pullRequest, title: "Ship it",
