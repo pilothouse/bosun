@@ -31,8 +31,19 @@ enum BusyShellIntegration {
     # ...then add OSC 9;4: busy on command start, idle at the next prompt. Append to the same hook
     # arrays ghostty uses so both coexist; guard on `interactive` so scripts don't register it.
     if [[ -o interactive ]]; then
-      _bosun_busy_preexec() { builtin print -rn -- $'\e]9;4;3\e\\' }   # indeterminate -> busy
-      _bosun_busy_precmd()  { builtin print -rn -- $'\e]9;4;0\e\\' }   # remove        -> idle
+      # Inside tmux, a raw OSC is swallowed by tmux and never reaches ghostty (#96). Enable tmux's
+      # passthrough and wrap the OSC in tmux's DCS envelope (double ESCs, bracket with
+      # \ePtmux;...\e\\) so tmux forwards it. Mirrors Domain.TmuxPassthrough.wrap — keep in lockstep.
+      [[ -n "$TMUX" ]] && builtin command tmux set -g allow-passthrough on 2>/dev/null
+      _bosun_busy_emit() {   # $1 = OSC 9;4 state digit (3 = busy, 0 = idle)
+        if [[ -n "$TMUX" ]]; then   # DCS passthrough: ESCs doubled, wrapped \ePtmux;…\e\\
+          builtin print -rn -- $'\ePtmux;\e\e]9;4;'"$1"$'\e\e\\\e\\'
+        else
+          builtin print -rn -- $'\e]9;4;'"$1"$'\e\\'
+        fi
+      }
+      _bosun_busy_preexec() { _bosun_busy_emit 3 }   # indeterminate -> busy
+      _bosun_busy_precmd()  { _bosun_busy_emit 0 }   # remove        -> idle
       builtin typeset -ag preexec_functions precmd_functions
       preexec_functions+=(_bosun_busy_preexec)
       precmd_functions+=(_bosun_busy_precmd)
@@ -69,5 +80,13 @@ enum BusyShellIntegration {
 
     private static var isZshLoginShell: Bool {
         (ProcessInfo.processInfo.environment["SHELL"] ?? "").hasSuffix("zsh")
+    }
+
+    /// The shim body to carry into a remote (SSH) tmux session, or nil when the feature is off.
+    /// Unlike the local path this writes nothing to disk — `SSHCommand` base64-ships this string into
+    /// the remote command, which installs it as a throwaway remote `ZDOTDIR` (#96). The remote shell
+    /// is assumed to be zsh (the shim's hooks are zsh; a non-zsh remote simply ignores the file).
+    static func remoteShim(enabled: Bool) -> String? {
+        enabled ? zshenv : nil
     }
 }

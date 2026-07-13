@@ -281,12 +281,14 @@ final class TerminalContainerView: FlippedView {
         guard let app = ghostty.app else { return nil }
         let command: String?
         let workingDirectory: String?
-        // The busy shell hook only applies to a local login shell (a folder tab), not an `ssh`
-        // command — ghostty skips integration for non-shell commands anyway.
+        // The busy shell hook reaches a local login shell (a folder tab) through the surface's `env`
+        // (ZDOTDIR). SSH can't carry env to the remote shell, so a tmux tab gets the hook a different
+        // way: the shim is shipped inside the `ssh` command itself (see `SSHCommand.command`, #96).
         var env: [(String, String)] = []
         switch conn.kind {
         case let .ssh(host, port, user):
-            command = SSHCommand.command(host: host, port: port, user: user, custom: conn.customCommand)
+            command = SSHCommand.command(host: host, port: port, user: user, custom: conn.customCommand,
+                                         busyShim: BusyShellIntegration.remoteShim(enabled: store.terminalBusySpinner))
             workingDirectory = nil
         case let .localFolder(path):
             command = nil
