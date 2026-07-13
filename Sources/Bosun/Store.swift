@@ -56,6 +56,13 @@ final class Store {
     /// Whether the org panel hides repos with zero open issues+PRs. Global, persisted; a change
     /// re-filters every org's repos instantly via `visibleOrgs`. Off (show all) by default.
     var skipEmptyRepos = false { didSet { if oldValue != skipEmptyRepos { changed() } } }
+    /// Whether GitHub data refreshes itself in the background, one scoped fetch at a time (#97). Global,
+    /// persisted; a change is observed by `GitHubRefreshScheduler`, which starts/stops the timer. Off
+    /// (opt-in) by default.
+    var githubAutoRefreshEnabled = false { didSet { if oldValue != githubAutoRefreshEnabled { changed() } } }
+    /// How often (minutes) each background-refresh unit goes stale. Persisted; the scheduler reads it
+    /// fresh each tick, so a change takes effect without a restart. Clamped by `Preferences`.
+    var githubAutoRefreshIntervalMinutes = 15 { didSet { if oldValue != githubAutoRefreshIntervalMinutes { changed() } } }
     /// The active item tab and the list grouping ("View"). Persisted, so they're restored on relaunch
     /// (the restored item's kind can still flip the tab — see `GitHubDataController.reconcileSelection`).
     var tab: Tab = .prs { didSet { if oldValue != tab { changed() } } }
@@ -475,7 +482,9 @@ final class Store {
             terminalPaddingY: terminalConfig.paddingY,
             terminalOptionAsAlt: terminalConfig.optionAsAlt,
             terminalDesktopNotifications: terminalConfig.desktopNotifications,
-            terminalSystemBell: terminalConfig.systemBell)
+            terminalSystemBell: terminalConfig.systemBell,
+            githubAutoRefreshEnabled: githubAutoRefreshEnabled,
+            githubAutoRefreshIntervalMinutes: githubAutoRefreshIntervalMinutes)
         Task { await preferences.save(snapshot) }
     }
 
@@ -509,6 +518,8 @@ final class Store {
         prFilesCollapsed = p.prFilesCollapsed
         prCommentsCollapsed = p.prCommentsCollapsed
         skipEmptyRepos = p.skipEmptyRepos
+        githubAutoRefreshEnabled = p.githubAutoRefreshEnabled
+        githubAutoRefreshIntervalMinutes = p.githubAutoRefreshIntervalMinutes
         splitAxis = SplitAxis(rawValue: p.splitAxis ?? "") ?? .default
         terminalFraction = CGFloat(p.terminalFraction)
         terminalLeading = p.terminalLeading

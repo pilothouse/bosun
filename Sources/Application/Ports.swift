@@ -169,6 +169,16 @@ public protocol GitHubAPI: Sendable {
     /// The users assignable to a repository's issues/PRs, for the edit pane's assignee picker (REST
     /// `GET /repos/{owner}/{repo}/assignees`). Read-only, like `repositoryLabels`.
     func assignableUsers(owner: String, repo: String) async throws -> [GitHubActor]
+    /// The most recent rate-limit snapshot parsed from any response's `x-ratelimit-*` headers, or
+    /// `nil` if none has been seen yet. Lets the background scheduler throttle proactively (#97)
+    /// rather than only reacting to a 429. Read-only and best-effort — never throws.
+    func rateLimitSnapshot() async -> RateLimit?
+}
+
+public extension GitHubAPI {
+    /// Default for conformers that don't track rate limits (test fakes, offline demos): no snapshot,
+    /// which the scheduler reads as "budget unknown → proceed". Only the live client overrides this.
+    func rateLimitSnapshot() async -> RateLimit? { nil }
 }
 
 /// Why posting a comment didn't happen before the network was even touched. `.empty` is a blank

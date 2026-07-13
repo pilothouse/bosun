@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var root: BosunView!
     private var authController: GitHubAuthController!
     private var dataController: GitHubDataController!
+    /// Drives opt-in background refresh (#57 → #97). Retained for the app's lifetime; started/stopped
+    /// by its own `sync()` off a `store.observe` hook as the toggle and auth state change.
+    private var refreshScheduler: GitHubRefreshScheduler!
     private var store: Store?
     let ghostty = GhosttyApp.shared
     /// In-app auto-update via Sparkle (#57). Created at launch so the menu and Settings can ask whether
@@ -54,6 +57,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         auth.onSignedOut = { [weak data] in data?.clear() }
         // A revoked/expired token (repeated 401s) signs out and reopens the device-flow sheet.
         data.onUnauthorized = { [weak auth] in auth?.handleSessionExpired() }
+        // Background auto-refresh (#97): the scheduler starts/stops itself as the toggle and auth state
+        // change. `store.observe` fires on `notify()` — which covers both the auth-state change (sign
+        // in/out) and the pref toggle/interval `changed()` — and `sync()` is idempotent, so these
+        // frequent notifications cost a no-op comparison unless the run/stop decision actually flips.
+        let scheduler = GitHubRefreshScheduler(store: store, data: data, api: githubServices.api)
+        self.refreshScheduler = scheduler
+        store.observe { [weak scheduler] in scheduler?.sync() }
         let root = BosunView(store: store, ghostty: ghostty, connections: services,
                                  auth: auth, data: data)
         self.root = root

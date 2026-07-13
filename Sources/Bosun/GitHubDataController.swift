@@ -378,6 +378,22 @@ final class GitHubDataController {
         }
     }
 
+    /// Background auto-refresh (#97): refresh exactly one scoped unit and await it, hydrate-then-delta
+    /// like every other fetch. `.currentItems` routes through `reloadCurrentItems()` (preserveTab: true),
+    /// so a background update never triggers the selection-follows-tab switch (#100). Awaitable so the
+    /// scheduler serializes ticks and never overlaps fetches; reading the task handle right after the
+    /// call is safe (same `@MainActor`, no `await` between — mirrors `refresh()`).
+    func backgroundRefresh(_ unit: RefreshPlanner.Unit) async {
+        switch unit {
+        case .orgList:
+            load()
+            await loadTask?.value
+        case .currentItems:
+            reloadCurrentItems()
+            await itemsTask?.value
+        }
+    }
+
     /// Select a list item: show its lead content immediately (the store already has it) and
     /// fetch the hydrated detail (body tasks, comments, PR checks) to upgrade it. Re-clicking the
     /// already-open item is a no-op (`DetailReselectionPolicy`) — no flash, no refetch, scroll kept.

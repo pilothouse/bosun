@@ -77,6 +77,11 @@ final class GeneralPane: SettingsPane {
     private let updateBox: NSButton
     private let skipBox: NSButton
     private let bellBox: NSButton
+    private let autoRefreshBox: NSButton
+    private let intervalPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let intervalLabel = NSTextField(labelWithString: "Interval:")
+    /// Popup index ↔ minutes (#97); the popup titles below are parallel to these.
+    private let refreshIntervals = [5, 15, 30, 60, 120]
     private let iCloudBox: NSButton
     private let iCloudHint: NSTextField
 
@@ -85,6 +90,7 @@ final class GeneralPane: SettingsPane {
         updateBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         skipBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         bellBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        autoRefreshBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         iCloudBox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         iCloudHint = NSTextField(labelWithString: "Sign in to iCloud to sync connections.")
         super.init(store: store)
@@ -92,10 +98,31 @@ final class GeneralPane: SettingsPane {
         configure(updateBox, "Automatically check for updates", #selector(toggleAutoUpdate))
         configure(skipBox, "Skip repositories without open issues or PRs", #selector(toggleSkip))
         configure(bellBox, "Show an activity badge on background console tabs", #selector(toggleBell))
+        configure(autoRefreshBox, "Automatically refresh GitHub data in the background",
+                  #selector(toggleAutoRefresh))
         configure(iCloudBox, "Sync connections across your devices via iCloud", #selector(toggleSync))
 
         iCloudHint.font = .systemFont(ofSize: 11)
         iCloudHint.textColor = .secondaryLabelColor
+
+        // Auto-refresh checkbox + its interval popup, indented under the box (like the iCloud group).
+        intervalPopup.addItems(withTitles: ["Every 5 minutes", "Every 15 minutes", "Every 30 minutes",
+                                            "Every hour", "Every 2 hours"])
+        intervalPopup.target = self
+        intervalPopup.action = #selector(intervalChanged)
+        intervalPopup.translatesAutoresizingMaskIntoConstraints = false
+        intervalLabel.font = .systemFont(ofSize: 12)
+        intervalLabel.translatesAutoresizingMaskIntoConstraints = false
+        let intervalRow = NSStackView(views: [intervalLabel, intervalPopup])
+        intervalRow.orientation = .horizontal
+        intervalRow.spacing = 8
+        intervalRow.translatesAutoresizingMaskIntoConstraints = false
+        let autoRefreshGroup = NSStackView(views: [autoRefreshBox, intervalRow])
+        autoRefreshGroup.orientation = .vertical
+        autoRefreshGroup.alignment = .leading
+        autoRefreshGroup.spacing = 6
+        autoRefreshGroup.setCustomSpacing(6, after: autoRefreshBox)
+        intervalRow.leadingAnchor.constraint(equalTo: autoRefreshGroup.leadingAnchor, constant: 20).isActive = true
 
         // iCloud checkbox + its (conditional) hint, indented under the box.
         let iCloudGroup = NSStackView(views: [iCloudBox, iCloudHint])
@@ -107,7 +134,7 @@ final class GeneralPane: SettingsPane {
         iCloudHint.leadingAnchor.constraint(equalTo: iCloudGroup.leadingAnchor, constant: 20).isActive = true
 
         stack.spacing = 12
-        [updateBox, skipBox, bellBox, iCloudGroup].forEach { stack.addArrangedSubview($0) }
+        [updateBox, skipBox, bellBox, autoRefreshGroup, iCloudGroup].forEach { stack.addArrangedSubview($0) }
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -129,6 +156,11 @@ final class GeneralPane: SettingsPane {
         updateBox.state = updater.automaticallyChecksForUpdates ? .on : .off
         skipBox.state = store.skipEmptyRepos ? .on : .off
         bellBox.state = store.terminalBellBadge ? .on : .off
+        // The interval popup is meaningful only while auto-refresh is on, so grey it out otherwise.
+        autoRefreshBox.state = store.githubAutoRefreshEnabled ? .on : .off
+        intervalPopup.selectItem(at: refreshIntervals.firstIndex(of: store.githubAutoRefreshIntervalMinutes) ?? 1)
+        intervalPopup.isEnabled = store.githubAutoRefreshEnabled
+        intervalLabel.textColor = store.githubAutoRefreshEnabled ? .labelColor : .secondaryLabelColor
         let iCloudAvailable = FileManager.default.ubiquityIdentityToken != nil
         iCloudBox.isEnabled = iCloudAvailable
         iCloudBox.state = (iCloudAvailable && store.syncConnectionsICloud) ? .on : .off
@@ -141,6 +173,13 @@ final class GeneralPane: SettingsPane {
     @objc private func toggleSkip(_ sender: NSButton) { store.skipEmptyRepos = sender.state == .on }
     @objc private func toggleBell(_ sender: NSButton) { store.terminalBellBadge = sender.state == .on }
     @objc private func toggleSync(_ sender: NSButton) { store.syncConnectionsICloud = sender.state == .on }
+    @objc private func toggleAutoRefresh(_ sender: NSButton) {
+        store.githubAutoRefreshEnabled = sender.state == .on
+        refresh()   // enable/disable the interval control to match
+    }
+    @objc private func intervalChanged(_ sender: NSPopUpButton) {
+        store.githubAutoRefreshIntervalMinutes = refreshIntervals[sender.indexOfSelectedItem]
+    }
 }
 
 // MARK: - Appearance

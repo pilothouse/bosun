@@ -15,6 +15,9 @@ public actor GitHubAPIClient: GitHubAPI {
     private let restBaseURL: URL
     private let graphQLURL: URL
     private let decoder: JSONDecoder
+    /// The last rate-limit snapshot seen on any response (`validate` refreshes it). Actor-isolated,
+    /// so the background scheduler reads a coherent value through `rateLimitSnapshot()` (#97).
+    private var lastRateLimit: RateLimit?
 
     public init(tokenStore: GitHubTokenStore,
                 session: URLSession = .shared,
@@ -242,6 +245,8 @@ public actor GitHubAPIClient: GitHubAPI {
         return users.map { $0.toDomain() }
     }
 
+    public func rateLimitSnapshot() async -> RateLimit? { lastRateLimit }
+
     public func searchIssues(owner: String, repo: String, query: String) async throws -> [GitHubItem] {
         // Scope the search to this repo's issues (never PRs) and cap it — the picker only needs a
         // short, newest-first candidate list. Results decode through the same `IssueRESTDTO`.
@@ -343,8 +348,10 @@ public actor GitHubAPIClient: GitHubAPI {
     }
 
     /// Map an HTTP status to a `GitHubAPIError`. A 403/429 is read as a rate-limit only when the
-    /// `x-ratelimit-*` headers say the budget is spent — otherwise it's a plain forbidden.
+    /// `x-ratelimit-*` headers say the budget is spent — otherwise it's a plain forbidden. Every
+    /// response (any status) refreshes `lastRateLimit` so the scheduler can throttle proactively (#97).
     private func validate(_ http: HTTPURLResponse) throws {
+        if let snapshot = RateLimit.parse(headers: stringHeaders(http)) { lastRateLimit = snapshot }
         switch http.statusCode {
         case 200...299:
             return

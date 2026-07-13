@@ -142,9 +142,21 @@ public struct Preferences: Sendable, Equatable, Codable {
     public var terminalOptionAsAlt: Bool
     public var terminalDesktopNotifications: Bool
     public var terminalSystemBell: Bool
+    /// Whether the app periodically refreshes GitHub data (orgs + the open scope's issues/PRs) on its
+    /// own, one scoped fetch per tick so it never spams the API (#97). `false` (opt-in) by default —
+    /// nothing refreshes in the background until the user turns it on.
+    public var githubAutoRefreshEnabled: Bool
+    /// How often, in minutes, each background-refresh unit goes stale and is eligible to refetch,
+    /// clamped to `[minRefreshMinutes, maxRefreshMinutes]`. Defaults to `15`. See `RefreshPlanner`.
+    public var githubAutoRefreshIntervalMinutes: Int
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
+
+    /// The usable bounds for `githubAutoRefreshIntervalMinutes` (#97): frequent enough to be useful,
+    /// rare enough to stay well under the API budget.
+    public static let minRefreshMinutes = 5
+    public static let maxRefreshMinutes = 120
 
     /// Exponent of the opacity easing curve. >1 flattens the top of the range so a small drag
     /// from fully-opaque barely changes the window. See `windowAlpha(forSliderPosition:)`.
@@ -213,7 +225,9 @@ public struct Preferences: Sendable, Equatable, Codable {
         terminalPaddingY: Int = 2,
         terminalOptionAsAlt: Bool = false,
         terminalDesktopNotifications: Bool = true,
-        terminalSystemBell: Bool = false
+        terminalSystemBell: Bool = false,
+        githubAutoRefreshEnabled: Bool = false,
+        githubAutoRefreshIntervalMinutes: Int = 15
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -260,6 +274,10 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.terminalOptionAsAlt = terminalOptionAsAlt
         self.terminalDesktopNotifications = terminalDesktopNotifications
         self.terminalSystemBell = terminalSystemBell
+        self.githubAutoRefreshEnabled = githubAutoRefreshEnabled
+        self.githubAutoRefreshIntervalMinutes = min(Preferences.maxRefreshMinutes,
+                                                    max(Preferences.minRefreshMinutes,
+                                                        githubAutoRefreshIntervalMinutes))
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -315,7 +333,9 @@ public struct Preferences: Sendable, Equatable, Codable {
             terminalPaddingY: try container.decodeIfPresent(Int.self, forKey: .terminalPaddingY) ?? fallback.terminalPaddingY,
             terminalOptionAsAlt: try container.decodeIfPresent(Bool.self, forKey: .terminalOptionAsAlt) ?? fallback.terminalOptionAsAlt,
             terminalDesktopNotifications: try container.decodeIfPresent(Bool.self, forKey: .terminalDesktopNotifications) ?? fallback.terminalDesktopNotifications,
-            terminalSystemBell: try container.decodeIfPresent(Bool.self, forKey: .terminalSystemBell) ?? fallback.terminalSystemBell
+            terminalSystemBell: try container.decodeIfPresent(Bool.self, forKey: .terminalSystemBell) ?? fallback.terminalSystemBell,
+            githubAutoRefreshEnabled: try container.decodeIfPresent(Bool.self, forKey: .githubAutoRefreshEnabled) ?? fallback.githubAutoRefreshEnabled,
+            githubAutoRefreshIntervalMinutes: try container.decodeIfPresent(Int.self, forKey: .githubAutoRefreshIntervalMinutes) ?? fallback.githubAutoRefreshIntervalMinutes
         )
     }
 

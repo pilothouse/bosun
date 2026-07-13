@@ -634,4 +634,52 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(decoded.terminalDesktopNotifications, Preferences.default.terminalDesktopNotifications)
         XCTAssertEqual(decoded.terminalSystemBell, Preferences.default.terminalSystemBell)
     }
+
+    // MARK: - Background auto-refresh (#97)
+
+    func testGithubAutoRefreshDefaultsToOffAtFifteenMinutes() {
+        XCTAssertFalse(Preferences.default.githubAutoRefreshEnabled,
+                       "background refresh is opt-in — off until the user turns it on (#97)")
+        XCTAssertEqual(Preferences.default.githubAutoRefreshIntervalMinutes, 15,
+                       "the default cadence is 15 minutes")
+    }
+
+    func testGithubAutoRefreshRoundTripsThroughCodable() throws {
+        let original = Preferences(githubAutoRefreshEnabled: true, githubAutoRefreshIntervalMinutes: 30)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertTrue(decoded.githubAutoRefreshEnabled)
+        XCTAssertEqual(decoded.githubAutoRefreshIntervalMinutes, 30)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutGithubAutoRefreshFallsBackToDefaults() throws {
+        // A payload written by a build before background refresh existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertFalse(decoded.githubAutoRefreshEnabled)
+        XCTAssertEqual(decoded.githubAutoRefreshIntervalMinutes, 15)
+    }
+
+    func testGithubAutoRefreshIntervalIsClampedToTheUsableRange() {
+        XCTAssertEqual(Preferences(githubAutoRefreshIntervalMinutes: 0).githubAutoRefreshIntervalMinutes,
+                       Preferences.minRefreshMinutes, "too-frequent would spam GitHub")
+        XCTAssertEqual(Preferences(githubAutoRefreshIntervalMinutes: 9999).githubAutoRefreshIntervalMinutes,
+                       Preferences.maxRefreshMinutes, "too-rare is pointless — cap it")
+        XCTAssertEqual(Preferences(githubAutoRefreshIntervalMinutes: 30).githubAutoRefreshIntervalMinutes, 30,
+                       "a value inside the range is left alone")
+    }
+
+    func testDecodedOutOfRangeGithubAutoRefreshIntervalIsAlsoClamped() throws {
+        let json = Data(#"{"githubAutoRefreshIntervalMinutes":1}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertEqual(decoded.githubAutoRefreshIntervalMinutes, Preferences.minRefreshMinutes,
+                       "clamping holds however a Preferences is built")
+    }
 }
