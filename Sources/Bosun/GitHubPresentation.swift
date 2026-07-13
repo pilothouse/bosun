@@ -129,25 +129,32 @@ extension Item {
     /// The status chip the cards/detail show. Open PRs reflect their checks once hydrated (the
     /// list fetch carries none, so it reads as plain "open"); issues surface an "epic" label.
     private static func status(for it: GitHubItem) -> (label: String, color: NSColor, glyph: String) {
+        // Terminal states (merged/closed) badge the same wherever they're set — share one source
+        // with `applyResolved(state:)` so the initial projection and an in-place merge/close agree.
+        if let terminal = terminalBadge(isPR: it.kind == .pullRequest, state: it.state) { return terminal }
         switch it.kind {
         case .pullRequest:
-            switch it.state {
-            case .merged: return ("merged", Status.purple, "✓")
-            case .closed: return ("closed", Status.red, "✕")
-            case .open:
-                if it.isDraft { return ("draft", Status.dim, "○") }
-                if let fromChecks = checksStatus(it.checks) { return fromChecks }
-                return ("open", Status.green, "●")
-            }
+            if it.isDraft { return ("draft", Status.dim, "○") }
+            if let fromChecks = checksStatus(it.checks) { return fromChecks }
+            return ("open", Status.green, "●")
         case .issue:
-            switch it.state {
-            case .closed: return ("closed", Status.purple, "✓")
-            case .open, .merged:
-                if it.labels.contains(where: { $0.caseInsensitiveCompare("epic") == .orderedSame }) {
-                    return ("epic", Status.purple, "◆")
-                }
-                return ("open", Status.green, "○")
+            if it.labels.contains(where: { $0.caseInsensitiveCompare("epic") == .orderedSame }) {
+                return ("epic", Status.purple, "◆")
             }
+            return ("open", Status.green, "○")
+        }
+    }
+
+    /// The status chip for a *terminal* lifecycle state (a merged/closed PR, or a closed issue), or
+    /// nil while the item is still open. Terminal badges don't depend on checks/draft/epic, so this
+    /// small mapping is the single source both `status(for:)` and `Item.applyResolved(state:)` read
+    /// — a local merge/close can refresh the row's badge without re-deriving it from a fetch.
+    static func terminalBadge(isPR: Bool, state: GitHubItemState)
+        -> (label: String, color: NSColor, glyph: String)? {
+        switch state {
+        case .merged: return isPR ? ("merged", Status.purple, "✓") : nil   // issues can't merge
+        case .closed: return isPR ? ("closed", Status.red, "✕") : ("closed", Status.purple, "✓")
+        case .open: return nil
         }
     }
 
@@ -182,6 +189,23 @@ extension Item {
         assignees = (it.assignees ?? []).map(Assignee.init(domain:))
         milestone = it.milestone
         metaLeft = Item.metaLeft(for: it)
+    }
+
+    /// Reflect a terminal state applied locally (a merged/closed PR, or a closed issue) on this list
+    /// row: update the lifecycle `state` the status filter reads, so a merged/closed item drops out
+    /// of an open-only list at once, and refresh the status badge so a row still visible under a
+    /// closed-inclusive filter shows "merged"/"closed" instead of a stale "open" chip. The
+    /// detail-only collections (comments/checks/…) are untouched — this is the list-row counterpart
+    /// to `refreshDetail`. A non-terminal state (or an issue marked `merged`, which can't happen)
+    /// updates `state` only, leaving the derived badge to the next refresh, mirroring `applyEdited`.
+    mutating func applyResolved(state newState: GitHubItemState) {
+        state = newState
+        guard let badge = Item.terminalBadge(isPR: kind == .pr, state: newState) else { return }
+        glyph = badge.glyph
+        gcolor = badge.color
+        statusLabel = badge.label
+        statusColor = badge.color
+        dotColor = badge.color
     }
 }
 

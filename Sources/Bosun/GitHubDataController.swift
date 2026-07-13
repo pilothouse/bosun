@@ -465,6 +465,10 @@ final class GitHubDataController {
                 _ = try await mergePullRequestUseCase(
                     owner: repo.owner, repo: repo.name, number: number, merge: merge)
                 completion(true, nil)
+                // Reflect the new state on the list row so the active status filter re-checks it — a
+                // merged PR drops out of an open-only list at once (issue's blocked-by tree re-roots
+                // any items it blocked). The detail re-fetch below repaints the pane as merged.
+                applyResolvedState(.merged, toItemId: selectedId)
                 // Re-fetch only if the user is still on this item; the detail now reports `merged`.
                 if store.selectedItemId == selectedId { refreshDetail() }
             } catch {
@@ -497,6 +501,9 @@ final class GitHubDataController {
                         + "\(branch ?? ""): \(reason)."
                 }
                 completion(true, nil)
+                // Reflect the new state on the list row so the active status filter re-checks it — a
+                // closed PR drops out of an open-only list at once.
+                applyResolvedState(.closed, toItemId: selectedId)
                 // Re-fetch only if the user is still on this item; the detail now reports `closed`.
                 if store.selectedItemId == selectedId { refreshDetail() }
             } catch {
@@ -522,11 +529,27 @@ final class GitHubDataController {
                     owner: repo.owner, repo: repo.name,
                     number: item.number, reason: reason, duplicateOf: duplicateOf)
                 completion(true, nil)
+                // Reflect the new state on the list row so the active status filter re-checks it — a
+                // closed issue drops out of an open-only list at once (a blocker issue's tree
+                // re-roots the items it blocked, via `GitHubItemTree`).
+                applyResolvedState(.closed, toItemId: selectedId)
                 if store.selectedItemId == selectedId { refreshDetail() }
             } catch {
                 completion(false, Self.closeIssueMessage(for: error))
             }
         }
+    }
+
+    /// Apply a just-committed terminal state (merge/close) to the item's list row in place, so the
+    /// active status filter re-evaluates it immediately — a merged/closed row leaves an open-only
+    /// list without waiting for the next re-fetch. Runs unconditionally (not gated on the item still
+    /// being selected): the row should update even if the user moved to another item in this scope;
+    /// a scope switch clears the lists, so the id simply isn't found and this is a no-op. The
+    /// blocked-by tree needs no special handling — `GitHubItemTree` re-roots any items the removed
+    /// row blocked rather than dropping them.
+    private func applyResolvedState(_ state: GitHubItemState, toItemId id: String) {
+        if let i = store.prs.firstIndex(where: { $0.id == id }) { store.prs[i].applyResolved(state: state) }
+        if let i = store.issues.firstIndex(where: { $0.id == id }) { store.issues[i].applyResolved(state: state) }
     }
 
     /// Search the open item's repo for issues matching `query`, projected to presentation `Item`s for
@@ -758,7 +781,7 @@ final class GitHubDataController {
             if hadCache {
                 store.prs = cachedPRs.map(Item.init(domain:))
                 store.issues = cachedIssues.map(Item.init(domain:))
-                reconcileSelectionForScope(preserveTab: preserveTab)
+                reconcileSelectionForScope(establishing: !preserveTab)
             } else {
                 store.isLoadingItems = true
             }
@@ -785,7 +808,7 @@ final class GitHubDataController {
                 if !hadCache || !prDelta.isUnchanged { store.prs = prDelta.merged.map(Item.init(domain:)) }
                 if !hadCache || !issueDelta.isUnchanged { store.issues = issueDelta.merged.map(Item.init(domain:)) }
                 if !hadCache || !prDelta.isUnchanged || !issueDelta.isUnchanged {
-                    reconcileSelectionForScope(preserveTab: preserveTab)
+                    reconcileSelectionForScope(establishing: !preserveTab && !hadCache)
                 }
                 loadBlockedByIfNeeded()   // populate the ⊘ tree when this repo opens already in that mode
             } catch {
@@ -839,7 +862,7 @@ final class GitHubDataController {
             if hadCache {
                 store.prs = cachedPRs.map(Item.init(domain:))
                 store.issues = cachedIssues.map(Item.init(domain:))
-                reconcileSelectionForScope(preserveTab: preserveTab)
+                reconcileSelectionForScope(establishing: !preserveTab)
             } else {
                 store.isLoadingItems = true
             }
@@ -853,9 +876,16 @@ final class GitHubDataController {
                 // The aggregate doesn't bound closed history (it's an open-work overview), so no cap.
                 store.prsTruncated = false
                 store.issuesTruncated = false
-                store.prs = prs.map(Item.init(domain:))
-                store.issues = issues.map(Item.init(domain:))
-                reconcileSelectionForScope(preserveTab: preserveTab)
+                // Delta against the pre-fetch cache (assembled in the same `repoKeys` order) so a
+                // no-op background refresh reassigns nothing and skips reconcile — the list stays
+                // static instead of rebuilding every tick, mirroring the single-repo path (#100).
+                let prDelta = GitHubDelta.apply(incoming: prs, to: cachedPRs)
+                let issueDelta = GitHubDelta.apply(incoming: issues, to: cachedIssues)
+                if !hadCache || !prDelta.isUnchanged { store.prs = prs.map(Item.init(domain:)) }
+                if !hadCache || !issueDelta.isUnchanged { store.issues = issues.map(Item.init(domain:)) }
+                if !hadCache || !prDelta.isUnchanged || !issueDelta.isUnchanged {
+                    reconcileSelectionForScope(establishing: !preserveTab && !hadCache)
+                }
                 loadBlockedByIfNeeded()   // populate the ⊘ tree when the org opens already in that mode
             } catch {
                 handleFetchError(error) { [weak self] in self?.loadOrgItems(orgId: orgId, preserveTab: preserveTab) }
@@ -990,22 +1020,33 @@ final class GitHubDataController {
     }
 
     /// Keep the open item valid for the freshly-loaded list: re-hydrate it if it's still present,
-    /// otherwise default to the first item of the active tab (PRs, else issues). `preserveTab` keeps
-    /// the user on the current tab (a status-filter reload) by suppressing the selection-follows-tab
-    /// switch below — otherwise changing a PR filter while an issue is the open item yanks the view to
-    /// the Issues tab.
-    private func reconcileSelectionForScope(preserveTab: Bool = false) {
-        // Keep the open item visible: if it lives in the other tab — e.g. an issue restored from a
-        // previous session while the tab defaulted to PRs — switch to that tab so the list shows it.
-        // Skipped when preserving the tab, since the open item can legitimately be in the other tab
-        // (the user clicked a tab without selecting an item there).
-        if !preserveTab, !store.listItems.contains(where: { $0.id == store.selectedItemId }) {
-            if store.prs.contains(where: { $0.id == store.selectedItemId }) { store.tab = .prs }
-            else if store.issues.contains(where: { $0.id == store.selectedItemId }) { store.tab = .issues }
+    /// otherwise default to the first item of the active tab (PRs, else issues). `establishing` is
+    /// true only on a scope's first population (cold open / restore / explicit repo-or-org selection);
+    /// it gates the selection-follows-tab switch (`SelectionReconcile.revealTab`). A background/live
+    /// refresh passes `establishing: false`, so a data update never moves the user's tab (#100) —
+    /// otherwise the live fetch that lands after selecting a repo, or a status-filter reload with an
+    /// issue open, yanks the view to the Issues tab.
+    private func reconcileSelectionForScope(establishing: Bool) {
+        let sel = store.selectedItemId
+        // Reveal the tab that holds the open item — but only while establishing the scope. `revealTab`
+        // returns nil (keep the current tab) on every refresh, so a data update can't flip the tab.
+        if let reveal = SelectionReconcile.revealTab(
+            selectedId: sel,
+            currentTabHasSelected: store.listItems.contains(where: { $0.id == sel }),
+            selectedIsPR: store.prs.contains(where: { $0.id == sel }),
+            selectedIsIssue: store.issues.contains(where: { $0.id == sel }),
+            establishing: establishing) {
+            store.tab = reveal == .prs ? .prs : .issues
         }
         if let item = store.listItems.first(where: { $0.id == store.selectedItemId }) {
-            store.selectedItemDetail = nil
-            loadDetail(for: item)
+            // The open item is still here. Don't blank + refetch its detail if it's already loaded —
+            // a refresh that keeps the same selection should leave the detail pane static (no flash),
+            // mirroring `selectItem`'s reselection skip (`DetailReselectionPolicy`).
+            if DetailReselectionPolicy.shouldFetchDetail(
+                loadedDetailId: store.selectedItemDetail?.id, target: item.id) {
+                store.selectedItemDetail = nil
+                loadDetail(for: item)
+            }
             return
         }
         let fallback = store.listItems.first ?? store.prs.first ?? store.issues.first

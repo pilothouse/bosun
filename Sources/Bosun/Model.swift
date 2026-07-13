@@ -96,11 +96,14 @@ struct Item {
     /// The Domain lifecycle state, carried so the panel's status filter can include/exclude this
     /// item without re-deriving it from the status label.
     var state: GitHubItemState = .open
-    let glyph: String
-    let gcolor: NSColor
-    let statusLabel: String
-    let statusColor: NSColor
-    let dotColor: NSColor
+    // The status chip (glyph/label/colors). `var` so a local merge/close can refresh the badge in
+    // place via `applyResolved(state:)` — a merged/closed row that stays visible under a
+    // closed-inclusive filter shows the terminal chip, not a stale "open" dot.
+    var glyph: String
+    var gcolor: NSColor
+    var statusLabel: String
+    var statusColor: NSColor
+    var dotColor: NSColor
     let age, author: String
     /// The item's label names, carried raw (not just the first, as `metaLeft` shows) so the list's
     /// free-text search can match any label via the `GitHubItemSearch` rule.
