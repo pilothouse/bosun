@@ -27,8 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         ghostty.start()
         // Build the updater before the menu so installMenu() can decide whether to show "Check for
-        // Updates…" (hidden on a Mac App Store build, where Sparkle is disabled).
-        updater = UpdaterController()
+        // Updates…" (hidden on a Mac App Store build, where Sparkle is disabled). UI-test mode keeps
+        // it off so Sparkle's launch-time alert never blocks a scripted run (like the Keychain bypass).
+        updater = UpdaterController(enabled: CompositionRoot.appMode != .uiTest)
         installMenu()
         applyDockIcon()
 
@@ -183,15 +184,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             // Reopen the saved terminal tabs now that the connections they reference are loaded.
             self.root?.restoreTerminalTabs()
-            // Measurement-only seam (`BOSUN_PERF_SEED`, used by scripts/perf-sim.sh): skip Keychain
-            // auth and hold the seeded GitHub cache resident with no live fetch, so peak memory under
-            // heavy synthetic data can be sampled. Off by default — the normal path below recomputes
-            // signed-in state from the Keychain.
-            if ProcessInfo.processInfo.environment["BOSUN_PERF_SEED"] == "1" {
+            // Perf-profiling seam (`.perfSeed`, from `BOSUN_PERF_SEED`, used by scripts/perf-sim.sh):
+            // hold the seeded on-disk GitHub cache resident with no live fetch, so peak memory under
+            // heavy synthetic data can be sampled. The mode is resolved once in `CompositionRoot` (see
+            // `AppMode`), so this reads that instead of re-parsing the environment. `.uiTest` and
+            // `.normal` fall through to `auth.restore()`: in `.uiTest` the in-memory token flips the
+            // session to signed-in and `onSignedIn` loads the seeded fake data — no Keychain, no dialog.
+            if CompositionRoot.appMode == .perfSeed {
                 store.authState = .signedIn
                 self.dataController?.loadFromCacheForPerf()
             } else {
-                auth.restore()   // recompute signed-in state from the Keychain
+                auth.restore()   // recompute signed-in state from the Keychain (or the in-memory token)
             }
         }
     }

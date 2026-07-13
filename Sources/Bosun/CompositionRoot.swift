@@ -49,6 +49,15 @@ struct GitHubAuthServices {
 /// Views never construct adapters — they receive a use case from here.
 @MainActor
 enum CompositionRoot {
+    /// The launch mode, resolved once from the environment (see `AppMode`). This is the single place
+    /// the `BOSUN_UI_TEST`/`BOSUN_PERF_SEED` flags are read; every adapter choice below and the perf
+    /// branch in `AppDelegate` reads *this* rather than re-parsing the environment.
+    static let appMode = AppMode.resolve(environment: ProcessInfo.processInfo.environment)
+
+    /// The fixed, non-empty token handed to the in-memory `StaticTokenStore` in the offline modes so
+    /// `auth.restore()` sees a token and flips to `.signedIn` without the Keychain ever being read.
+    private static let offlineTestToken = "ui-test-token"
+
     static func makeDispatchUseCase() -> DispatchAgentUseCase {
         DispatchAgentUseCase(
             store: InMemoryRunStore(),   // concrete adapters chosen here only
@@ -58,6 +67,11 @@ enum CompositionRoot {
     }
 
     static func makeConnectionServices() -> ConnectionServices {
+        // UI-test mode keeps connections entirely in memory so it never reads or writes the user's real
+        // `connections.json` (and skips iCloud); every other run uses the on-disk store.
+        if appMode == .uiTest {
+            return connectionServices(store: InMemoryConnectionStore(), icloud: nil)
+        }
         // Local JSON stays the offline source of truth. When the user is signed into iCloud, wrap it
         // in the syncing decorator and let every use case write through that — otherwise the use cases
         // talk to local directly (local-only, no iCloud touched). See `UbiquitousConnectionStore` (#83).
@@ -65,9 +79,15 @@ enum CompositionRoot {
         let icloud: UbiquitousConnectionStore? = FileManager.default.ubiquityIdentityToken != nil
             ? UbiquitousConnectionStore(local: local)
             : nil
-        let store: ConnectionStore
-        if let icloud { store = icloud } else { store = local }
-        return ConnectionServices(
+        let store: ConnectionStore = icloud ?? local
+        return connectionServices(store: store, icloud: icloud)
+    }
+
+    /// Build the connection use-case bundle over one shared `store` (both use cases read/write the
+    /// same adapter). Factored out so the on-disk and in-memory (`.uiTest`) paths wire identically.
+    private static func connectionServices(store: ConnectionStore,
+                                           icloud: UbiquitousConnectionStore?) -> ConnectionServices {
+        ConnectionServices(
             store: store,
             save: SaveConnectionUseCase(store: store),
             remove: RemoveConnectionUseCase(store: store),
@@ -85,21 +105,47 @@ enum CompositionRoot {
     }
 
     static func makeGitHubAuthServices() -> GitHubAuthServices {
-        let tokenStore = KeychainTokenStore()                  // concrete adapters chosen here only
+        switch appMode {
+        case .normal:
+            // The shipping path: Keychain token + live client (one client serves reads and writes).
+            let tokenStore = KeychainTokenStore()
+            return assembleAuthServices(tokenStore: tokenStore,
+                                        api: GitHubAPIClient(tokenStore: tokenStore),
+                                        cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL()))
+        case .uiTest:
+            // Fully offline: an in-memory token (Keychain never read), a stateful fake client shared by
+            // reads and writes so mutations persist, and a cache pre-seeded from the same fixtures.
+            let fake = FakeGitHubAPI()
+            return assembleAuthServices(tokenStore: StaticTokenStore(token: offlineTestToken),
+                                        api: fake, cache: InMemoryGitHubCacheStore())
+        case .perfSeed:
+            // Perf profiling loads the heavy on-disk cache and never fetches (see `loadFromCacheForPerf`).
+            // The live client is present but unused; the in-memory token keeps it Keychain-safe too.
+            let tokenStore = StaticTokenStore(token: offlineTestToken)
+            return assembleAuthServices(tokenStore: tokenStore,
+                                        api: GitHubAPIClient(tokenStore: tokenStore),
+                                        cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL()))
+        }
+    }
+
+    /// Assemble the GitHub-auth bundle from a chosen token store, data client, and cache. `api` is
+    /// shared by the read path *and* every write use case (one client, one token), so a `.uiTest`
+    /// write mutates the same fake the reads project.
+    private static func assembleAuthServices(tokenStore: GitHubTokenStore, api: GitHubAPI,
+                                             cache: GitHubCacheStore) -> GitHubAuthServices {
         let auth = GitHubDeviceAuthClient(clientId: githubClientID(), scope: oauthScopes)
-        let client = GitHubAPIClient(tokenStore: tokenStore)   // one client: reads + the writes
         return GitHubAuthServices(
             tokenStore: tokenStore,
             authenticate: AuthenticateWithGitHubUseCase(
                 auth: auth, tokens: tokenStore, sleeper: TaskSleeper()),
-            api: client,                                       // shares the one token store
-            cache: JSONFileGitHubCacheStore(url: JSONFileGitHubCacheStore.defaultURL()),
-            addComment: AddCommentUseCase(api: client),
-            mergePullRequest: MergePullRequestUseCase(api: client),
-            closePullRequest: ClosePullRequestUseCase(api: client),
-            closeIssue: CloseIssueUseCase(api: client),
-            editItem: EditItemUseCase(api: client),
-            manageReviewers: ManageReviewersUseCase(api: client)
+            api: api,
+            cache: cache,
+            addComment: AddCommentUseCase(api: api),
+            mergePullRequest: MergePullRequestUseCase(api: api),
+            closePullRequest: ClosePullRequestUseCase(api: api),
+            closeIssue: CloseIssueUseCase(api: api),
+            editItem: EditItemUseCase(api: api),
+            manageReviewers: ManageReviewersUseCase(api: api)
         )
     }
 
@@ -133,8 +179,9 @@ enum CompositionRoot {
     }
 }
 
-/// A token store backed by a fixed string — only the `BOSUN_GITHUB_TOKEN` smoke path uses it.
-/// Writes are no-ops; nothing persists.
+/// A token store backed by a fixed string. Used by the `BOSUN_GITHUB_TOKEN` smoke path and by the
+/// offline `.uiTest`/`.perfSeed` modes, where a fixed non-empty token makes `auth.restore()` see a
+/// signed-in session without ever reading the Keychain. Writes are no-ops; nothing persists.
 private struct StaticTokenStore: GitHubTokenStore {
     let token: String
     func load() async throws -> String? { token }

@@ -45,6 +45,19 @@ The build needs **full Xcode** plus the **Metal Toolchain**, a component you dow
 Run `--check` first: it confirms the Metal toolchain can actually compile and reports what's
 present, exiting non-zero with the exact fix if anything is missing.
 
+### Testing the UI offline
+
+`swift test` runs the contract tests (Domain/Application/Infrastructure). To exercise the *running*
+app without signing in — and without the Keychain password dialog that a rebuild otherwise triggers —
+launch it in UI-test mode, which seeds deterministic GitHub data and connections fully offline:
+
+```sh
+BOSUN_UI_TEST=1 swift run Bosun
+```
+
+See [`docs/ui-testing.md`](docs/ui-testing.md) for what it seeds and how it relates to the perf and
+API-smoke flags.
+
 Pinned versions: zig 0.15.2, ghostty v1.3.1, macOS 15.5 SDK (the macOS-26/zig workarounds and why
 each is pinned are documented at the top of `scripts/build-libghostty.sh`). The script is
 idempotent; everything it creates under `Vendor/` is kept out of git.

@@ -16,8 +16,12 @@ final class UpdaterController: NSObject, NSMenuItemValidation {
     /// which wires up Sparkle's standard user-facing update UI and background scheduler.
     private let controller: SPUStandardUpdaterController?
 
-    override init() {
-        if UpdatePolicy.inAppUpdatesSupported(isAppStoreBuild: Self.isAppStoreBuild) {
+    /// `enabled` is false in UI-test mode (`AppMode.uiTest`), so Sparkle never starts and its
+    /// launch-time "unable to check for updates" alert can't steal focus from a scripted UI run —
+    /// the same reason the mode bypasses the Keychain. The caller decides (see `AppDelegate`), keeping
+    /// this controller unaware of the app's run mode.
+    init(enabled: Bool = true) {
+        if enabled, UpdatePolicy.inAppUpdatesSupported(isAppStoreBuild: Self.isAppStoreBuild) {
             controller = SPUStandardUpdaterController(startingUpdater: true,
                                                       updaterDelegate: nil,
                                                       userDriverDelegate: nil)

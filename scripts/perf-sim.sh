@@ -11,9 +11,11 @@
 #                        and reported SEPARATELY (those are distinct PIDs, not Bosun's memory).
 #   • connections     — N saved connections spread across M folders, loaded into the rail.
 #   • GitHub data     — an orgs/repos tree plus a cache mirror holding issues/PRs. Held resident
-#                        via the off-by-default BOSUN_PERF_SEED hook (AppDelegate +
+#                        via the off-by-default BOSUN_PERF_SEED flag (AppDelegate +
 #                        GitHubDataController.loadFromCacheForPerf), which hydrates from the seeded
-#                        github-cache.json with NO live fetch.
+#                        github-cache.json with NO live fetch. The flag now resolves to
+#                        AppMode.perfSeed in CompositionRoot (see docs/ui-testing.md) — the same mode
+#                        selector as the offline BOSUN_UI_TEST mode, which is Keychain-safe too.
 #
 # It seeds three stores the app reads on launch — `connections.json`, `github-cache.json`, and the
 # `bosun.preferences` UserDefaults blob (openTabs) — runs the app under `caffeinate` (Metal needs
