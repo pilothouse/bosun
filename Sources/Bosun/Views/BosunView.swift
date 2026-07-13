@@ -266,13 +266,10 @@ final class BosunView: NSView {
 
     private func upsert(_ connection: Domain.Connection) {
         if let idx = store.domainConnections.firstIndex(where: { $0.id == connection.id }) {
-            let renamed = store.domainConnections[idx].name != connection.name
             store.domainConnections[idx] = connection
-            // Keep any open console tab's label in step with the rename (connection tabs are locked
-            // to the connection name, #29), so an edit doesn't leave a stale title on the strip.
-            if renamed {
-                center.terminal.renameConnectionTabs(connectionId: connection.id.uuidString, to: connection.name)
-            }
+            // Any open console tab's label follows the edit (a rename, or a folder change) via the
+            // store observer → `onChange` → `relabelConnectionTabs`, which recomposes the locked
+            // "Folder/connection" title (#29, #99); the mutation above already notified.
         } else {
             store.domainConnections.append(connection)
         }
@@ -455,6 +452,10 @@ final class BosunView: NSView {
 
     private func onChange() {
         applyTheme()
+        // Keep open connection tabs' "Folder/connection" labels (#99) in step with the store: the
+        // folder-prefix pref toggling, a folder rename, or a connection moving folders all land here.
+        // Idempotent — a no-op when no title actually changed.
+        center.terminal.relabelConnectionTabs()
         // Slide only the rail when the sidebar is toggled. Gated on the actual collapse flip so
         // theme/selection/data notifies and window resizes still lay out instantly.
         if store.railCollapsed != railShown {

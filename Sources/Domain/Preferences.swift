@@ -117,6 +117,11 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// the way Ghostty does by default (`unfocused-split-opacity`). `true` (opt-out) by default; only
     /// applies once a tab is split, so a single-pane tab is always at full opacity.
     public var terminalDimUnfocused: Bool
+    /// Whether a connection's console tab is titled "Folder/connection" instead of just the
+    /// connection name (#99). `true` (opt-out) by default. Only affects connections that sit in a
+    /// folder (`Connection.folderId`); an ungrouped connection always shows the bare name. See
+    /// `ConnectionTabTitle`.
+    public var terminalShowFolderInTab: Bool
     /// The ids (`Folder.id` uuid strings) of connection-rail folders the user has collapsed, stored
     /// as a sorted array (a `Set` in memory). `nil` means never customized — every folder expanded.
     /// A stored id whose folder no longer exists is simply ignored on render. See #82.
@@ -215,6 +220,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         terminalBusySpinner: Bool = false,
         terminalFocusRing: Bool = true,
         terminalDimUnfocused: Bool = true,
+        terminalShowFolderInTab: Bool = true,
         collapsedFolders: [String]? = nil,
         syncConnectionsViaICloud: Bool = false,
         terminalFontFamily: String = "JetBrains Mono",
@@ -263,6 +269,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.terminalBusySpinner = terminalBusySpinner
         self.terminalFocusRing = terminalFocusRing
         self.terminalDimUnfocused = terminalDimUnfocused
+        self.terminalShowFolderInTab = terminalShowFolderInTab
         self.collapsedFolders = collapsedFolders
         self.syncConnectionsViaICloud = syncConnectionsViaICloud
         self.terminalFontFamily = terminalFontFamily
@@ -323,6 +330,7 @@ public struct Preferences: Sendable, Equatable, Codable {
             terminalBusySpinner: try container.decodeIfPresent(Bool.self, forKey: .terminalBusySpinner) ?? fallback.terminalBusySpinner,
             terminalFocusRing: try container.decodeIfPresent(Bool.self, forKey: .terminalFocusRing) ?? fallback.terminalFocusRing,
             terminalDimUnfocused: try container.decodeIfPresent(Bool.self, forKey: .terminalDimUnfocused) ?? fallback.terminalDimUnfocused,
+            terminalShowFolderInTab: try container.decodeIfPresent(Bool.self, forKey: .terminalShowFolderInTab) ?? fallback.terminalShowFolderInTab,
             collapsedFolders: try container.decodeIfPresent([String].self, forKey: .collapsedFolders) ?? fallback.collapsedFolders,
             syncConnectionsViaICloud: try container.decodeIfPresent(Bool.self, forKey: .syncConnectionsViaICloud) ?? fallback.syncConnectionsViaICloud,
             terminalFontFamily: try container.decodeIfPresent(String.self, forKey: .terminalFontFamily) ?? fallback.terminalFontFamily,

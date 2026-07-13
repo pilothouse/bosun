@@ -297,7 +297,7 @@ final class TerminalContainerView: FlippedView {
         }
         let surface = GhosttySurfaceView(app: app, command: command,
                                          workingDirectory: workingDirectory, env: env)
-        return wire(TerminalSession(view: surface, title: conn.name, dot: Status.green,
+        return wire(TerminalSession(view: surface, title: store.tabTitle(for: conn), dot: Status.green,
                                     origin: .connection(conn.id.uuidString), lockTitle: true),
                     surface: surface)
     }
@@ -594,16 +594,20 @@ final class TerminalContainerView: FlippedView {
         if let tabId = paneToTab[id], tabId == tabs.activeID, focusedPane[tabId] == id { onActiveTitleChange?() }
     }
 
-    /// Relabel every open console pane belonging to a connection when that connection is renamed.
-    /// Connection tabs lock their title to the connection name (#29), so a rename in the edit sheet
-    /// has to be pushed here directly — the server/OSC path can't touch a locked title. Updates all
-    /// matching panes across every tab, relabels the strip, re-titles the window, and re-persists so
-    /// the new label survives relaunch. A no-op when no open tab references the connection.
-    func renameConnectionTabs(connectionId: String, to name: String) {
+    /// Recompute every open connection pane's title from the store — a connection rename, a folder
+    /// rename, a connection moving between folders, or the folder-prefix preference toggling (#99).
+    /// Connection tabs lock their title (#29), so the server/OSC path can't touch it; the composed
+    /// "Folder/connection" (see `Store.tabTitle`) has to be pushed here directly. Idempotent — a
+    /// no-op when nothing changed. Relabels the strip, re-titles the window, and re-persists so the
+    /// label survives relaunch.
+    func relabelConnectionTabs() {
         var changed = false
-        for session in views.values where session.origin == .connection(connectionId) && session.title != name {
-            session.title = name
-            changed = true
+        for session in views.values {
+            guard case let .connection(connId) = session.origin,
+                  let conn = store.domainConnections.first(where: { $0.id.uuidString == connId })
+            else { continue }
+            let title = store.tabTitle(for: conn)
+            if session.title != title { session.title = title; changed = true }
         }
         guard changed else { return }
         needsLayout = true       // relabel the tab strip; no surface churn

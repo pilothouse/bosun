@@ -416,6 +416,16 @@ final class PreferencesTests: XCTestCase {
         XCTAssertTrue(try JSONDecoder().decode(Preferences.self, from: legacy).terminalDimUnfocused)
     }
 
+    func testTerminalShowFolderInTabDefaultsOnAndRoundTrips() throws {
+        XCTAssertTrue(Preferences.default.terminalShowFolderInTab,
+                      "console tabs prefix the folder name by default — opt-out (#99)")
+        let data = try JSONEncoder().encode(Preferences(terminalShowFolderInTab: false))
+        XCTAssertFalse(try JSONDecoder().decode(Preferences.self, from: data).terminalShowFolderInTab)
+        // A blob from a build before this field decodes to the default (on).
+        let legacy = Data(#"{"themeKey":"carbon"}"#.utf8)
+        XCTAssertTrue(try JSONDecoder().decode(Preferences.self, from: legacy).terminalShowFolderInTab)
+    }
+
     func testOpenTabTreesDefaultToNil() {
         XCTAssertNil(Preferences.default.openTabTrees, "nil means 'no split layout saved — fall back to openTabs'")
     }

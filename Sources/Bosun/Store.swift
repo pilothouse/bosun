@@ -223,6 +223,11 @@ final class Store {
     /// `layoutPanes`. On by default; only takes effect once a tab is split.
     var terminalDimUnfocused = true { didSet { if oldValue != terminalDimUnfocused { changed() } } }
 
+    /// Whether a connection's console tab is titled "Folder/connection" instead of the bare name
+    /// (#99). Global, persisted; the dock recomposes open tabs via `relabelConnectionTabs` on
+    /// `notify`. On by default — an ungrouped connection always shows the bare name. See `tabTitle`.
+    var terminalShowFolderInTab = true { didSet { if oldValue != terminalShowFolderInTab { changed() } } }
+
     /// The Ghostty-style terminal options (font, cursor, padding, option-as-alt, notifications) the
     /// Settings TERMINAL pane edits (#67). Mirrors the `uiZoom` precedent: its `didSet` pushes the
     /// value into the `Controls` `terminalConfig` global *even while restoring* (so the seed config a
@@ -318,6 +323,25 @@ final class Store {
 
     var selectedConn: Connection {
         connections.first { $0.id == selectedConnId } ?? connections.first ?? .placeholder
+    }
+
+    /// The console-tab title for a connection: "Folder/connection" when `terminalShowFolderInTab`
+    /// is on and the connection sits in a folder, else the bare name (#99). The single point the
+    /// tab strip and the window titlebar both use, so they can't drift. Delegates the rule to the
+    /// pure `Domain.ConnectionTabTitle`.
+    func tabTitle(for conn: Domain.Connection) -> String {
+        let folder = domainFolders.first { $0.id == conn.folderId }
+        return Domain.ConnectionTabTitle.compose(connectionName: conn.name,
+                                                 folderName: folder?.name,
+                                                 showFolder: terminalShowFolderInTab)
+    }
+
+    /// The titlebar's fallback label for the selected connection, used briefly before a live console
+    /// title exists (#73). Composes the same "Folder/connection" as the tab so the chrome matches.
+    var selectedConnTabTitle: String {
+        guard let conn = domainConnections.first(where: { $0.id.uuidString == selectedConnId })
+        else { return selectedConn.name }
+        return tabTitle(for: conn)
     }
 
     /// The hydrated detail when it matches the selection, else the lead list item — so the pane
@@ -472,6 +496,7 @@ final class Store {
             terminalBusySpinner: terminalBusySpinner,
             terminalFocusRing: terminalFocusRing,
             terminalDimUnfocused: terminalDimUnfocused,
+            terminalShowFolderInTab: terminalShowFolderInTab,
             collapsedFolders: collapsedFolderIds.sorted(),
             syncConnectionsViaICloud: syncConnectionsICloud,
             terminalFontFamily: terminalConfig.fontFamily,
@@ -527,6 +552,7 @@ final class Store {
         terminalBusySpinner = p.terminalBusySpinner
         terminalFocusRing = p.terminalFocusRing
         terminalDimUnfocused = p.terminalDimUnfocused
+        terminalShowFolderInTab = p.terminalShowFolderInTab
         collapsedFolderIds = Set(p.collapsedFolders ?? [])
         syncConnectionsICloud = p.syncConnectionsViaICloud
         // Like `uiZoom` below, the `didSet` mirrors this into the `Controls` global even while
