@@ -41,24 +41,32 @@ final class RepoPanelView: FlippedView {
     /// `store.orgsScrollOffset` for persistence. Recreated each rebuild (the scroll view is), so the
     /// previous one is torn down first to avoid stacking observers.
     private var orgsScrollObserver: NSObjectProtocol?
-    /// Identity of the list currently shown (repo + tab + grouping + status filter). When it changes
-    /// the list is a different list, so the scroll resets to the top; otherwise the prior offset is
-    /// restored across the repaint.
+    /// Identity of the list currently shown (repo/org + tab + grouping + sort + status filter). When it
+    /// changes the list is a *different* list, so the row cache is cleared and the scroll resets to the
+    /// top; otherwise the reconcile reuses row views in place and the scroll is held to the anchor (see
+    /// `rebuild`).
     private var listIdentity = ""
 
-    /// Cached issue/PR list document, reused across rebuilds when the list's *content* is unchanged
-    /// (see `installListDoc`). `rebuild()` runs on every `layout()` — so ~60×/sec while the orgs↔issues
-    /// divider is dragged, and once per store change (e.g. expanding an org). Building the list eagerly
-    /// materializes one card view per item (~1000 `NSTextField`s + per-row `fitW()` measurement for a
-    /// few-hundred-item repo), which is the drag lag (#91). A *strong* ref keeps the built document
-    /// alive through `rebuild()`'s teardown so it can be reparented into the fresh scroll view — the
-    /// same reparent `repopulateList()` already relies on. `cachedListContentH` is the doc's natural
-    /// (content) height, kept so the reused doc can be re-stretched to fill a resized viewport.
-    private var cachedListDoc: FlippedView?
-    private var cachedListSig: Int?
-    private var cachedListContentH: CGFloat = 0
-    /// Cached orgs document, reused across rebuilds when the orgs' content is unchanged — the same
-    /// scheme as `cachedListDoc`. During a divider drag only `store.orgsListHeight` changes (not in the
+    /// The persistent issue/PR list document. Created once and installed as `listScroll.documentView`
+    /// for the panel's lifetime — *never* reassigned. `reconcileListDoc` mutates its row subviews in
+    /// place (reusing unchanged rows, rebuilding only changed/new ones, removing vanished ones), so a
+    /// refresh neither recreates the whole list nor zeroes the scroll (reassigning `documentView` would).
+    private let listDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+    /// Per-row view cache keyed by a stable row key — `item.id` (`owner/name#number`) for cards/tree
+    /// rows, `"section:owner/name"` for headers — each paired with the render signature it was built at.
+    /// `reconcileListDoc` reuses an entry when the signature matches and rebuilds it otherwise, which is
+    /// what makes a refresh *surgical* (only changed rows re-materialize) instead of a full teardown.
+    private var listRowViews: [String: (view: NSView, sig: Int)] = [:]
+    /// Non-row chrome inside `listDoc` (the loading spinner and the "no match"/truncation notes). Single
+    /// views with no reuse value, rebuilt every reconcile; tracked so the prior set is removed first.
+    private var listChromeViews: [NSView] = []
+    /// The list content signature and natural height from the last reconcile. A pure geometry pass (the
+    /// orgs↔issues divider drag — content and width unchanged, so an unchanged `listSignature`) skips the
+    /// per-row loop and only re-stretches `listDoc` to fill the resized viewport (the #91 drag win).
+    private var lastListSig: Int?
+    private var lastListContentH: CGFloat = 0
+    /// Cached orgs document, reused across rebuilds when the orgs' content is unchanged — a whole-document
+    /// cache (the list uses finer per-row caching). During a divider drag only `store.orgsListHeight` changes (not in the
     /// signature), so this is reused every frame; expanding/collapsing an org changes the signature so
     /// it rebuilds once. Reusing it also avoids the `AvatarView` initials-flash on relayout.
     private var cachedOrgsDoc: FlippedView?
@@ -458,9 +466,10 @@ final class RepoPanelView: FlippedView {
     // MARK: layout
 
     private func rebuild() {
-        // Capture the list's scroll position before tearing the panel down, so a plain repaint
+        // Capture the orgs list's scroll position before tearing the panel down, so a plain repaint
         // (e.g. opening an item, which hydrates its detail) can restore it instead of jumping to top.
-        let priorListOffset = listScroll?.contentView.bounds.origin
+        // The PR/issue list keeps its place differently now — see the anchor logic in the list body,
+        // where the persistent `listDoc` means the scroll is never zeroed in the first place.
         let priorOrgsOffset = orgsScroll?.contentView.bounds.origin
         // Keep the persistent orgs splitter AND the list scroll view out of the teardown; everything
         // else is rebuilt from scratch. Reusing the list scroll view (rather than recreating it every
@@ -614,28 +623,57 @@ final class RepoPanelView: FlippedView {
         listScroll.drawsBackground = false
         listScroll.hasVerticalScroller = true
         listScroll.autohidesScrollers = true
-        // Reuse the cached document when the list content is unchanged (e.g. the divider drag), so a
-        // few-hundred-item list isn't rebuilt every frame (#91). `selectedRect`/`docChanged` are the
-        // reuse signal: on the reuse path the doc is untouched, so any selection change takes the build
-        // path (which recomputes them); the focus block below only fires on a selection change.
-        let (doc, selectedRect, docChanged) = installListDoc(into: listScroll, width: w, t: t)
         if listScroll.superview == nil { addSubview(listScroll) }
         self.listScroll = listScroll
 
-        // Preserve the user's place across a plain repaint; reset to the top only when the list
-        // itself changed (repo/tab/grouping/status-filter switch). Only needed when the document view
-        // was actually swapped (which zeroes the scroll) — on the reuse path the position (and a live
-        // momentum scroll) is kept naturally, so we must NOT call scroll(to:), which would halt it.
+        // The list's identity — repo/org + tab + grouping + sort + status filter. A change means a
+        // *different* list (not a refresh of the same one): drop the row cache and send the scroll back
+        // to the top. When it's unchanged, anchor the scroll to whatever the user is looking at, so a
+        // refresh (changed items, reorder, insert-above) never makes the list jump.
         let identity = [store.selectedOrgId, store.selectedRepoKey ?? "", store.tab.rawValue, store.groupBy.storageKey,
                         store.sortField.rawValue + (store.sortAscending ? "↑" : "↓"),
                         store.prStates.map(\.rawValue).sorted().joined(separator: ","),
                         store.issueStates.map(\.rawValue).sorted().joined(separator: ",")]
             .joined(separator: "|")
-        if docChanged, identity == listIdentity, let off = priorListOffset {
-            // Clamp to the new content height in case the list shrank, so we never land in empty space.
-            let maxY = max(0, doc.frame.height - listScroll.contentView.bounds.height)
-            listScroll.contentView.scroll(to: NSPoint(x: off.x, y: min(off.y, maxY)))
-            listScroll.reflectScrolledClipView(listScroll.contentView)
+        let identityChanged = identity != listIdentity
+
+        // Capture the topmost visible row *before* reconciling (same-list refresh only), so we can pin it
+        // back to the same on-screen spot afterward — the "don't jump" anchor. Keyed by row key so it
+        // works for item rows and section headers alike; `delta` is the row's offset below the viewport
+        // top (may be slightly negative when a row straddles the top edge — the relationship is kept).
+        var anchor: (key: String, delta: CGFloat)?
+        if !identityChanged {
+            let offsetY = listScroll.contentView.bounds.origin.y
+            var topKey: String?
+            var topMinY = CGFloat.greatestFiniteMagnitude
+            for (key, entry) in listRowViews where entry.view.frame.maxY > offsetY + 1 {
+                if entry.view.frame.minY < topMinY { topMinY = entry.view.frame.minY; topKey = key }
+            }
+            if let topKey { anchor = (topKey, topMinY - offsetY) }
+        }
+
+        // A different list: drop the reused rows and force a full reconcile so nothing stale survives.
+        if identityChanged {
+            listRowViews.values.forEach { $0.view.removeFromSuperview() }
+            listRowViews.removeAll(keepingCapacity: true)
+            lastListSig = nil
+        }
+
+        let selectedRect = reconcileListDoc(into: listScroll, width: w, t: t)
+
+        // Restore the user's place. A different list starts at the top; a same-list refresh re-pins the
+        // captured anchor (clamped to the new content) so what the user was viewing stays put.
+        let clip = listScroll.contentView
+        if identityChanged {
+            clip.scroll(to: .zero)
+            listScroll.reflectScrolledClipView(clip)
+        } else if let anchor, let entry = listRowViews[anchor.key] {
+            let maxY = max(0, listDoc.frame.height - clip.bounds.height)
+            let y = min(max(0, entry.view.frame.minY - anchor.delta), maxY)
+            if abs(clip.bounds.origin.y - y) > 0.5 {
+                clip.scroll(to: NSPoint(x: 0, y: y))
+                listScroll.reflectScrolledClipView(clip)
+            }
         }
         listIdentity = identity
 
@@ -645,7 +683,7 @@ final class RepoPanelView: FlippedView {
             focusedItemId = nil
         } else if let rect = selectedRect, store.selectedItemId != focusedItemId {
             focusedItemId = store.selectedItemId
-            DispatchQueue.main.async { [weak doc] in doc?.scrollToVisible(rect.insetBy(dx: 0, dy: z(-28))) }
+            DispatchQueue.main.async { [weak self] in self?.listDoc.scrollToVisible(rect.insetBy(dx: 0, dy: z(-28))) }
         }
 
         // Dropdown overlay.
@@ -713,10 +751,10 @@ final class RepoPanelView: FlippedView {
     }
 
     /// One entry in the list's visible, search/scope/group/collapse-aware order — the single source
-    /// of truth shared by rendering (`buildListDoc`) and keyboard navigation (`moveSelection`), so the
-    /// two can never disagree about what's on screen or in what order. Non-navigable chrome (the
+    /// of truth shared by rendering (`reconcileListDoc`) and keyboard navigation (`moveSelection`), so
+    /// the two can never disagree about what's on screen or in what order. Non-navigable chrome (the
     /// loading spinner and the "no match"/truncation notes) is intentionally *not* modeled here; it
-    /// stays in `buildListDoc`. `.section`/`.sectionGap` carry the aggregate-org layout but have no
+    /// stays in `reconcileListDoc`. `.section`/`.sectionGap` carry the aggregate-org layout but have no
     /// `item`, so navigation skips them.
     private enum ListRow {
         case section(repoKey: String, count: Int, collapsed: Bool)   // aggregate-org repo header
@@ -746,7 +784,7 @@ final class RepoPanelView: FlippedView {
 
     /// The list rows in display order — THE ordering authority. Applies the same search filter, org
     /// sectioning (`selectedOrgRepoKeys` + collapse), grouping (`groupedTreeRows`) and collapse the
-    /// panel draws, so `buildListDoc` (which renders these) and `moveSelection` (which walks the
+    /// panel draws, so `reconcileListDoc` (which renders these) and `moveSelection` (which walks the
     /// navigable ones) share one definition. Returns `[]` on the loading-empty branch (the spinner is
     /// drawn separately) and for a genuinely empty list.
     private func visibleListRows() -> [ListRow] {
@@ -789,72 +827,173 @@ final class RepoPanelView: FlippedView {
         return rows
     }
 
-    /// Build the (search-filtered) issue/PR list as a fresh document view, plus the open item's card
-    /// rect (so the caller can scroll it into view). Renders `visibleListRows()` 1:1 into laid-out
-    /// views — that helper owns the ordering, this owns the geometry. Factored out of `rebuild()` so a
-    /// keystroke can rebuild just this document — keeping the sibling search field focused — via
-    /// `repopulateList()`, not the whole panel.
-    private func buildListDoc(width w: CGFloat, minHeight: CGFloat, t: Theme) -> (doc: FlippedView, selectedRect: NSRect?) {
-        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: w, height: z(10)))
+    /// Reconcile the persistent `listDoc` against `visibleListRows()` in place: reuse each row view whose
+    /// render signature is unchanged, (re)build only changed/new rows, drop rows that vanished, and
+    /// reposition everything to the current order. Because `listDoc` is never swapped, the scroll is
+    /// never zeroed — the caller's anchor keeps the user's place. Returns the open item's row rect so the
+    /// caller can scroll it into view on a selection change.
+    ///
+    /// A pure geometry pass (the divider drag: content and width unchanged, hence an unchanged
+    /// `listSignature`) skips the per-row loop entirely and only re-stretches `listDoc` to fill the
+    /// viewport — the #91 drag win, now without even rebuilding the document. Renders `visibleListRows()`
+    /// 1:1 — that helper owns the ordering, this owns the geometry and view reuse.
+    @discardableResult
+    private func reconcileListDoc(into scroll: NSScrollView, width w: CGFloat, t: Theme) -> NSRect? {
+        if listDoc.superview == nil { scroll.documentView = listDoc }
+        let viewportH = scroll.frame.height
+        let sig = listSignature(width: w, t: t)
+        if sig == lastListSig {
+            // Nothing the list renders changed — only (maybe) the viewport height. Keep rows put.
+            listDoc.frame.size = NSSize(width: w, height: max(lastListContentH, viewportH))
+            return nil
+        }
+
+        // Chrome (spinner / notes) has no reuse value — rebuild it every pass; drop the prior set first.
+        listChromeViews.forEach { $0.removeFromSuperview() }
+        listChromeViews.removeAll(keepingCapacity: true)
+
         var ly: CGFloat = z(6)
-        var selectedRect: NSRect?   // the open item's card, captured so we can scroll it into view
+        var selectedRect: NSRect?   // the open item's row, captured so we can scroll it into view
+        var used = Set<String>()
+        var built = 0, reused = 0
         let all = store.listItems
         let needle = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+
         if store.isLoadingItems && all.isEmpty {
             // First load of this repo's items: a spinner where the cards will appear.
             let spinner = makeSpinner()
-            spinner.frame.origin = NSPoint(x: (w - z(20)) / 2, y: z(16)); doc.addSubview(spinner)
+            spinner.frame.origin = NSPoint(x: (w - z(20)) / 2, y: z(16))
+            listDoc.addSubview(spinner); listChromeViews.append(spinner)
             ly += z(52)
         } else {
-            let rows = visibleListRows()
-            for row in rows {
-                switch row {
-                case let .section(repoKey, count, collapsed):
-                    let header = repoSectionHeader(repoKey, count: count, collapsed: collapsed,
-                                                   showOwner: store.selectedOrgId == Org.allOrgsID,
-                                                   width: w, t: t)
-                    header.frame.origin.y = ly; doc.addSubview(header); ly += z(30)
-                case let .card(it):
-                    let c = itemCard(it, width: w, t: t)
-                    c.frame.origin.y = ly; doc.addSubview(c)
-                    if it.id == store.selectedItemId { selectedRect = c.frame }
-                    ly += z(58)
-                case let .tree(it, depth, hasChildren):
-                    let gr = groupedRow(it, indent: CGFloat(depth) * z(18), hasChildren: hasChildren,
-                                        width: w, t: t)
-                    gr.frame.origin.y = ly; doc.addSubview(gr)
-                    if it.id == store.selectedItemId { selectedRect = gr.frame }
-                    ly += z(29)
-                case .sectionGap:
-                    ly += z(4)
+            var hasItemRow = false
+            for row in visibleListRows() {
+                if case .sectionGap = row { ly += z(4); continue }
+                let key = rowKey(row)
+                let rowSig = rowSignature(for: row, width: w, t: t)
+                let view: NSView
+                if let entry = listRowViews[key], entry.sig == rowSig {
+                    view = entry.view; reused += 1
+                } else {
+                    listRowViews[key]?.view.removeFromSuperview()   // drop the stale view this key had
+                    view = buildRow(row, width: w, t: t)
+                    listRowViews[key] = (view, rowSig)
+                    listDoc.addSubview(view)
+                    built += 1
                 }
+                view.frame.origin.y = ly
+                if let it = row.item {
+                    hasItemRow = true
+                    if it.id == store.selectedItemId { selectedRect = view.frame }
+                }
+                switch row {
+                case .section: ly += z(30)
+                case .card:    ly += z(58)
+                case .tree:    ly += z(29)
+                case .sectionGap: break   // unreachable — handled above
+                }
+                used.insert(key)
             }
             // A live query that hid every row — distinct from a genuinely empty list, so say so.
             // (org items always belong to the org's repos, so "no navigable row" ⇔ filter matched none.)
-            if !needle.isEmpty, !rows.contains(where: { $0.item != nil }), !all.isEmpty {
+            if !needle.isEmpty, !hasItemRow, !all.isEmpty {
                 let note = label("No items match “\(needle)”.", sys(11.5), t.txt4, lines: 2)
-                note.frame = NSRect(x: z(14), y: ly + z(4), width: w - z(28), height: z(30)); doc.addSubview(note)
-                ly += z(38)
+                note.frame = NSRect(x: z(14), y: ly + z(4), width: w - z(28), height: z(30))
+                listDoc.addSubview(note); listChromeViews.append(note); ly += z(38)
             }
         }
         // When the closed/merged history was bounded, say so rather than implying the list is complete.
         if store.listTruncated && !(store.isLoadingItems && all.isEmpty) {
             let note = label("Showing newest \(GitHubItemStates.historyCap) — older closed items not loaded.",
                              sys(10.5), t.txt4, lines: 2)
-            note.frame = NSRect(x: z(14), y: ly + z(4), width: w - z(28), height: z(30)); doc.addSubview(note)
-            ly += z(38)
+            note.frame = NSRect(x: z(14), y: ly + z(4), width: w - z(28), height: z(30))
+            listDoc.addSubview(note); listChromeViews.append(note); ly += z(38)
         }
-        doc.frame.size.height = max(ly, minHeight)
-        return (doc, selectedRect)
+
+        // Remove any cached row whose key wasn't used this pass (collapsed, filtered out, or gone).
+        for (key, entry) in listRowViews where !used.contains(key) {
+            entry.view.removeFromSuperview(); listRowViews.removeValue(forKey: key)
+        }
+
+        lastListSig = sig
+        lastListContentH = ly
+        listDoc.frame.size = NSSize(width: w, height: max(ly, viewportH))
+        Log.ui.debug("list reconcile: built \(built, privacy: .public), reused \(reused, privacy: .public)")
+        return selectedRect
     }
 
-    /// A cheap fingerprint of everything `buildListDoc` renders, so `installListDoc` can tell a pure
+    /// Build the view for one list row via the existing per-kind builders. Called only for a new or
+    /// changed row; unchanged rows reuse their cached view.
+    private func buildRow(_ row: ListRow, width w: CGFloat, t: Theme) -> NSView {
+        switch row {
+        case let .section(repoKey, count, collapsed):
+            return repoSectionHeader(repoKey, count: count, collapsed: collapsed,
+                                     showOwner: store.selectedOrgId == Org.allOrgsID, width: w, t: t)
+        case let .card(it):
+            return itemCard(it, width: w, t: t)
+        case let .tree(it, depth, hasChildren):
+            return groupedRow(it, indent: CGFloat(depth) * z(18), hasChildren: hasChildren, width: w, t: t)
+        case .sectionGap:
+            return NSView()   // unreachable: gaps are spacing-only, handled before buildRow
+        }
+    }
+
+    /// A stable cache key for a row across refreshes: the item's globally-unique `owner/name#number` for
+    /// cards/tree rows, and `"section:owner/name"` for aggregate-org headers (which can't collide with an
+    /// item id). `.sectionGap` is spacing only and never cached.
+    private func rowKey(_ row: ListRow) -> String {
+        switch row {
+        case let .section(repoKey, _, _): return "section:" + repoKey
+        case let .card(it), let .tree(it, _, _): return it.id
+        case .sectionGap: return ""
+        }
+    }
+
+    /// A per-row fingerprint of everything that row renders, so `reconcileListDoc` can reuse a row view
+    /// untouched when its signature matches and rebuild only when it truly changed. Mirrors the fields
+    /// `listSignature` folds, but per row and including the row's layout inputs (depth/collapse for tree
+    /// rows, count/owner for section headers) and its selected styling.
+    private func rowSignature(for row: ListRow, width w: CGFloat, t: Theme) -> Int {
+        var h = Hasher()
+        h.combine(w); h.combine(uiScale); h.combine(t.key)
+        switch row {
+        case let .section(repoKey, count, collapsed):
+            h.combine(0)
+            h.combine(repoKey); h.combine(count); h.combine(collapsed)
+            h.combine(store.selectedOrgId == Org.allOrgsID)   // showOwner
+        case let .card(it):
+            h.combine(1); combine(it, into: &h)
+        case let .tree(it, depth, hasChildren):
+            h.combine(2)
+            h.combine(depth); h.combine(hasChildren)
+            h.combine(store.collapsedItems.contains(it.id))   // disclosure caret state
+            combine(it, into: &h)
+        case .sectionGap:
+            h.combine(3)
+        }
+        return h.finalize()
+    }
+
+    /// Fold an item's render-relevant fields (matching `listSignature`) plus its selected styling into
+    /// the row signature.
+    private func combine(_ it: Item, into h: inout Hasher) {
+        h.combine(it.id); h.combine(it.number); h.combine(it.state.rawValue)
+        h.combine(it.title); h.combine(it.num); h.combine(it.glyph); h.combine(it.statusLabel)
+        h.combine(it.metaLeft); h.combine(it.metaRight); h.combine(it.isAgent)
+        h.combine(it.epic); h.combine(it.blocked ?? ""); h.combine(it.parent ?? "")
+        for l in it.labels { h.combine(l) }
+        h.combine(it.repo)
+        h.combine(it.id == store.selectedItemId)
+    }
+
+    /// A cheap fingerprint of the whole list's rendered content, so `reconcileListDoc` can tell a pure
     /// geometry change (the divider drag, which keeps width and content fixed) from a real content
-    /// change. There is no revision counter in `Store` (`listItems` is derived from `prs`/`issues`) and
-    /// `Item` isn't `Hashable`, so we fold the render-relevant fields explicitly. Over-inclusion only
-    /// costs a spurious rebuild, which never happens mid-drag since none of these change then. Folding
-    /// a few-hundred items is microseconds against the ~1000 text fields + `fitW()` measurements a
-    /// rebuild would otherwise do every frame (#91).
+    /// change and skip the per-row loop when nothing changed. There is no revision counter in `Store`
+    /// (`listItems` is derived from `prs`/`issues`) and `Item` isn't `Hashable`, so we fold the
+    /// render-relevant fields explicitly. Over-inclusion only costs a spurious reconcile pass, which
+    /// never happens mid-drag since none of these change then. Folding a few-hundred items is
+    /// microseconds — and when the sig *does* change, only the rows that actually differ re-materialize
+    /// (per `rowSignature`), not the ~1000 text fields + `fitW()` measurements a full rebuild once did (#91).
     private func listSignature(width w: CGFloat, t: Theme) -> Int {
         var h = Hasher()
         h.combine(w); h.combine(uiScale); h.combine(t.key)
@@ -876,44 +1015,16 @@ final class RepoPanelView: FlippedView {
         return h.finalize()
     }
 
-    /// Install the list document into `scroll`, building it via `buildListDoc` only when its content
-    /// changed (per `listSignature`); otherwise reuse the cached document (reparenting an `NSView` into
-    /// the fresh scroll view is cheap). Builds with `minHeight: 0` so the cached height is the natural
-    /// content height, then stretches the installed doc to fill the (possibly resized) viewport —
-    /// reproducing `buildListDoc`'s `max(ly, minHeight)` while the divider drag changes the viewport
-    /// height every frame. Returns the installed doc and, on the *build* path only, the open item's
-    /// card rect for scroll-into-view (nil on reuse — safe, see `rebuild`). See `cachedListDoc`.
-    private func installListDoc(into scroll: NSScrollView, width w: CGFloat, t: Theme)
-        -> (doc: FlippedView, selectedRect: NSRect?, docChanged: Bool) {
-        let sig = listSignature(width: w, t: t)
-        var selectedRect: NSRect?
-        if sig != cachedListSig || cachedListDoc == nil {
-            let built = buildListDoc(width: w, minHeight: 0, t: t)   // minHeight 0 → doc.height == content
-            cachedListDoc = built.doc
-            cachedListSig = sig
-            cachedListContentH = built.doc.frame.height
-            selectedRect = built.selectedRect
-        }
-        guard let doc = cachedListDoc else { return (FlippedView(frame: scroll.bounds), nil, true) }
-        doc.frame.size.width = w
-        doc.frame.size.height = max(cachedListContentH, scroll.frame.height)
-        // Only reassign the document view when it actually changed — reassigning halts a live
-        // trackpad/momentum scroll. On the reuse path (a detail-load or background repaint with
-        // unchanged list content) the same doc stays installed, so the user's scroll is never
-        // interrupted (the aggregate-org scroll-stops bug).
-        let docChanged = scroll.documentView !== doc
-        if docChanged { scroll.documentView = doc }
-        return (doc, selectedRect, docChanged)
-    }
-
-    /// Rebuild only the list document in response to a search keystroke, leaving the (sibling) search
-    /// field untouched so it keeps first-responder status and its insertion point. Resets to the top
-    /// (a filtered list is a new list); the open-item scroll-into-view is intentionally not run here.
-    /// Routed through `installListDoc` so the cache stays coherent — otherwise the first divider-drag
-    /// frame after a keystroke would do one wasted full rebuild.
+    /// Re-lay only the list document in response to a search keystroke, leaving the (sibling) search
+    /// field untouched so it keeps first-responder status and its insertion point. The query change
+    /// alters `listSignature`, so `reconcileListDoc` re-lays the filtered rows in place (reusing the ones
+    /// that survive the filter). Resets to the top afterward — a filtered list is a new list — and the
+    /// open-item scroll-into-view is intentionally not run here.
     private func repopulateList() {
         guard let scroll = listScroll else { return }
-        _ = installListDoc(into: scroll, width: scroll.frame.width, t: store.theme)
+        _ = reconcileListDoc(into: scroll, width: scroll.frame.width, t: store.theme)
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     /// The live search field row above the list: a borderless `NSTextField` in a card with a ⌕ glyph,

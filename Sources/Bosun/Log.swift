@@ -20,6 +20,8 @@ enum Log {
 
     /// App lifecycle / resources (dock icon, bundle).
     static let app = Logger(subsystem: subsystem, category: "app")
+    /// AppKit view rendering diagnostics (e.g. the PR/issue list reconcile build-vs-reuse counts).
+    static let ui = Logger(subsystem: subsystem, category: "ui")
     /// GitHub data fetches and their cache/per-repo fallbacks.
     static let githubData = Logger(subsystem: subsystem, category: "github-data")
     /// libghostty runtime / surface failures.
