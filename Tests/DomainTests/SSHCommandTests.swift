@@ -6,8 +6,8 @@ import XCTest
 /// if the contract is wrong, flag it.
 final class SSHCommandTests: XCTestCase {
     func testUserAndDefaultPort() {
-        XCTAssertEqual(SSHCommand.command(host: "100.87.92.76", port: 22, user: "ubuntu"),
-                       "ssh ubuntu@100.87.92.76")
+        XCTAssertEqual(SSHCommand.command(host: "10.0.2.11", port: 22, user: "ubuntu"),
+                       "ssh ubuntu@10.0.2.11")
     }
 
     func testNoUserOmitsAtSign() {
