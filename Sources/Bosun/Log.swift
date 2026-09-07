@@ -16,7 +16,7 @@ enum Log {
     /// A fixed constant rather than `Bundle.main.bundleIdentifier` alone so the `log show` / Console
     /// predicate is byte-identical in a packaged build and a bare `swift run` dev build (where
     /// `bundleIdentifier` is nil). Matches `BUNDLE_ID` in `scripts/package-app.sh`.
-    static let subsystem = Bundle.main.bundleIdentifier ?? "com.jeckerson.bosun"
+    static let subsystem = Bundle.main.bundleIdentifier ?? "dev.anvas.bosun"
 
     /// App lifecycle / resources (dock icon, bundle).
     static let app = Logger(subsystem: subsystem, category: "app")

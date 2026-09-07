@@ -97,9 +97,9 @@ cp dist/Bosun.dmg /tmp/feed/Bosun-9.9.9.dmg
 SIG=$(./bin/sign_update --ed-key-file sparkle_private_key.pem /tmp/feed/Bosun-9.9.9.dmg)
 #   …write /tmp/feed/appcast.xml with a 9.9.9 <item> whose enclosure carries $SIG…
 ( cd /tmp/feed && python3 -m http.server 8765 & )
-defaults write com.jeckerson.bosun SUFeedURL http://localhost:8765/appcast.xml   # overrides Info.plist
+defaults write dev.anvas.bosun SUFeedURL http://localhost:8765/appcast.xml   # overrides Info.plist
 open dist/Bosun.app                     # Bosun ▸ Check for Updates… → "Bosun 9.9.9 is now available"
-defaults delete com.jeckerson.bosun SUFeedURL                                    # restore the real feed
+defaults delete dev.anvas.bosun SUFeedURL                                    # restore the real feed
 ```
 
 A mismatched signature makes Sparkle reject the update — that's the EdDSA check doing its job.

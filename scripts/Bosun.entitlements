@@ -13,10 +13,22 @@
       no runtime JIT / writable-executable memory is required.
 
   iCloud key-value sync (#83): connections + folders sync via NSUbiquitousKeyValueStore,
-  which requires the ubiquity-kvstore entitlement below. `$(TeamIdentifierPrefix)` is
-  expanded by codesign from the signing identity's team; the value pairs with an App ID
-  that has the iCloud (key-value store) capability + provisioning. Carries no secrets —
-  the synced payload is connection metadata only (SSH auth stays in ssh-agent/keys).
+  which requires the ubiquity-kvstore entitlement below. Carries no secrets: the synced
+  payload is connection metadata only (SSH auth stays in ssh-agent/keys).
+
+  The Team ID is written literally rather than as `$(TeamIdentifierPrefix)`. That
+  variable is substituted by *Xcode* before it invokes codesign, and this is a SwiftPM
+  build with no Xcode in the loop. Verified: signing with the real Developer ID identity
+  embeds the literal string `$(TeamIdentifierPrefix)...` into the signature, with no
+  warning, even though TeamIdentifier is recorded correctly. Keep in sync with the team
+  of whatever SIGN_IDENTITY package-app.sh is given.
+
+  NOT YET FUNCTIONAL: ubiquity-kvstore is a *restricted* entitlement, so macOS honours it
+  only when an embedded.provisionprofile grants it. That requires a registered App ID with
+  the iCloud capability, a Developer ID provisioning profile, and a step in package-app.sh
+  copying it to Contents/embedded.provisionprofile before the codesign call. None of that
+  exists yet. The failure is silent: codesign, notarization, and Gatekeeper all pass and
+  KVS simply never syncs.
 
   If a hardened-runtime launch ever faults with a code-signing error (e.g. an
   EXC_BAD_ACCESS in a JIT/W^X path), add the *minimal* exception here and re-test:
@@ -28,6 +40,6 @@
 <plist version="1.0">
 <dict>
 	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
-	<string>$(TeamIdentifierPrefix)com.jeckerson.bosun</string>
+	<string>FGVMQ5BBGM.dev.anvas.bosun</string>
 </dict>
 </plist>

@@ -45,6 +45,11 @@
 #   BIN_DIR        build products dir            (default: `swift build -c $CONFIG --show-bin-path`)
 #   SIGN_IDENTITY  Developer ID Application identity, e.g. "Developer ID Application: Name (TEAMID)".
 #                  Empty → ad-hoc signature (un-notarizable convenience build).
+#   PROVISION_PROFILE
+#                  Path to a Developer ID .provisionprofile. Needed only when the entitlements declare
+#                  a restricted `com.apple.developer.*` capability (iCloud, App Groups, push, Sign in
+#                  with Apple); embedded at Contents/embedded.provisionprofile before signing.
+#                  Empty → skipped, with a warning if the entitlements ask for one.
 #   NOTARY_PROFILE / NOTARY_KEY+NOTARY_KEY_ID+NOTARY_ISSUER
 #                  Apple notary credentials, consumed by scripts/notarize.sh. Empty → sign only
 #                  (no notarization). See docs/signing.md.
@@ -55,7 +60,7 @@ CONFIG="${CONFIG:-release}"
 VERSION="${VERSION:-0.0.0}"
 BUILD="${BUILD:-0}"
 APP_NAME="Bosun"
-BUNDLE_ID="com.jeckerson.bosun"
+BUNDLE_ID="dev.anvas.bosun"
 ICON_SRC="$ROOT/Sources/Bosun/Resources/AppIcon.png"
 ENTITLEMENTS="$ROOT/scripts/Bosun.entitlements"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
@@ -201,6 +206,41 @@ for item in \
   [ -e "$item" ] && sign_runtime "$item"
 done
 sign_runtime "$FRAMEWORKS/Sparkle.framework"
+
+# ---- 5a. provisioning profile (restricted entitlements only) ----
+# Two classes of entitlement behave differently. Hardened-runtime exceptions (`com.apple.security.cs.*`)
+# take effect from the signature alone. Restricted capabilities (the `com.apple.developer.*` namespace:
+# iCloud, App Groups, push, Sign in with Apple) are honoured by macOS ONLY when an embedded
+# provisioning profile grants them, issued against an App ID that has the capability enabled.
+#
+# The profile must land BEFORE the outer codesign below, which seals it into the bundle.
+#
+# Omitting it fails silently and expensively: codesign, notarytool, stapler and Gatekeeper all pass,
+# and the capability simply never works at runtime. Nothing in the verify step catches it. Hence the
+# warning rather than a quiet skip. Ad-hoc builds are exempt because they sign without entitlements
+# at all (see §5), and a restricted entitlement is ignored on an ad-hoc signature anyway.
+NEEDS_PROFILE="$(grep -c 'com\.apple\.developer\.' "$ENTITLEMENTS" || true)"
+if [ -n "$SIGN_IDENTITY" ]; then
+  if [ -n "${PROVISION_PROFILE:-}" ]; then
+    [ -f "$PROVISION_PROFILE" ] || { echo "ERROR: PROVISION_PROFILE not found: $PROVISION_PROFILE" >&2; exit 1; }
+    # A profile for the wrong App ID is another silent failure: it embeds and signs cleanly while
+    # granting nothing. A .provisionprofile is a CMS-signed plist, so `security cms -D` is what reads
+    # it; a plain grep over the raw file would miss the payload. Both checks warn rather than abort,
+    # since a false positive here shouldn't block a release.
+    PROFILE_PLIST="$(security cms -D -i "$PROVISION_PROFILE" 2>/dev/null || true)"
+    if [ -z "$PROFILE_PLIST" ]; then
+      echo "   WARNING: could not decode $(basename "$PROVISION_PROFILE") (not a real .provisionprofile?)" >&2
+    elif ! printf '%s' "$PROFILE_PLIST" | grep -q "$BUNDLE_ID"; then
+      echo "   WARNING: $(basename "$PROVISION_PROFILE") never mentions $BUNDLE_ID → wrong App ID?" >&2
+    fi
+    echo "==> embedding provisioning profile: $(basename "$PROVISION_PROFILE")"
+    cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
+  elif [ "$NEEDS_PROFILE" -gt 0 ]; then
+    echo "   WARNING: $(basename "$ENTITLEMENTS") declares a restricted com.apple.developer.* entitlement," >&2
+    echo "            but PROVISION_PROFILE is unset. The build will sign, notarize and pass Gatekeeper," >&2
+    echo "            and the capability will silently never work. See docs/signing.md." >&2
+  fi
+fi
 
 if [ -n "$SIGN_IDENTITY" ]; then
   echo "==> signing $APP_NAME.app with Developer ID: $SIGN_IDENTITY (hardened runtime)"
