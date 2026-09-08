@@ -292,7 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return s
         }
         let credits = NSMutableAttributedString()
-        credits.append(linked("github.com/Jeckerson/bosun", "https://github.com/Jeckerson/bosun"))
+        credits.append(linked("github.com/pilothouse/bosun", "https://github.com/pilothouse/bosun"))
         credits.append(NSAttributedString(string: "\n\nTerminal powered by ", attributes: base))
         credits.append(linked("ghostty / libghostty", "https://github.com/ghostty-org/ghostty"))
         return credits
