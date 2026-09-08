@@ -10,9 +10,12 @@ interactions. It's the companion to `docs/signing.md` (Developer ID signing + no
   and signed inside-out by `scripts/package-app.sh`). All Sparkle code is confined to one file,
   `Sources/Bosun/UpdaterController.swift`.
 - At launch the updater reads two Info.plist keys written by `package-app.sh`:
-  - `SUFeedURL` = `https://github.com/Jeckerson/bosun/releases/latest/download/appcast.xml`
+  - `SUFeedURL` = `https://github.com/pilothouse/bosun/releases/latest/download/appcast.xml`
     — `releases/latest/download/<asset>` always resolves to the newest **published** (non-draft,
     non-prerelease) release, so the feed needs no separate hosting.
+    Note this value is burned into every shipped Info.plist and can never be changed for copies
+    already installed, so it pins the app to this repo owner. A later rename or org move keeps
+    working only for as long as GitHub's redirect does — settle the org before the first release.
   - `SUPublicEDKey` = the EdDSA **public** key. Sparkle refuses any update whose enclosure signature
     doesn't verify against it. (Not a secret — it's pinned in every shipped build.)
 - "Check for Updates…" lives in the **Bosun** menu; "Automatically check for updates" lives in
