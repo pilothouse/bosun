@@ -161,10 +161,11 @@ final class GeneralPane: SettingsPane {
         intervalPopup.selectItem(at: refreshIntervals.firstIndex(of: store.githubAutoRefreshIntervalMinutes) ?? 1)
         intervalPopup.isEnabled = store.githubAutoRefreshEnabled
         intervalLabel.textColor = store.githubAutoRefreshEnabled ? .labelColor : .secondaryLabelColor
-        let iCloudAvailable = FileManager.default.ubiquityIdentityToken != nil
+        let iCloudAvailable = ICloudCapability.isAvailable
         iCloudBox.isEnabled = iCloudAvailable
         iCloudBox.state = (iCloudAvailable && store.syncConnectionsICloud) ? .on : .off
         iCloudHint.isHidden = iCloudAvailable
+        iCloudHint.stringValue = ICloudCapability.unavailableHint
     }
 
     @objc private func toggleAutoUpdate(_ sender: NSButton) {

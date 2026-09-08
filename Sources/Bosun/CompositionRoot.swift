@@ -76,7 +76,7 @@ enum CompositionRoot {
         // in the syncing decorator and let every use case write through that — otherwise the use cases
         // talk to local directly (local-only, no iCloud touched). See `UbiquitousConnectionStore` (#83).
         let local = JSONFileConnectionStore(url: JSONFileConnectionStore.defaultURL())
-        let icloud: UbiquitousConnectionStore? = FileManager.default.ubiquityIdentityToken != nil
+        let icloud: UbiquitousConnectionStore? = ICloudCapability.isAvailable
             ? UbiquitousConnectionStore(local: local)
             : nil
         let store: ConnectionStore = icloud ?? local
