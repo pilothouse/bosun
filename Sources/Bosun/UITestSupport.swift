@@ -20,166 +20,319 @@ import Foundation
 /// and `InMemoryGitHubCacheStore` are both seeded from this, so the hydrate-then-delta launch path
 /// paints from cache and the fake's "live" fetch diffs to unchanged.
 enum UITestFixtures {
-    static let login = "maya"
-    static let viewer = GitHubUser(login: login, name: "Maya Ono", avatarURL: nil)
+    static let login = "deckhand"
+    static let viewer = GitHubUser(login: login, name: "Deckhand", avatarURL: nil)
 
-    /// A fixed base instant so fixtures never depend on the clock; each item is offset back from it.
-    private static let base = Date(timeIntervalSince1970: 1_700_000_000)  // ~2023-11-14
+    /// The instant every item is dated back from, floored to the start of the current day. It is not a
+    /// hardcoded literal because the detail pane renders *relative* ages: a pinned instant reads
+    /// "opened 2d ago" the week it is written and "opened 2y ago" two years later, which is exactly
+    /// what the marketing screenshots must not show. Flooring to midnight keeps every run within a day
+    /// identical, and each item is a fixed offset from the base, so relative order — the thing
+    /// `ItemSorting` and the list assertions actually depend on — is deterministic regardless.
+    private static let base = Calendar(identifier: .gregorian).startOfDay(for: Date())
     private static func hoursAgo(_ hours: Int) -> Date { base.addingTimeInterval(-Double(hours) * 3600) }
 
     // MARK: Repos & orgs
 
-    static let webRepo = GitHubRepo(id: "R_web", name: "web", owner: "acme",
-                                    openIssues: 3, openPullRequests: 2, stargazerCount: 128)
-    static let apiRepo = GitHubRepo(id: "R_api", name: "api", owner: "acme",
-                                    openIssues: 1, openPullRequests: 1, stargazerCount: 64, isPrivate: true)
-    static let infraRepo = GitHubRepo(id: "R_infra", name: "infra", owner: "octo-labs",
-                                      openIssues: 2, openPullRequests: 0, stargazerCount: 9, isPrivate: true)
+    static let atlasAPIRepo = GitHubRepo(id: "R_atlas_api", name: "atlas-api", owner: "harborworks",
+                                         openIssues: 12, openPullRequests: 4, stargazerCount: 342)
+    static let atlasWebRepo = GitHubRepo(id: "R_atlas_web", name: "atlas-web", owner: "harborworks",
+                                         openIssues: 7, openPullRequests: 2, stargazerCount: 128)
+    static let deckctlRepo = GitHubRepo(id: "R_deckctl", name: "deckctl", owner: "harborworks",
+                                        openIssues: 3, openPullRequests: 1, stargazerCount: 41)
+    static let relayRepo = GitHubRepo(id: "R_relay", name: "relay", owner: "harborworks",
+                                      openIssues: 5, openPullRequests: 3, isPrivate: true)
+    static let manifestRepo = GitHubRepo(id: "R_manifest", name: "manifest", owner: "harborworks",
+                                         openIssues: 0, openPullRequests: 0, isPrivate: true)
+
+    static let beaconRepo = GitHubRepo(id: "R_beacon", name: "beacon", owner: "lighthouse-labs",
+                                       openIssues: 19, openPullRequests: 6, stargazerCount: 890)
+    static let signalRepo = GitHubRepo(id: "R_signal", name: "signal", owner: "lighthouse-labs",
+                                       openIssues: 5, openPullRequests: 0, stargazerCount: 57)
+    static let foghornRepo = GitHubRepo(id: "R_foghorn", name: "foghorn", owner: "lighthouse-labs",
+                                        openIssues: 2, openPullRequests: 1, isPrivate: true)
+
     static let dotfilesRepo = GitHubRepo(id: "R_dot", name: "dotfiles", owner: login,
-                                         openIssues: 1, openPullRequests: 0, stargazerCount: 3)
+                                         openIssues: 1, openPullRequests: 0, stargazerCount: 12)
+    static let scratchpadRepo = GitHubRepo(id: "R_scratch", name: "scratchpad", owner: login,
+                                           openIssues: 0, openPullRequests: 1, isPrivate: true)
 
     static let orgs: [GitHubOrg] = [
-        GitHubOrg(id: "O_acme", login: "acme", name: "Acme Corp", avatarURL: nil,
-                  repositories: [webRepo, apiRepo]),
-        GitHubOrg(id: "O_octo", login: "octo-labs", name: "Octo Labs", avatarURL: nil,
-                  repositories: [infraRepo]),
+        GitHubOrg(id: "O_harborworks", login: "harborworks", name: "Harbor Works", avatarURL: nil,
+                  repositories: [atlasAPIRepo, atlasWebRepo, deckctlRepo, relayRepo, manifestRepo]),
+        GitHubOrg(id: "O_lighthouse", login: "lighthouse-labs", name: "Lighthouse Labs", avatarURL: nil,
+                  repositories: [beaconRepo, signalRepo, foghornRepo]),
     ]
 
     /// The viewer's own repositories — surfaced as the synthetic personal group pinned above the orgs.
-    static let personalRepos: [GitHubRepo] = [dotfilesRepo]
+    static let personalRepos: [GitHubRepo] = [dotfilesRepo, scratchpadRepo]
 
     // MARK: Actors
 
-    static let maya = GitHubActor(login: "maya")
-    static let bob = GitHubActor(login: "bob")
+    static let deckhand = GitHubActor(login: "deckhand")
+    static let miraQ = GitHubActor(login: "mira-q")
+    static let raviN = GitHubActor(login: "ravi-n")
     static let bot = GitHubActor(login: "claude[bot]")
+
+    // MARK: The central pull request
+
+    /// `harborworks/atlas-api#482` is the item every marketing screenshot opens on, so it is the one
+    /// fixture populated across *every* detail-pane section: body + checklist, labels with colours,
+    /// assignees, milestone, reviewers in two states, changed files, CI checks, comments, and a merge
+    /// state that agrees with those checks (`UNSTABLE` — lint is red, so the merge box says so rather
+    /// than contradicting the `ACTIONS` header).
+    private static let centralBody = """
+        Dispatch logs for big agent runs were buffered entirely in memory before being written, \
+        which spiked RSS on the worker and occasionally OOM-killed long runs.
+
+        This switches the writer to a streaming pipe so log lines are flushed as they arrive, \
+        with a small ring buffer for the tail view.
+
+        ### What changed
+        - Replace the in-memory accumulator with a streaming `LogPipe`
+        - Back-pressure when the consumer is slow instead of growing unbounded
+        - Keep the last 2 MB in a ring buffer for the live tail
+
+        ### Checklist
+        - [x] Streaming writer with back-pressure
+        - [x] Ring buffer for the tail view
+        - [x] Unit tests for the pipe
+        - [ ] Soak test on the worker box
+        - [ ] Update the runbook
+
+        Closes #468.
+        """
+
+    /// Six files whose additions and deletions sum to the `+214 −67` shown in the PR header.
+    private static let centralFiles: [GitHubFile] = [
+        GitHubFile(path: "Sources/Worker/LogPipe.swift", additions: 118, deletions: 12, change: .modified),
+        GitHubFile(path: "Sources/Worker/RingBuffer.swift", additions: 41, deletions: 0, change: .added),
+        GitHubFile(path: "Sources/Worker/DispatchRunner.swift", additions: 34, deletions: 29, change: .modified),
+        GitHubFile(path: "Tests/WorkerTests/LogPipeTests.swift", additions: 18, deletions: 0, change: .added),
+        GitHubFile(path: "docs/runbook.md", additions: 3, deletions: 2, change: .modified),
+        GitHubFile(path: "Sources/Worker/LogAccumulator.swift", additions: 0, deletions: 24, change: .removed),
+    ]
+
+    private static let centralPR = GitHubItem(
+        id: "PR_harborworks_atlas-api_482", number: 482, kind: .pullRequest,
+        title: "Stream large dispatch logs instead of buffering them",
+        state: .open, author: miraQ, createdAt: hoursAgo(48), body: centralBody,
+        repositoryNameWithOwner: "harborworks/atlas-api",
+        labels: ["performance", "needs-review"],
+        branch: "fix/stream-dispatch-logs", additions: 214, deletions: 67,
+        comments: [
+            GitHubComment(author: deckhand, createdAt: hoursAgo(47),
+                          body: "Nice — this should fix the OOMs we saw on the nightly sweep. "
+                              + "Did you confirm the ring buffer survives a consumer disconnect?",
+                          authorAssociation: "OWNER"),
+            GitHubComment(author: miraQ, createdAt: hoursAgo(46),
+                          body: "Yep, the tail reattaches cleanly. Added a test for the disconnect "
+                              + "path in `LogPipeTests`.",
+                          authorAssociation: "MEMBER"),
+            GitHubComment(author: raviN, createdAt: hoursAgo(22),
+                          body: "`swiftlint` is unhappy about the force-unwrap in `LogPipe.flush()` — "
+                              + "mind guarding that? Otherwise LGTM.",
+                          authorAssociation: "CONTRIBUTOR"),
+            GitHubComment(author: deckhand, createdAt: hoursAgo(4),
+                          body: "Good catch. Pushing a fix and kicking off the soak test on `build-box`.",
+                          authorAssociation: "OWNER"),
+        ],
+        checks: [
+            GitHubCheck(name: "build / macos", state: .success, durationSeconds: 142),
+            GitHubCheck(name: "test / unit", state: .success, durationSeconds: 88),
+            GitHubCheck(name: "test / integration", state: .inProgress),
+            GitHubCheck(name: "lint / swiftlint", state: .failure, durationSeconds: 12),
+            GitHubCheck(name: "coverage", state: .neutral, durationSeconds: 31),
+        ],
+        files: centralFiles,
+        tasks: [
+            GitHubTask(title: "Streaming writer with back-pressure", isDone: true),
+            GitHubTask(title: "Ring buffer for the tail view", isDone: true),
+            GitHubTask(title: "Unit tests for the pipe", isDone: true),
+            GitHubTask(title: "Soak test on the worker box", isDone: false),
+            GitHubTask(title: "Update the runbook", isDone: false),
+        ],
+        assignees: [miraQ], milestone: "1.0",
+        labelColors: ["performance": "0e8a16", "needs-review": "fbca04"],
+        mergeable: true, mergeStateStatus: "UNSTABLE", baseRefName: "main",
+        reviewers: [
+            GitHubReviewer(login: "ravi-n", state: .approved),
+            GitHubReviewer(login: "deckhand", state: .pending),
+        ],
+        isCrossRepository: false)
 
     // MARK: Items (both kinds), keyed by "owner/name"
 
     /// Every seeded issue and PR, flat per repo. The fake filters by kind/state; the cache is seeded
     /// from the same map so a selected repo hydrates instantly.
     static let items: [String: [GitHubItem]] = [
-        "acme/web": [
-            GitHubItem(id: "I_101", number: 101, kind: .issue, title: "Fix flaky login test",
-                       state: .open, author: maya, createdAt: hoursAgo(3),
-                       body: "The login test fails ~1 in 5 runs on CI.\n\n- [ ] reproduce locally\n- [ ] add a retry\n",
-                       repositoryNameWithOwner: "acme/web", labels: ["bug"], assignees: [maya],
-                       labelColors: ["bug": "d73a4a"]),
-            GitHubItem(id: "I_102", number: 102, kind: .issue, title: "Dark mode polish",
-                       state: .open, author: bob, createdAt: hoursAgo(9),
-                       body: "Tighten the dark palette contrast on the sidebar.",
-                       repositoryNameWithOwner: "acme/web", labels: ["enhancement", "design"],
-                       labelColors: ["enhancement": "a2eeef", "design": "fbca04"]),
-            GitHubItem(id: "I_103", number: 103, kind: .issue, title: "Migrate to new auth service",
-                       state: .open, author: maya, createdAt: hoursAgo(20),
-                       body: "Blocked on the flaky login test landing first.",
-                       repositoryNameWithOwner: "acme/web", labels: ["blocked"],
-                       labelColors: ["blocked": "b60205"]),
-            GitHubItem(id: "I_090", number: 90, kind: .issue, title: "Crash on startup (old)",
-                       state: .closed, author: bob, createdAt: hoursAgo(240),
-                       body: "Fixed in 0.9.", repositoryNameWithOwner: "acme/web"),
-            GitHubItem(id: "P_201", number: 201, kind: .pullRequest, title: "Add OAuth device flow",
-                       state: .open, author: maya, createdAt: hoursAgo(5),
-                       body: "Implements the device-flow sign-in.\n\nCloses #101.",
-                       repositoryNameWithOwner: "acme/web", labels: ["enhancement"],
-                       branch: "feature/oauth", additions: 320, deletions: 12,
-                       comments: [
-                           GitHubComment(author: bob, createdAt: hoursAgo(4),
-                                         body: "Looks good — one nit on the polling interval.",
-                                         authorAssociation: "MEMBER"),
-                       ],
-                       checks: [
-                           GitHubCheck(name: "build", state: .success, durationSeconds: 102),
-                           GitHubCheck(name: "test", state: .success, durationSeconds: 240),
-                       ],
-                       assignees: [maya], labelColors: ["enhancement": "a2eeef"],
+        "harborworks/atlas-api": [
+            centralPR,
+            GitHubItem(id: "PR_harborworks_atlas-api_479", number: 479, kind: .pullRequest,
+                       title: "Add retry budget to the SSH agent runner",
+                       state: .open, author: raviN, createdAt: hoursAgo(66),
+                       body: "Adds a per-run retry budget so a flaky remote doesn't burn the whole queue.",
+                       repositoryNameWithOwner: "harborworks/atlas-api", labels: ["enhancement"],
+                       branch: "feat/retry-budget", additions: 96, deletions: 8,
+                       labelColors: ["enhancement": "a2eeef"],
                        mergeable: true, mergeStateStatus: "CLEAN", baseRefName: "main",
-                       reviewers: [GitHubReviewer(login: "bob", state: .pending)],
-                       isCrossRepository: false),
-            GitHubItem(id: "P_202", number: 202, kind: .pullRequest, title: "WIP: refactor storage",
-                       state: .open, author: bot, createdAt: hoursAgo(30),
-                       body: "Early draft — do not merge.", repositoryNameWithOwner: "acme/web",
-                       isDraft: true, branch: "wip/storage", additions: 88, deletions: 40,
+                       reviewers: [], isCrossRepository: false),
+            GitHubItem(id: "PR_harborworks_atlas-api_475", number: 475, kind: .pullRequest,
+                       title: "Bump zig to 0.15.2 in CI",
+                       state: .open, author: deckhand, createdAt: hoursAgo(120),
+                       body: "Keeps CI in lockstep with the pinned toolchain.",
+                       repositoryNameWithOwner: "harborworks/atlas-api", labels: ["ci"],
+                       branch: "chore/zig-0-15-2", additions: 4, deletions: 4,
+                       labelColors: ["ci": "c5def5"],
+                       mergeable: true, mergeStateStatus: "CLEAN", baseRefName: "main",
+                       reviewers: [], isCrossRepository: false),
+            GitHubItem(id: "PR_harborworks_atlas-api_471", number: 471, kind: .pullRequest,
+                       title: "WIP: forge-agnostic dispatch (Gitea)",
+                       state: .open, author: miraQ, createdAt: hoursAgo(168),
+                       body: "First cut at routing dispatch through the `Forge` enum so Gitea hosts work.",
+                       repositoryNameWithOwner: "harborworks/atlas-api", labels: ["wip"],
+                       isDraft: true, branch: "feat/forge-gitea", additions: 320, deletions: 41,
+                       labelColors: ["wip": "ededed"],
                        mergeable: nil, mergeStateStatus: "DRAFT", baseRefName: "main",
                        reviewers: [], isCrossRepository: false),
+            GitHubItem(id: "I_harborworks_atlas-api_480", number: 480, kind: .issue,
+                       title: "Worker OOMs on dispatch runs over ~50k log lines",
+                       state: .open, author: raviN, createdAt: hoursAgo(72),
+                       body: "Long agent runs grow worker RSS until the kernel kills them.\n\n"
+                           + "Repro: dispatch against `atlas-api` with `--verbose`.",
+                       repositoryNameWithOwner: "harborworks/atlas-api",
+                       labels: ["bug", "priority:high"], assignees: [raviN],
+                       labelColors: ["bug": "d73a4a", "priority:high": "b60205"]),
+            GitHubItem(id: "I_harborworks_atlas-api_468", number: 468, kind: .issue,
+                       title: "Stream logs instead of buffering",
+                       state: .open, author: deckhand, createdAt: hoursAgo(240),
+                       body: "Tracking issue for the memory blow-up. See #480 for the repro.\n\n"
+                           + "- [ ] Streaming writer\n- [ ] Tail view\n",
+                       repositoryNameWithOwner: "harborworks/atlas-api", labels: ["performance"],
+                       tasks: [GitHubTask(title: "Streaming writer", isDone: false),
+                               GitHubTask(title: "Tail view", isDone: false)],
+                       milestone: "1.0", labelColors: ["performance": "0e8a16"]),
+            GitHubItem(id: "I_harborworks_atlas-api_455", number: 455, kind: .issue,
+                       title: "Flaky integration test: `DispatchPolicyTests.testPause`",
+                       state: .open, author: miraQ, createdAt: hoursAgo(400),
+                       body: "Fails ~1 in 20 on CI. Probably a timing assumption in the fake clock.",
+                       repositoryNameWithOwner: "harborworks/atlas-api", labels: ["flaky-test"],
+                       labelColors: ["flaky-test": "fef2c0"]),
         ],
-        "acme/api": [
-            GitHubItem(id: "I_055", number: 55, kind: .issue, title: "Rate limiter returns 500s",
-                       state: .open, author: bob, createdAt: hoursAgo(12),
-                       body: "Under burst load the limiter 500s instead of 429ing.",
-                       repositoryNameWithOwner: "acme/api", labels: ["bug"],
+        "lighthouse-labs/beacon": [
+            GitHubItem(id: "PR_lighthouse-labs_beacon_312", number: 312, kind: .pullRequest,
+                       title: "Coalesce reconnect heartbeats",
+                       state: .open, author: miraQ, createdAt: hoursAgo(20),
+                       body: "Buffers the first heartbeat across a reconnect so we don't false-alarm.",
+                       repositoryNameWithOwner: "lighthouse-labs/beacon", labels: ["bug"],
+                       branch: "fix/heartbeat-coalesce", additions: 58, deletions: 9,
+                       checks: [GitHubCheck(name: "build", state: .success, durationSeconds: 61)],
+                       labelColors: ["bug": "d73a4a"],
+                       mergeable: true, mergeStateStatus: "CLEAN", baseRefName: "main",
+                       reviewers: [GitHubReviewer(login: "deckhand", state: .pending)],
+                       isCrossRepository: false),
+            GitHubItem(id: "I_lighthouse-labs_beacon_311", number: 311, kind: .issue,
+                       title: "Beacon drops the first heartbeat after reconnect",
+                       state: .open, author: raviN, createdAt: hoursAgo(30),
+                       body: "After a network blip the first heartbeat is swallowed, so the dashboard "
+                           + "shows a false 'down' for one interval.",
+                       repositoryNameWithOwner: "lighthouse-labs/beacon", labels: ["bug"],
                        labelColors: ["bug": "d73a4a"]),
-            GitHubItem(id: "P_077", number: 77, kind: .pullRequest, title: "Bump dependencies",
-                       state: .open, author: maya, createdAt: hoursAgo(26),
-                       body: "Routine dependency bump.", repositoryNameWithOwner: "acme/api",
-                       branch: "chore/bump", additions: 14, deletions: 14,
+            GitHubItem(id: "I_lighthouse-labs_beacon_305", number: 305, kind: .issue,
+                       title: "Add a quiet mode to the CLI",
+                       state: .open, author: deckhand, createdAt: hoursAgo(90),
+                       body: "A `--quiet` flag for cron usage that only prints on failure.",
+                       repositoryNameWithOwner: "lighthouse-labs/beacon",
+                       labels: ["enhancement", "good first issue"],
+                       labelColors: ["enhancement": "a2eeef", "good first issue": "7057ff"]),
+        ],
+        "deckhand/dotfiles": [
+            GitHubItem(id: "I_deckhand_dotfiles_3", number: 3, kind: .issue,
+                       title: "zsh prompt is slow over mosh",
+                       state: .open, author: deckhand, createdAt: hoursAgo(100),
+                       body: "The git status segment adds ~200ms on a high-latency link.",
+                       repositoryNameWithOwner: "deckhand/dotfiles"),
+        ],
+        "deckhand/scratchpad": [
+            GitHubItem(id: "PR_deckhand_scratchpad_9", number: 9, kind: .pullRequest,
+                       title: "Archive last quarter's spikes",
+                       state: .open, author: deckhand, createdAt: hoursAgo(310),
+                       body: "Moves the finished spikes under `archive/`.",
+                       repositoryNameWithOwner: "deckhand/scratchpad",
+                       branch: "chore/archive", additions: 12, deletions: 480,
                        mergeable: true, mergeStateStatus: "CLEAN", baseRefName: "main",
                        reviewers: [], isCrossRepository: false),
-        ],
-        "octo-labs/infra": [
-            GitHubItem(id: "I_012", number: 12, kind: .issue, title: "Terraform drift on staging",
-                       state: .open, author: maya, createdAt: hoursAgo(48),
-                       body: "Plan shows drift on the staging bucket.",
-                       repositoryNameWithOwner: "octo-labs/infra"),
-            GitHubItem(id: "I_013", number: 13, kind: .issue, title: "Rotate deploy secrets",
-                       state: .open, author: bob, createdAt: hoursAgo(72),
-                       body: "Quarterly rotation.", repositoryNameWithOwner: "octo-labs/infra",
-                       labels: ["security"], labelColors: ["security": "d93f0b"]),
-        ],
-        "maya/dotfiles": [
-            GitHubItem(id: "I_001", number: 1, kind: .issue, title: "zsh prompt is slow",
-                       state: .open, author: maya, createdAt: hoursAgo(100),
-                       body: "The git status segment adds ~200ms.",
-                       repositoryNameWithOwner: "maya/dotfiles"),
         ],
     ]
 
     /// Same-repo blocked-by dependencies (for the "By blocked-by" grouping): repoKey → issue → its
-    /// blockers. Issue #103 is blocked by #101.
-    static let blockedBy: [String: [Int: [Int]]] = ["acme/web": [103: [101]]]
+    /// blockers. The tracking issue #468 waits on the repro in #480.
+    static let blockedBy: [String: [Int: [Int]]] = ["harborworks/atlas-api": [468: [480]]]
 
     /// The label palette per repo, for the edit pane's label picker.
     static let labels: [String: [GitHubLabel]] = [
-        "acme/web": [
+        "harborworks/atlas-api": [
             GitHubLabel(name: "bug", color: "d73a4a"),
             GitHubLabel(name: "enhancement", color: "a2eeef"),
-            GitHubLabel(name: "design", color: "fbca04"),
-            GitHubLabel(name: "blocked", color: "b60205"),
-            GitHubLabel(name: "documentation", color: "0075ca"),
+            GitHubLabel(name: "performance", color: "0e8a16"),
+            GitHubLabel(name: "needs-review", color: "fbca04"),
+            GitHubLabel(name: "priority:high", color: "b60205"),
+            GitHubLabel(name: "flaky-test", color: "fef2c0"),
+            GitHubLabel(name: "ci", color: "c5def5"),
+            GitHubLabel(name: "wip", color: "ededed"),
         ],
-        "acme/api": [GitHubLabel(name: "bug", color: "d73a4a"), GitHubLabel(name: "chore", color: "cfd3d7")],
+        "lighthouse-labs/beacon": [
+            GitHubLabel(name: "bug", color: "d73a4a"),
+            GitHubLabel(name: "enhancement", color: "a2eeef"),
+            GitHubLabel(name: "good first issue", color: "7057ff"),
+        ],
     ]
 
     /// The users assignable per repo, for the edit pane's assignee picker.
     static let assignableUsers: [String: [GitHubActor]] = [
-        "acme/web": [maya, bob, bot],
-        "acme/api": [maya, bob],
-        "octo-labs/infra": [maya, bob],
-        "maya/dotfiles": [maya],
+        "harborworks/atlas-api": [deckhand, miraQ, raviN, bot],
+        "harborworks/atlas-web": [deckhand, miraQ],
+        "lighthouse-labs/beacon": [deckhand, raviN],
+        "deckhand/dotfiles": [deckhand],
+        "deckhand/scratchpad": [deckhand],
     ]
 
     // MARK: Connections
 
     // `Connection`/`Folder` are qualified `Domain.*` throughout: the Bosun module has its own
     // presentation `Connection` (id: String) that would otherwise shadow the Domain entity here.
-    static let workFolder = Domain.Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-000000000001")!,
-                                          name: "Work")
+    static let harborFolder = Domain.Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-000000000001")!,
+                                            name: "Harbor")
+    static let lighthouseFolder = Domain.Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-000000000002")!,
+                                                name: "Lighthouse")
 
     static let connections: [Domain.Connection] = [
-        Domain.Connection(id: UUID(uuidString: "C0000000-0000-0000-0000-000000000001")!,
-                          name: "prod-web-01",
-                          kind: .ssh(host: "web01.acme.internal", port: 22, user: "deploy"),
-                          isFavorite: true, folderId: workFolder.id),
-        Domain.Connection(id: UUID(uuidString: "C0000000-0000-0000-0000-000000000002")!,
-                          name: "staging-db",
-                          kind: .ssh(host: "db.staging.acme.internal", port: 2222, user: "maya"),
-                          folderId: workFolder.id),
-        Domain.Connection(id: UUID(uuidString: "C0000000-0000-0000-0000-000000000003")!,
-                          name: "local project",
+        Domain.Connection(id: UUID(uuidString: "A1111111-0000-4000-8000-000000000001")!,
+                          name: "Harbor · API",
+                          kind: .ssh(host: "10.20.0.11", port: 22, user: "deploy"),
+                          isFavorite: true, customCommand: "tmux new -A -s api",
+                          folderId: harborFolder.id),
+        Domain.Connection(id: UUID(uuidString: "A1111111-0000-4000-8000-000000000002")!,
+                          name: "Harbor · Worker",
+                          kind: .ssh(host: "10.20.0.12", port: 22, user: "deploy"),
+                          isFavorite: true, folderId: harborFolder.id),
+        Domain.Connection(id: UUID(uuidString: "A1111111-0000-4000-8000-000000000003")!,
+                          name: "build-box",
+                          kind: .ssh(host: "build.lighthouse.internal", port: 2222, user: "ci"),
+                          folderId: lighthouseFolder.id),
+        // A neutral, short path rather than a real checkout: the rail renders a connection's path as
+        // its subtitle, so anything machine-specific would leak straight into a screenshot. Create it
+        // (`mkdir -p /tmp/beacon`) before shooting if you want the terminal tab to open there.
+        Domain.Connection(id: UUID(uuidString: "A1111111-0000-4000-8000-000000000004")!,
+                          name: "beacon",
+                          kind: .localFolder(path: "/tmp/beacon"),
+                          folderId: lighthouseFolder.id),
+        Domain.Connection(id: UUID(uuidString: "A1111111-0000-4000-8000-000000000005")!,
+                          name: "dotfiles",
                           kind: .localFolder(path: NSHomeDirectory())),
     ]
 
-    static let folders: [Domain.Folder] = [workFolder]
+    static let folders: [Domain.Folder] = [harborFolder, lighthouseFolder]
 }
 
 // MARK: - Fake GitHub API (stateful)

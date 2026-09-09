@@ -55,7 +55,7 @@ final class BosunUITests: XCTestCase {
 
         // Seeded content rendered — proof the fake API + in-memory cache hydrated the UI offline.
         // These strings come straight from `UITestFixtures` (Sources/Bosun/UITestSupport.swift).
-        let seeded = ["dotfiles", "zsh prompt is slow", "prod-web-01"]
+        let seeded = ["atlas-api", "Stream large dispatch logs", "build-box"]
         for text in seeded {
             let element = app.staticTexts.containing(
                 NSPredicate(format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@", text, text)

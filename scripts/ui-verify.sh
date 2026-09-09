@@ -23,7 +23,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BOSUN_APP_PATH:-$REPO/.build/debug/Bosun}"
 OUT="${OUT:-$REPO/.build/ui-verify.png}"
 # Seeded strings from UITestFixtures that must render (a connection + an issue title).
-SEEDED=("prod-web-01" "zsh prompt is slow" "dotfiles")
+SEEDED=("build-box" "Stream large dispatch logs" "atlas-api")
 
 [ -x "$BIN" ] || { echo "✗ missing binary: $BIN — run: swift build --disable-sandbox" >&2; exit 1; }
 
