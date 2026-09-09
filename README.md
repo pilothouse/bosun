@@ -14,6 +14,44 @@ with Metal.
 * **Themes**: Operator, Carbon, Nord, and Daylight.
 * **Terminal**: built in, drawn with Metal, and resizable.
 
+## Install
+
+Bosun ships through a [Homebrew tap](https://github.com/pilothouse/homebrew-bosun):
+
+```sh
+brew tap pilothouse/bosun
+brew trust pilothouse/bosun
+brew install --cask bosun
+```
+
+Or in one line, without tapping first:
+
+```sh
+brew install --cask pilothouse/bosun/bosun
+```
+
+Note the three parts in that second form. `pilothouse/bosun` on its own names the tap, not something
+you can install, so `brew install pilothouse/bosun` will not work.
+
+**About the trust step.** Recent Homebrew refuses to load anything from a third-party tap until you
+say you trust it, and without it you get `Refusing to load cask pilothouse/bosun/bosun from untrusted
+tap`. It is Homebrew asking whether you trust code from outside its official repositories, which is a
+fair question about any tap, including this one. `brew trust` answers it once for the whole tap.
+
+**Requirements:** macOS 13 Ventura or newer, on Apple Silicon. The build is a single arm64 slice, so
+the cask refuses to install on an Intel Mac rather than leaving you with an app that won't launch.
+
+Builds installed this way are signed with a Developer ID certificate and notarized by Apple, so they
+open normally — no right-click-Open, no quarantine command.
+
+Bosun updates itself through Sparkle, and the cask declares `auto_updates true` so `brew upgrade`
+won't fight an app that has already moved itself ahead. To remove it:
+
+```sh
+brew uninstall --cask bosun          # the app
+brew zap --cask bosun                # ...and its settings, caches and saved connections
+```
+
 ## Layout
 
 The code follows Clean Architecture. The build itself enforces the boundaries:
@@ -63,17 +101,17 @@ Pinned versions: zig 0.15.2, ghostty v1.3.1, macOS 15.5 SDK. The top of
 `scripts/build-libghostty.sh` documents the macOS-26/zig workarounds and why each version is
 pinned. The script is idempotent, and everything it creates under `Vendor/` stays out of git.
 
-## Run a build without building (pre-v1)
+## Running an unreleased build
 
-Until v1 there is no release, but every successful CI run on `master` produces a ready-to-run
-`Bosun.dmg`. To get it, open the repo's **Actions** tab, open the latest **CI** run, and download
+For something newer than the latest release, every successful CI run on `master` produces a
+ready-to-run `Bosun.dmg`. Open the repo's **Actions** tab, open the latest **CI** run, and download
 the **Bosun-dmg** artifact (you need to be signed in to GitHub). Unzip it, open the `.dmg`, and
 drag **Bosun** to Applications.
 
-CI builds are **ad-hoc signed and not notarized**, so on first launch Gatekeeper says it "cannot be
-opened". The Developer ID key is never given to CI. Published releases are signed and notarized by
-hand, and those open with no workaround. For a CI artifact, clear the quarantine once: right-click
-the app and choose **Open**, or run:
+Unlike a release, CI builds are **ad-hoc signed and not notarized**, so on first launch Gatekeeper
+says it "cannot be opened". The Developer ID key is never given to CI; releases are signed and
+notarized by hand. For a CI artifact, clear the quarantine once: right-click the app and choose
+**Open**, or run:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Bosun.app
