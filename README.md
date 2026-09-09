@@ -6,6 +6,8 @@ repositories, themes you can switch between, and a terminal that stays open and 
 The terminal is powered by real [libghostty](https://github.com/ghostty-org/ghostty) and drawn
 with Metal.
 
+![The Bosun console: the connection rail, a pull request with its labels, reviewers and CI checks, the organization and repository tree, and the docked terminal.](docs/hero.png)
+
 ## Features
 
 * **Connection rail**: SSH remotes and local folders. You can collapse it to save space.
