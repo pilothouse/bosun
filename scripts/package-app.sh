@@ -52,7 +52,7 @@
 #                  Empty → skipped, with a warning if the entitlements ask for one.
 #   NOTARY_PROFILE / NOTARY_KEY+NOTARY_KEY_ID+NOTARY_ISSUER
 #                  Apple notary credentials, consumed by scripts/notarize.sh. Empty → sign only
-#                  (no notarization). See docs/signing.md.
+#                  (no notarization).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,16 +62,27 @@ BUILD="${BUILD:-0}"
 APP_NAME="Bosun"
 BUNDLE_ID="dev.anvas.bosun"
 ICON_SRC="$ROOT/Sources/Bosun/Resources/AppIcon.png"
-ENTITLEMENTS="$ROOT/scripts/Bosun.entitlements"
+# Signing and notarizing live outside this repo, so releases are cut by hand rather than by CI. Both
+# of the files below are kept with that release tooling. This script keeps working without them: it
+# builds and ad-hoc signs, which is all CI needs. Point the vars at that tooling to sign locally in
+# one pass instead.
+ENTITLEMENTS="${ENTITLEMENTS:-$ROOT/scripts/Bosun.entitlements}"
+NOTARIZE_SH="${NOTARIZE_SH:-$ROOT/scripts/notarize.sh}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 
 # Sparkle auto-update (issue #57). The feed is the signed appcast attached to the latest GitHub
-# Release; `releases/latest/download/<asset>` always resolves to the newest *published* release.
+# Release; `releases/latest/download/<asset>` always resolves to the newest *published* release, so the
+# feed needs no separate hosting and stays in step with the assets it advertises.
+#
+# One property to be aware of: this URL is burned into every shipped Info.plist and can never be
+# changed for copies already installed, so it pins the app to this repo owner. A later rename or move
+# keeps working only for as long as GitHub's redirect does. Settle the org before the first release.
+#
 # SU_PUBLIC_ED_KEY is the EdDSA public key — NOT a secret; it's pinned in every shipped Info.plist and
 # verifies the appcast's signature. It pairs with a private key the maintainer holds (login Keychain,
 # account "bosun") and stores as the CI secret SPARKLE_ED_PRIVATE_KEY. To rotate, run
-# `scripts/.../generate_keys` and replace BOTH this value and the secret (see docs/updates.md).
-SU_FEED_URL="https://github.com/Jeckerson/bosun/releases/latest/download/appcast.xml"
+# `scripts/.../generate_keys` and replace BOTH this value and the secret.
+SU_FEED_URL="https://github.com/pilothouse/bosun/releases/latest/download/appcast.xml"
 SU_PUBLIC_ED_KEY="Kj1rSUcSqZQLkP6KAw+vKhJJZ9pYAF3jHrL9rr2BRI8="
 
 DIST="$ROOT/dist"
@@ -219,7 +230,9 @@ sign_runtime "$FRAMEWORKS/Sparkle.framework"
 # and the capability simply never works at runtime. Nothing in the verify step catches it. Hence the
 # warning rather than a quiet skip. Ad-hoc builds are exempt because they sign without entitlements
 # at all (see §5), and a restricted entitlement is ignored on an ad-hoc signature anyway.
-NEEDS_PROFILE="$(grep -c 'com\.apple\.developer\.' "$ENTITLEMENTS" || true)"
+# Parse the plist rather than grepping the raw file: the comment block documents the restricted
+# entitlement it is NOT currently claiming, and a text grep counts that and warns on every build.
+NEEDS_PROFILE="$(plutil -convert json -o - "$ENTITLEMENTS" 2>/dev/null | grep -c 'com\.apple\.developer\.' || true)"
 if [ -n "$SIGN_IDENTITY" ]; then
   if [ -n "${PROVISION_PROFILE:-}" ]; then
     [ -f "$PROVISION_PROFILE" ] || { echo "ERROR: PROVISION_PROFILE not found: $PROVISION_PROFILE" >&2; exit 1; }
@@ -237,15 +250,25 @@ if [ -n "$SIGN_IDENTITY" ]; then
     cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
   elif [ "$NEEDS_PROFILE" -gt 0 ]; then
     echo "   WARNING: $(basename "$ENTITLEMENTS") declares a restricted com.apple.developer.* entitlement," >&2
-    echo "            but PROVISION_PROFILE is unset. The build will sign, notarize and pass Gatekeeper," >&2
-    echo "            and the capability will silently never work. See docs/signing.md." >&2
+    echo "            but PROVISION_PROFILE is unset. THE APP WILL NOT LAUNCH: AMFI SIGKILLs a process" >&2
+    echo "            claiming a restricted entitlement it can't prove it owns, at exec, before main()." >&2
+    echo "            Signing, notarization and Gatekeeper all still pass, so this is the last chance to" >&2
+    echo "            catch it. Finder will only say \"The application can't be opened.\"" >&2
   fi
 fi
 
 if [ -n "$SIGN_IDENTITY" ]; then
   echo "==> signing $APP_NAME.app with Developer ID: $SIGN_IDENTITY (hardened runtime)"
-  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
-    --sign "$SIGN_IDENTITY" "$APP"
+  # The entitlements file lives with the release tooling, outside this repo. Signing without one is
+  # correct here (the plist is an empty dict today), so its absence is a note rather than an error.
+  # Point ENTITLEMENTS at that file when a real entitlement is restored, or the app claims nothing.
+  if [ -f "$ENTITLEMENTS" ]; then
+    codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
+      --sign "$SIGN_IDENTITY" "$APP"
+  else
+    echo "   note: no entitlements file at $ENTITLEMENTS, signing without one"
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
+  fi
 else
   echo "==> ad-hoc signing $APP_NAME.app (no SIGN_IDENTITY — un-notarizable convenience build, no hardened runtime/entitlements)"
   codesign --force --sign - "$APP"
@@ -257,10 +280,12 @@ codesign --display --entitlements - --verbose=2 "$APP" 2>/dev/null || true
 # The notary service takes a .zip but `stapler` writes the ticket into the .app, so we submit a
 # ditto-zip and staple the .app. Stapling the app (not just the .dmg) keeps it valid even after a
 # user drags it out of the disk image. No-op when no notary credentials are set (header / notarize.sh).
-APP_ZIP="$DIST/$APP_NAME.app.zip"
-ditto -c -k --keepParent "$APP" "$APP_ZIP"
-bash "$ROOT/scripts/notarize.sh" --submit "$APP_ZIP" --staple "$APP"
-rm -f "$APP_ZIP"
+if [ -f "$NOTARIZE_SH" ]; then
+  APP_ZIP="$DIST/$APP_NAME.app.zip"
+  ditto -c -k --keepParent "$APP" "$APP_ZIP"
+  bash "$NOTARIZE_SH" --submit "$APP_ZIP" --staple "$APP"
+  rm -f "$APP_ZIP"
+fi
 
 # ---- 6. compressed .dmg with a drag-to-Applications target ----
 echo "==> building $APP_NAME.dmg"
@@ -277,7 +302,12 @@ if [ -n "$SIGN_IDENTITY" ]; then
   echo "==> signing $APP_NAME.dmg"
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
 fi
-bash "$ROOT/scripts/notarize.sh" --submit "$DMG" --staple "$DMG"
+if [ -f "$NOTARIZE_SH" ]; then
+  bash "$NOTARIZE_SH" --submit "$DMG" --staple "$DMG"
+else
+  echo "==> skipping notarization (no notarize.sh at $NOTARIZE_SH)"
+  echo "    Releases are notarized by hand, with tooling kept outside this repo."
+fi
 
 echo
 echo "==> DONE: $DMG ($(du -h "$DMG" | cut -f1))"

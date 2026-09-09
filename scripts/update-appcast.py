@@ -26,7 +26,7 @@ def main() -> int:
     version = os.environ["VERSION"]
     enclosure_url = os.environ["ENCLOSURE_URL"]
     sig_line = os.environ["SIG_LINE"].strip()
-    repo = os.environ.get("REPO", "Jeckerson/bosun")
+    repo = os.environ.get("REPO", "pilothouse/bosun")
     notes = os.environ.get("RELEASE_BODY") or f"Bosun {version}"
     path = os.environ.get("APPCAST", "appcast.xml")
 

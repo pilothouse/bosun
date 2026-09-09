@@ -3,9 +3,9 @@
 # ui-verify.sh — offline UI smoke test for Bosun (issue #95).
 #
 # Launches the app in UI-test mode (BOSUN_UI_TEST=1), which swaps the Keychain token store for an
-# in-memory one and seeds deterministic GitHub data + connections through the real ports (see
-# docs/ui-testing.md). It then asserts the app comes up populated with NO Keychain password dialog —
-# the blocker this mode removes — and drops a screenshot for human confirmation.
+# in-memory one and seeds deterministic GitHub data + connections through the real ports. It then
+# asserts the app comes up populated with NO Keychain password dialog — the blocker this mode
+# removes — and drops a screenshot for human confirmation.
 #
 # This is the runnable, CI-friendly counterpart to the XCUITest bundle in Tests/UITests (which needs
 # an Xcode host — see Tests/UITests/README.md). It drives the app with osascript + screencapture, so
