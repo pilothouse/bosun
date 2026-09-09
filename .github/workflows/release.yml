@@ -1,16 +1,18 @@
 name: Release
 
-# Tag → ad-hoc DMG → attached to a Release you created.
+# Tag → ad-hoc DMG → workflow artifact. CI's whole job in a release.
 #
 # Push a `v*` tag (e.g. `v1.2.3`) and this builds the full libghostty-linked Bosun app, rolls
-# Bosun.dmg, and uploads it to the Release for that tag. It does NOT create the Release: you make
-# that by hand and this fills in the asset, so the Release must already exist by the time the build
-# finishes. The build path mirrors ci.yml's `package` job; the difference is the trigger (a tag, not
-# a master push), the version (from the tag, not 0.0.0-<sha>), and the output (a Release asset, not
-# a CI artifact).
+# Bosun.dmg, and uploads it as the `Bosun-dmg` ARTIFACT. It never touches the Release: everything
+# from here on is done by hand from the private release-tooling repo, which downloads this artifact,
+# signs and notarizes it, signs the Sparkle appcast, and uploads both to the Release. That repo holds
+# every key; this workflow holds none, which is why it needs no secrets and only `contents: read`.
 #
-# What it attaches is AD-HOC signed and NOT shippable. Sign and notarize it by hand, re-upload, and
-# only then publish — publishing fires appcast.yml, which ships whatever is attached at that moment.
+# The build path mirrors ci.yml's `package` job; the difference is the trigger (a tag, not a master
+# push) and the version (from the tag, not 0.0.0-<sha>).
+#
+# What it produces is AD-HOC signed and NOT shippable — it is an input to the signing step, not a
+# release candidate. Nothing here can put it in front of a user.
 #
 # Single-architecture (arm64 — the runner's native arch). A universal arm64+x86_64 DMG needs a
 # zig cross-compile of libghostty and is tracked as a follow-up.
@@ -24,19 +26,19 @@ on:
         description: 'Version to release, e.g. 1.2.3 (required for a tag-less manual run)'
         required: false
 
-# Upload the .dmg asset to an existing Release.
+# Read-only: this workflow only produces an artifact. Nothing here writes to the repo or a Release.
 permissions:
-  contents: write
+  contents: read
 
-# Never cancel an in-flight release: notarization can take minutes and a half-submitted build is
-# worse than a slow one. (ci.yml cancels superseded runs; a release must not.)
+# Never cancel an in-flight release build: the signing step downloads this artifact by run id, and a
+# half-built run is worse than a slow one. (ci.yml cancels superseded runs; a release must not.)
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Build & attach the release asset
+    name: Build the release DMG
     # macos-26 for the same reason as ci.yml: the SwiftLint build-tool plugin on the inner layers
     # needs Swift >= 6.2 (the prebuild-command fix), which older runner images don't carry.
     runs-on: macos-26
@@ -100,13 +102,12 @@ jobs:
         run: swift build -c release --disable-sandbox --product Bosun
 
       - name: Package .app + .dmg
-        # Ad-hoc signed on purpose. The release this attaches to is NOT shippable until it is
-        # signed and notarized by hand, which must happen BEFORE publishing, because publishing
-        # triggers appcast.yml and ships whatever is attached.
+        # Ad-hoc signed on purpose: this is the input to the hand-signing step, never a shippable
+        # build. Nothing downstream of here can publish it.
         #
         # BUILD is the release version, NOT github.run_number. It lands in CFBundleVersion, and that
-        # is the value Sparkle's default comparator assesses the feed against: update-appcast.py
-        # emits <sparkle:version>1.0.1</sparkle:version>, which Sparkle compares against the
+        # is the value Sparkle's default comparator assesses the feed against: the appcast entry
+        # carries <sparkle:version>1.0.1</sparkle:version>, which Sparkle compares against the
         # installed app's CFBundleVersion. A run number ("137") compares as far newer than any
         # "1.0.1", so every future update would be judged older and silently never offered — no
         # error, just an app that stops updating. Whatever is baked in here is what every later
@@ -117,25 +118,16 @@ jobs:
           BUILD: ${{ steps.ver.outputs.version }}
         run: bash scripts/package-app.sh
 
-      # Attach the build to the Release you created. This never creates one: a missing Release is a
-      # mistake to report, not to paper over, because auto-creating it is what would let an unnoticed
-      # typo'd tag quietly produce a second, empty release.
+      # An artifact, not a Release asset. The signing step looks this run up by tag and pulls the
+      # artifact down by name, so `Bosun-dmg` is a contract with that script — renaming it here
+      # breaks the release with a "no artifact matches" error on the other side.
       #
-      # --clobber replaces an asset of the same name, so a re-run is idempotent — and so is the
-      # hand-signing step later, which uploads the notarized .dmg over this ad-hoc one.
-      #
-      # The failure is reported from `upload`'s own exit rather than a `gh release view` pre-check:
-      # the by-tag API does not return drafts, so a pre-check would report "no release" for exactly
-      # the draft this is meant to fill.
-      - name: Attach Bosun.dmg to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.ver.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if ! gh release upload "$TAG" dist/Bosun.dmg --clobber; then
-            echo "::error::Could not attach Bosun.dmg to $TAG. This job fills in a Release, it never creates one — check a Release exists for that exact tag, then re-run this workflow."
-            exit 1
-          fi
-          echo "Attached dist/Bosun.dmg to $TAG."
+      # Artifacts expire (90 days by default). That is fine: this is a build input, and the shippable
+      # artefact of a release is the signed .dmg attached to the Release, which never expires.
+      - name: Upload Bosun.dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bosun-dmg
+          path: dist/Bosun.dmg
+          if-no-files-found: error
 
