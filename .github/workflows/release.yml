@@ -39,8 +39,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Version is the source of truth for CFBundleShortVersionString (package-app.sh writes it into
-      # Info.plist, which the About window reads). From a tag push it's `${GITHUB_REF_NAME#v}`
+      # Version is the source of truth for both CFBundleShortVersionString and CFBundleVersion
+      # (package-app.sh writes them into Info.plist; the About window reads them, and Sparkle
+      # compares the latter against the feed). From a tag push it's `${GITHUB_REF_NAME#v}`
       # (v1.2.3 → 1.2.3); a manual dispatch must pass `version` explicitly. `tag` re-adds the `v`
       # so the Release tag is canonical regardless of how `version` was given.
       - name: Derive version
@@ -98,10 +99,18 @@ jobs:
         # Ad-hoc signed on purpose. The draft release this attaches to is NOT shippable until it is
         # signed and notarized by hand, which must happen BEFORE publishing, because publishing
         # triggers appcast.yml and ships whatever is attached.
+        #
+        # BUILD is the release version, NOT github.run_number. It lands in CFBundleVersion, and that
+        # is the value Sparkle's default comparator assesses the feed against: update-appcast.py
+        # emits <sparkle:version>1.0.1</sparkle:version>, which Sparkle compares against the
+        # installed app's CFBundleVersion. A run number ("137") compares as far newer than any
+        # "1.0.1", so every future update would be judged older and silently never offered — no
+        # error, just an app that stops updating. Whatever is baked in here is what every later
+        # comparison is made against, so it must be right before the FIRST release ships.
         env:
           CONFIG: release
           VERSION: ${{ steps.ver.outputs.version }}
-          BUILD: ${{ github.run_number }}
+          BUILD: ${{ steps.ver.outputs.version }}
         run: bash scripts/package-app.sh
 
       # Draft so a human reviews + publishes (per the release policy). --generate-notes fills the

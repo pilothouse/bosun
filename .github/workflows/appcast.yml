@@ -10,6 +10,9 @@ name: Appcast
 # the app's feed URL, https://github.com/pilothouse/bosun/releases/latest/download/appcast.xml, always
 # resolves to the newest published release's appcast.
 #
+# The sign-before-publish ordering is enforced here, not merely assumed: the job refuses to run
+# unless the attached Bosun.dmg assesses as a notarized Developer ID build. See the verify step.
+#
 # NO-OP without the SPARKLE_ED_PRIVATE_KEY secret (forks): the appcast can't be signed, so the job exits 0
 # without touching anything — exactly like notarize.sh degrades without Apple credentials.
 
@@ -78,6 +81,55 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.meta.outputs.tag }}
         run: gh release download "$TAG" --pattern 'Bosun.dmg' --dir .
+
+      # The gate that enforces sign-BEFORE-publish. release.yml attaches an AD-HOC signed .dmg to the
+      # draft; the maintainer replaces it with a Developer ID signed, notarized one and only then
+      # publishes. If that step is skipped, everything below would sign the ad-hoc build with the
+      # Sparkle key and ship it as an update, and every existing user would be offered a build
+      # Gatekeeper refuses to open. There is no clean undo: the appcast entry is signed and out, so
+      # the only fix is cutting a new version. Hence a hard failure here rather than a warning.
+      #
+      # Both the disk image AND the app inside it are checked. A .dmg-only check would pass a signed
+      # image wrapped around an unsigned app. `spctl` is the same assessment Gatekeeper runs on a
+      # user's Mac; `stapler validate` proves the ticket is embedded, so that assessment also holds
+      # offline. "source=Notarized Developer ID" is the only acceptable answer.
+      - name: Verify the DMG is signed and notarized
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          # An explicit -mountpoint keeps this out of /Volumes, so a stale mount can never be picked
+          # up by mistake on a re-run.
+          MNT="$RUNNER_TEMP/dmg-mnt"
+          mkdir -p "$MNT"
+          hdiutil attach Bosun.dmg -nobrowse -readonly -mountpoint "$MNT" >/dev/null
+          trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
+
+          # spctl exits non-zero when it rejects, so capture rather than pipe: `|| true` keeps set -e
+          # from killing the run before the reason can be printed, and avoids a `| grep -q` pipeline
+          # whose early exit would trip pipefail even on a match.
+          DMG_OUT="$(spctl -a -t open --context context:primary-signature -vv Bosun.dmg 2>&1 || true)"
+          APP_OUT="$(spctl -a -t exec -vv "$MNT/Bosun.app" 2>&1 || true)"
+          printf '%s\n%s\n' "$DMG_OUT" "$APP_OUT"
+
+          FAIL=0
+          case "$DMG_OUT" in
+            *"source=Notarized Developer ID"*) ;;
+            *) echo "::error::Bosun.dmg is not a notarized Developer ID build."; FAIL=1 ;;
+          esac
+          case "$APP_OUT" in
+            *"source=Notarized Developer ID"*) ;;
+            *) echo "::error::Bosun.app inside the .dmg is not a notarized Developer ID build."; FAIL=1 ;;
+          esac
+          if ! xcrun stapler validate Bosun.dmg; then
+            echo "::error::Bosun.dmg carries no stapled notarization ticket."
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Refusing to publish an appcast for a build that was not signed by hand. Sign and notarize the release asset, re-upload it over the unsigned one, then re-run this workflow (Actions → Appcast → Run workflow, with this tag)."
+            exit 1
+          fi
+          echo "Both the .dmg and the .app are notarized Developer ID builds."
 
       - name: Sign DMG & update appcast.xml
         if: steps.guard.outputs.skip != 'true'
