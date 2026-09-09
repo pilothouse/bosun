@@ -2,12 +2,13 @@ name: Appcast
 
 # Publish the signed Sparkle appcast when a GitHub Release is published.
 #
-# release.yml builds a tag into a notarized Bosun.dmg attached to a DRAFT release; a human reviews and
-# *publishes* it. This workflow fires on that publish (not the draft), so the appcast only ever advertises
-# a build whose assets are live. It signs the published DMG with the EdDSA private key, prepends an <item>
+# release.yml builds a tag into an ad-hoc signed Bosun.dmg attached to a DRAFT release. A human then
+# signs and notarizes it by hand and *publishes* it. This workflow fires on that publish (not the
+# draft), so the appcast only ever advertises a build whose assets are live and already signed. It
+# signs the published DMG with the EdDSA private key, prepends an <item>
 # to the cumulative appcast.xml (committed in the repo), and uploads appcast.xml as a Release asset — so
 # the app's feed URL, https://github.com/pilothouse/bosun/releases/latest/download/appcast.xml, always
-# resolves to the newest published release's appcast. See docs/updates.md.
+# resolves to the newest published release's appcast.
 #
 # NO-OP without the SPARKLE_ED_PRIVATE_KEY secret (forks): the appcast can't be signed, so the job exits 0
 # without touching anything — exactly like notarize.sh degrades without Apple credentials.

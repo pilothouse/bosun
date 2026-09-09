@@ -56,8 +56,8 @@ fully offline:
 BOSUN_UI_TEST=1 swift run Bosun
 ```
 
-See [`docs/ui-testing.md`](docs/ui-testing.md) for what it seeds and how it relates to the perf and
-API-smoke flags.
+`scripts/ui-verify.sh` drives the same mode as an offline smoke test; its header, and the one in
+`scripts/perf-sim.sh`, cover what gets seeded and how the perf and API-smoke flags relate.
 
 Pinned versions: zig 0.15.2, ghostty v1.3.1, macOS 15.5 SDK. The top of
 `scripts/build-libghostty.sh` documents the macOS-26/zig workarounds and why each version is
@@ -70,11 +70,10 @@ Until v1 there is no release, but every successful CI run on `master` produces a
 the **Bosun-dmg** artifact (you need to be signed in to GitHub). Unzip it, open the `.dmg`, and
 drag **Bosun** to Applications.
 
-When the **Developer ID signing and notarization secrets** are configured (see
-[`docs/signing.md`](docs/signing.md)), the CI build is signed, notarized, and stapled, and it
-opens with no Gatekeeper workaround. Without those secrets the build is **ad-hoc signed, not
-notarized** (still hardened runtime), so on first launch Gatekeeper says it "cannot be opened".
-Clear that once: right-click the app and choose **Open**, or run:
+CI builds are **ad-hoc signed and not notarized**, so on first launch Gatekeeper says it "cannot be
+opened". The Developer ID key is never given to CI. Published releases are signed and notarized by
+hand, and those open with no workaround. For a CI artifact, clear the quarantine once: right-click
+the app and choose **Open**, or run:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Bosun.app
@@ -82,5 +81,5 @@ xattr -dr com.apple.quarantine /Applications/Bosun.app
 
 It is a single-architecture build for the CI runner's arch (Apple Silicon / arm64). You can
 produce the same bundle locally from a release build with `bash scripts/package-app.sh`, which
-writes `dist/Bosun.dmg`. Set `SIGN_IDENTITY` and the notary credentials to get a notarized one;
-see [`docs/signing.md`](docs/signing.md).
+writes `dist/Bosun.dmg`. That gives you an ad-hoc build too. Notarizing needs the maintainer's
+Developer ID key and notary credentials, neither of which lives in this repo.
