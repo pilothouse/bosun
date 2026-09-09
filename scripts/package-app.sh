@@ -79,9 +79,9 @@ SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 # keeps working only for as long as GitHub's redirect does. Settle the org before the first release.
 #
 # SU_PUBLIC_ED_KEY is the EdDSA public key — NOT a secret; it's pinned in every shipped Info.plist and
-# verifies the appcast's signature. It pairs with a private key the maintainer holds (login Keychain,
-# account "bosun") and stores as the CI secret SPARKLE_ED_PRIVATE_KEY. To rotate, run
-# `scripts/.../generate_keys` and replace BOTH this value and the secret.
+# verifies the appcast's signature. It pairs with a private key that never leaves the maintainer's
+# login Keychain (account "bosun"), where the feed is signed by hand. To rotate, run Sparkle's
+# `generate_keys` and replace this value — every build after that advertises the new key.
 SU_FEED_URL="https://github.com/pilothouse/bosun/releases/latest/download/appcast.xml"
 SU_PUBLIC_ED_KEY="Kj1rSUcSqZQLkP6KAw+vKhJJZ9pYAF3jHrL9rr2BRI8="
 
