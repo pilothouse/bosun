@@ -1,12 +1,16 @@
 name: Release
 
-# Tag → notarized DMG → draft GitHub Release.
+# Tag → ad-hoc DMG → attached to a Release you created.
 #
-# Push a `v*` tag (e.g. `v1.2.3`) and this builds the full libghostty-linked Bosun app, signs +
-# notarizes + staples it (Developer ID, when the repo secrets are set), rolls Bosun.dmg, and
-# attaches it to a DRAFT GitHub Release for the maintainer to review and publish. The build path
-# mirrors ci.yml's `package` job; the difference is the trigger (a tag, not a master push), the
-# version (derived from the tag, not 0.0.0-<sha>), and the output (a Release, not an artifact).
+# Push a `v*` tag (e.g. `v1.2.3`) and this builds the full libghostty-linked Bosun app, rolls
+# Bosun.dmg, and uploads it to the Release for that tag. It does NOT create the Release: you make
+# that by hand and this fills in the asset, so the Release must already exist by the time the build
+# finishes. The build path mirrors ci.yml's `package` job; the difference is the trigger (a tag, not
+# a master push), the version (from the tag, not 0.0.0-<sha>), and the output (a Release asset, not
+# a CI artifact).
+#
+# What it attaches is AD-HOC signed and NOT shippable. Sign and notarize it by hand, re-upload, and
+# only then publish — publishing fires appcast.yml, which ships whatever is attached at that moment.
 #
 # Single-architecture (arm64 — the runner's native arch). A universal arm64+x86_64 DMG needs a
 # zig cross-compile of libghostty and is tracked as a follow-up.
@@ -20,7 +24,7 @@ on:
         description: 'Version to release, e.g. 1.2.3 (required for a tag-less manual run)'
         required: false
 
-# Create the GitHub Release + its tag and upload the .dmg asset.
+# Upload the .dmg asset to an existing Release.
 permissions:
   contents: write
 
@@ -32,7 +36,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build, notarize & draft release
+    name: Build & attach the release asset
     # macos-26 for the same reason as ci.yml: the SwiftLint build-tool plugin on the inner layers
     # needs Swift >= 6.2 (the prebuild-command fix), which older runner images don't carry.
     runs-on: macos-26
@@ -96,7 +100,7 @@ jobs:
         run: swift build -c release --disable-sandbox --product Bosun
 
       - name: Package .app + .dmg
-        # Ad-hoc signed on purpose. The draft release this attaches to is NOT shippable until it is
+        # Ad-hoc signed on purpose. The release this attaches to is NOT shippable until it is
         # signed and notarized by hand, which must happen BEFORE publishing, because publishing
         # triggers appcast.yml and ships whatever is attached.
         #
@@ -113,18 +117,25 @@ jobs:
           BUILD: ${{ steps.ver.outputs.version }}
         run: bash scripts/package-app.sh
 
-      # Draft so a human reviews + publishes (per the release policy). --generate-notes fills the
-      # body from merged PRs/commits since the previous release. On a manual dispatch gh creates
-      # the tag on publish; on a tag push it reuses the pushed tag.
-      - name: Create draft GitHub Release
+      # Attach the build to the Release you created. This never creates one: a missing Release is a
+      # mistake to report, not to paper over, because auto-creating it is what would let an unnoticed
+      # typo'd tag quietly produce a second, empty release.
+      #
+      # --clobber replaces an asset of the same name, so a re-run is idempotent — and so is the
+      # hand-signing step later, which uploads the notarized .dmg over this ad-hoc one.
+      #
+      # The failure is reported from `upload`'s own exit rather than a `gh release view` pre-check:
+      # the by-tag API does not return drafts, so a pre-check would report "no release" for exactly
+      # the draft this is meant to fill.
+      - name: Attach Bosun.dmg to the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.ver.outputs.tag }}
-          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
-          gh release create "$TAG" dist/Bosun.dmg \
-            --draft \
-            --generate-notes \
-            --title "Bosun $VERSION"
+          if ! gh release upload "$TAG" dist/Bosun.dmg --clobber; then
+            echo "::error::Could not attach Bosun.dmg to $TAG. This job fills in a Release, it never creates one — check a Release exists for that exact tag, then re-run this workflow."
+            exit 1
+          fi
+          echo "Attached dist/Bosun.dmg to $TAG."
 
