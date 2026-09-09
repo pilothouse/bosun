@@ -44,6 +44,12 @@ the cask refuses to install on an Intel Mac rather than leaving you with an app 
 Builds installed this way are signed with a Developer ID certificate and notarized by Apple, so they
 open normally — no right-click-Open, no quarantine command.
 
+On first launch Bosun asks you to sign in to GitHub. It uses the OAuth **device flow** — the app
+shows a code, you enter it at [github.com/login/device](https://github.com/login/device), and no
+password or token is ever typed into Bosun. It requests `read:org repo read:user`, and the resulting
+token is kept in your login Keychain, never on disk in the clear. Revoke it any time from GitHub's
+[authorized OAuth apps](https://github.com/settings/applications).
+
 Bosun updates itself through Sparkle, and the cask declares `auto_updates true` so `brew upgrade`
 won't fight an app that has already moved itself ahead. To remove it:
 
