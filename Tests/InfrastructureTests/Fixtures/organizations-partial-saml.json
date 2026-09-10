@@ -1,0 +1,37 @@
+{
+  "data": {
+    "viewer": {
+      "organizations": {
+        "pageInfo": { "hasNextPage": false, "endCursor": "Y3Vyc29yOjE=" },
+        "nodes": [
+          null,
+          {
+            "id": "O_1",
+            "login": "acme-corp",
+            "name": "Acme Corp",
+            "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4",
+            "repositories": {
+              "nodes": [
+                {
+                  "id": "R_1",
+                  "name": "api-gateway",
+                  "owner": { "login": "acme-corp" },
+                  "issues": { "totalCount": 8 },
+                  "pullRequests": { "totalCount": 3 },
+                  "stargazerCount": 1280,
+                  "isPrivate": false
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "errors": [
+    {
+      "type": "FORBIDDEN",
+      "message": "Resource protected by organization SAML enforcement. You must grant your OAuth token access to this organization."
+    }
+  ]
+}

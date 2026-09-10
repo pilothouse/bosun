@@ -24,16 +24,37 @@ final class GitHubAuthController {
         self.store = store
     }
 
-    /// Recompute sign-in state at launch from the Keychain.
+    /// Recompute sign-in state at launch from the Keychain, then *verify* the token really works.
+    ///
+    /// A token being present is not the same as it being usable: one minted by a client this app no
+    /// longer uses (the GitHub App that preceded the OAuth App) can still authenticate while every
+    /// query it makes comes back refused. Trusting mere presence left that state unrecoverable — the
+    /// UI claimed "signed in", the viewer rendered as a bare `@`, and because nothing ever returned
+    /// a 401 the expiry path never fired to offer a fresh sign-in.
+    ///
+    /// The check runs *after* the optimistic flip so the cached UI still paints immediately. Only a
+    /// definitive `.unauthorized` tears the session down, and it does so through `handleSessionExpired`
+    /// — the one recovery entry point, whose `.signedIn` guard collapses this and a concurrent 401
+    /// from the first data fetch into a single re-auth.
     func restore() {
         let tokenStore = services.tokenStore
+        let api = services.api
         Task { @MainActor in
             let token = try? await tokenStore.load()
-            if token?.isEmpty == false {
-                store.authState = .signedIn
-                onSignedIn?()
-            } else {
+            guard token?.isEmpty == false else {
                 store.authState = .signedOut
+                return
+            }
+            store.authState = .signedIn
+            onSignedIn?()
+            do {
+                _ = try await api.currentUser()
+            } catch GitHubAPIError.unauthorized {
+                handleSessionExpired()
+            } catch {
+                // Offline, rate-limited, or a refused query: none of these prove the token is dead,
+                // and signing out here would strand a launch with no network. Stay signed in and let
+                // the data path surface the error.
             }
         }
     }

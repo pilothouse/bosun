@@ -54,6 +54,39 @@ final class GitHubAPIClientTests: XCTestCase {
                        "the null repo node is dropped; the readable repos around it still decode")
     }
 
+    func testOrganizationsKeepReadableOrgsWhenGraphQLAlsoReturnsErrors() async throws {
+        // GitHub answers a partially-refused query with HTTP 200: the org the token can't see comes
+        // back as a `null` node with a `FORBIDDEN` entry in `errors`, while every readable org
+        // resolves normally. Treating any non-empty `errors` as fatal threw the whole decoded page
+        // away — the org panel went empty and the viewer's login blank, reported to the user as
+        // "Couldn't reach GitHub. Check your connection."
+        respond { (self.ok($0), try fixture("organizations-partial-saml")) }
+        let orgs = try await makeClient().organizations()
+
+        XCTAssertEqual(orgs.map(\.login), ["acme-corp"],
+                       "the readable org survives alongside the SAML error")
+        XCTAssertEqual(orgs.first?.repositories.map(\.name), ["api-gateway"])
+    }
+
+    func testGraphQLErrorWithNoDataSurfacesGitHubsOwnMessage() async throws {
+        // Nothing decoded, so there's no partial success to keep — but this is still GitHub refusing
+        // the *token*, not a network failure. The message has to carry GitHub's wording so the user
+        // knows what to grant, rather than being flattened into `.transport`.
+        let saml = "Resource protected by organization SAML enforcement. "
+                 + "You must grant your OAuth token access to this organization."
+        respond { (self.ok($0), json(#"{"data":null,"errors":[{"message":"\#(saml)"}]}"#)) }
+
+        await assertThrows(.graphQL(saml)) { _ = try await self.makeClient().organizations() }
+    }
+
+    func testGraphQLErrorBeatsADecodingDumpWhenDataIsUnreadable() async throws {
+        // `data` is present but the wrong shape, so the typed decode fails. GitHub already said why
+        // in `errors` — that explanation is more useful than a raw `DecodingError`.
+        respond { (self.ok($0), json(#"{"data":{"viewer":42},"errors":[{"message":"Bad credentials"}]}"#)) }
+
+        await assertThrows(.graphQL("Bad credentials")) { _ = try await self.makeClient().organizations() }
+    }
+
     func testOrganizationsPaginatesAcrossCursorPages() async throws {
         // The org page size is kept small to stay under GitHub's GraphQL query-cost limit, so real
         // accounts span several pages — the cursor loop must stitch them together (#81).

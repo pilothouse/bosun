@@ -234,4 +234,9 @@ public enum GitHubAPIError: Error, Sendable, Equatable {
     case http(status: Int)             // any other non-2xx response
     case decoding(String)              // a 2xx body that didn't match the expected shape
     case transport(String)             // URLSession/connection failure
+    /// A GraphQL 200 whose `errors` array left no usable `data` — GitHub answered, but refused the
+    /// query (SAML enforcement, a scope the token lacks, an org the app isn't authorized for). Held
+    /// apart from `.transport` because the cause is the *token*, not the network, and GitHub's own
+    /// message tells the user exactly what to grant. The value is that message.
+    case graphQL(String)
 }

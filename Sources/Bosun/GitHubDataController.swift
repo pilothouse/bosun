@@ -1186,8 +1186,17 @@ final class GitHubDataController {
         case .unauthorized: return "Your GitHub session expired. Sign in again to load data."
         case .rateLimited:  return "GitHub rate limit reached. Try again in a little while."
         case .notFound:     return "That repository or item is no longer available."
-        case .http, .decoding, .transport:
+        // Only a genuine URLSession failure earns the "check your connection" line. Lumping the
+        // cases below in with it sent users chasing a network problem that wasn't there.
+        case .transport:
             return "Couldn't reach GitHub. Check your connection and try again."
+        case .graphQL(let reason):
+            return "GitHub refused the request: \(reason)"
+        case .http(let status):
+            return "GitHub returned an error (HTTP \(status)). Try again in a moment."
+        case .decoding:
+            return "Bosun couldn't read GitHub's response. If this keeps happening, send the "
+                 + "report from Help → Copy Diagnostics."
         }
     }
 }

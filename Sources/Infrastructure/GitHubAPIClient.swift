@@ -303,12 +303,24 @@ public actor GitHubAPIClient: GitHubAPI {
         // required while it's still behind the preview flag. Additive — other queries ignore it.
         request.setValue("sub_issues", forHTTPHeaderField: "GraphQL-Features")
         let (data, _) = try await perform(request)
-        let envelope: GraphQLResponse<T> = try decode(data)
-        if let errors = envelope.errors, !errors.isEmpty {
-            throw GitHubAPIError.transport("graphql: " + errors.map(\.message).joined(separator: "; "))
+
+        // A GraphQL 200 is routinely *partially* successful: GitHub nulls out only the fields this
+        // token can't read (a SAML-protected org, a missing scope) and explains why in `errors`,
+        // while every other field resolves normally. So `data` — not the presence of `errors` — is
+        // what decides success. Throwing on any non-empty `errors` used to discard a fully decoded
+        // page because one org on it was restricted, which is what left the org panel empty and the
+        // viewer's login blank while the UI still claimed to be signed in.
+        let envelope: GraphQLResponse<T>
+        do {
+            envelope = try decode(data)
+        } catch {
+            // `T` itself didn't decode. If GitHub said why, that beats a raw `DecodingError` dump.
+            if let reason = GraphQLEnvelope.errorMessage(in: data) { throw GitHubAPIError.graphQL(reason) }
+            throw error
         }
-        guard let payload = envelope.data else { throw GitHubAPIError.decoding("graphql: empty data") }
-        return payload
+        if let payload = envelope.data { return payload }
+        if let reason = GraphQLEnvelope.errorMessage(in: data) { throw GitHubAPIError.graphQL(reason) }
+        throw GitHubAPIError.decoding("graphql: empty data")
     }
 
     // MARK: - Shared request/response handling
@@ -407,27 +419,6 @@ enum GraphQLValue: Encodable {
         case .null: try container.encodeNil()
         }
     }
-}
-
-private struct GraphQLRequest: Encodable {
-    let query: String
-    let variables: [String: GraphQLValue]
-}
-
-private struct GraphQLResponse<T: Decodable>: Decodable {
-    let data: T?
-    let errors: [GraphQLError]?
-}
-
-private struct GraphQLError: Decodable {
-    let message: String
-}
-
-struct PageInfo: Decodable {
-    let hasNextPage: Bool
-    let endCursor: String?
-    /// The cursor to fetch after, or nil when this was the last page.
-    var next: String? { hasNextPage ? endCursor : nil }
 }
 
 private extension Optional {
