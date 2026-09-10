@@ -5,6 +5,8 @@ final class ConnectionRailView: FlippedView {
     let store: Store
     var onAdd: (() -> Void)?
     var onEdit: ((String) -> Void)?
+    /// Copy a connection with all its fields into a new one, named "<original> (copy)" (#101).
+    var onDuplicate: ((String) -> Void)?
     var onDelete: ((String) -> Void)?
     var onToggleFavorite: ((String) -> Void)?
     var onConnect: ((String) -> Void)?
@@ -220,7 +222,7 @@ final class ConnectionRailView: FlippedView {
         starHit.addSubview(star)
         row.addSubview(starHit)
 
-        // Right-click → Connect / Open / Edit / Delete.
+        // Right-click → Connect / Open / Edit / Duplicate / Delete.
         let menu = NSMenu()
         let openTitle = c.kind == .ssh ? "Connect" : "Open in Terminal"
         let connect = NSMenuItem(title: openTitle, action: #selector(connectMenuAction(_:)), keyEquivalent: "")
@@ -229,9 +231,12 @@ final class ConnectionRailView: FlippedView {
         menu.addItem(.separator())
         let edit = NSMenuItem(title: "Edit…", action: #selector(editMenuAction(_:)), keyEquivalent: "")
         edit.target = self; edit.representedObject = c.id
+        // No ellipsis: unlike "Edit…" this acts immediately, with no further UI (#101).
+        let copy = NSMenuItem(title: "Duplicate", action: #selector(duplicateMenuAction(_:)), keyEquivalent: "")
+        copy.target = self; copy.representedObject = c.id
         let remove = NSMenuItem(title: "Delete", action: #selector(deleteMenuAction(_:)), keyEquivalent: "")
         remove.target = self; remove.representedObject = c.id
-        menu.addItem(edit); menu.addItem(remove)
+        menu.addItem(edit); menu.addItem(copy); menu.addItem(remove)
         if let moveItem = moveToFolderMenuItem(connId: c.id, currentFolderId: currentFolderId) {
             menu.addItem(.separator()); menu.addItem(moveItem)
         }
@@ -295,6 +300,9 @@ final class ConnectionRailView: FlippedView {
     }
     @objc private func editMenuAction(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String { onEdit?(id) }
+    }
+    @objc private func duplicateMenuAction(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String { onDuplicate?(id) }
     }
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String { onDelete?(id) }

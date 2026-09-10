@@ -70,6 +70,49 @@ final class BosunUITests: XCTestCase {
         app.terminate()
     }
 
+    /// The issue #101 flow, end to end: right-click a connection row, pick "Duplicate", and the copy
+    /// appears named after its original. Drives real events, so it asserts the whole chain —
+    /// rail menu → `DuplicateConnectionUseCase` → `ConnectionNaming` → rail rebuild.
+    ///
+    /// Two properties of this app dictate the mechanics (both verified against the live AX tree):
+    ///   * Rows are `AXStaticText`, not `AXButton`, so the row is *found* by its label but must be
+    ///     *clicked* through a coordinate — hence `rightClick()` on the element's own coordinate,
+    ///     which needs no hard-coded geometry.
+    ///   * Bosun's contextual menus are **not** in the accessibility tree at all (with the menu open
+    ///     the process still reports only its window and menu bar), so `app.menuItems["Duplicate"]`
+    ///     finds nothing. The menu does take keyboard input, so the item is chosen by NSMenu
+    ///     type-select: "dup" is a unique prefix among Connect / Edit… / Duplicate / Delete / Move to
+    ///     folder, so this cannot quietly land on the wrong item.
+    ///
+    /// `scripts/duplicate-verify.sh` runs this same flow without an Xcode host and is the version
+    /// that has actually been executed; keep the two in step.
+    func testDuplicateConnectionFromContextMenu() {
+        let app = makeApp()
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 20), "main window never appeared")
+
+        // `build-box` is seeded in the "Lighthouse" folder and is not a favourite, so it renders
+        // exactly once — no ambiguity about which row was hit (`UITestFixtures.connections`).
+        let row = app.staticTexts["build-box"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "seeded connection row never rendered")
+
+        let copy = app.staticTexts["build-box (copy)"]
+        XCTAssertFalse(copy.exists, "the copy must not exist before we make it")
+
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
+        app.typeText("dup\r")
+
+        // A mis-selected item can't pass here: "Delete" would remove the row and "Edit…" would open
+        // the sheet — neither produces a copy.
+        XCTAssertTrue(copy.waitForExistence(timeout: 5),
+                      "right-click → Duplicate did not create ‘build-box (copy)’")
+        XCTAssertTrue(row.exists, "the original must survive its own duplication")
+
+        app.terminate()
+    }
+
     /// Example of the only reliable way to drive this custom UI: a coordinate tap. Kept minimal and
     /// tolerant — it documents the pattern (see the accessibility note above) rather than asserting a
     /// specific control, since exact geometry depends on the window frame.

@@ -24,4 +24,20 @@ public enum ConnectionOrdering {
         var next = section.makeIterator()
         return allIDs.map { members.contains($0) ? (next.next() ?? $0) : $0 }
     }
+
+    /// `allIDs` with `id` sitting immediately after `anchor` — where a duplicated connection belongs,
+    /// so the copy appears directly under the row it was made from (#101). Because the rail derives
+    /// every section by filtering this one global list (`ConnectionGrouping.sections`), placing the
+    /// copy here puts it under its original in *every* band that shows both — its folder and, for a
+    /// favourited source, the pinned Favorites band too.
+    ///
+    /// An `id` already in the list is moved rather than repeated (the result is always a set), a
+    /// missing `anchor` appends, and `id == anchor` is a no-op that still guarantees `id` is present.
+    public static func inserting(_ id: UUID, after anchor: UUID, in allIDs: [UUID]) -> [UUID] {
+        guard id != anchor else { return allIDs.contains(id) ? allIDs : allIDs + [id] }
+        var ids = allIDs.filter { $0 != id }
+        guard let anchorIndex = ids.firstIndex(of: anchor) else { return ids + [id] }
+        ids.insert(id, at: ids.index(after: anchorIndex))
+        return ids
+    }
 }

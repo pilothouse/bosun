@@ -11,6 +11,11 @@
 # an Xcode host — see Tests/UITests/README.md). It drives the app with osascript + screencapture, so
 # it needs a real GUI session (Metal/libghostty can't render on a locked/sleeping display).
 #
+# The seeded-content check used to walk `entire contents of window 1`, which returns an EMPTY list on
+# this hierarchy — so it never found anything, always printed "not found via AX", and never failed.
+# It now uses the traversal that works (scripts/lib/ax.sh) and is a HARD assertion: "populated" is
+# half of what this script claims to prove, so it should be able to fail.
+#
 # Usage:
 #   swift build --disable-sandbox          # once, so .build/debug/Bosun exists
 #   bash scripts/ui-verify.sh              # or: BOSUN_APP_PATH=/path/to/Bosun[.app/…/Bosun] bash scripts/ui-verify.sh
@@ -22,8 +27,16 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BOSUN_APP_PATH:-$REPO/.build/debug/Bosun}"
 OUT="${OUT:-$REPO/.build/ui-verify.png}"
-# Seeded strings from UITestFixtures that must render (a connection + an issue title).
-SEEDED=("build-box" "Stream large dispatch logs" "atlas-api")
+
+# shellcheck source=lib/ax.sh
+. "$REPO/scripts/lib/ax.sh"
+
+# One seeded string per pane, so a half-hydrated UI fails: a connection (the rail, via
+# ConnectionStore), the selected issue's title (the detail pane, via the fake GitHub API) and a repo
+# (the org panel, via the seeded cache). All three must be VISIBLE in the default launch state —
+# `UITestFixtures` also contains e.g. `atlas-api`, which belongs to an org the app doesn't have
+# selected at launch and so never renders. Assert what's on screen, not what's in the fixture file.
+SEEDED=("build-box" "zsh prompt is slow over mosh" "scratchpad")
 
 [ -x "$BIN" ] || { echo "✗ missing binary: $BIN — run: swift build --disable-sandbox" >&2; exit 1; }
 
@@ -59,43 +72,30 @@ if pgrep -x SecurityAgent >/dev/null; then
 fi
 echo "✓ no Keychain dialog (SecurityAgent absent)"
 
-# ── best-effort content check: seeded labels are exposed as AXStaticText ─────────────────────────
+# ── HARD content check: the seeded labels are rendered ────────────────────────────────────────────
 osascript -e 'tell application "System Events" to set frontmost of (first process whose unix id is '"$APP_PID"') to true' >/dev/null 2>&1 || true
 sleep 1
 TEXTS=""
-for _ in $(seq 1 6); do
-  TEXTS=$(osascript <<OSA 2>/dev/null || true
-tell application "System Events"
-  tell (first process whose unix id is $APP_PID)
-    set out to ""
-    try
-      repeat with e in (entire contents of window 1)
-        try
-          if role of e is "AXStaticText" then set out to out & (value of e) & "\n"
-        end try
-      end repeat
-    end try
-    return out
-  end tell
-end tell
-OSA
-)
+for _ in $(seq 1 8); do
+  TEXTS=$(ax_texts "$APP_PID")
   [ -n "$TEXTS" ] && break
   sleep 0.5
 done
+[ -n "$TEXTS" ] || { echo "✗ no labels readable from the accessibility tree at all" >&2; exit 1; }
 
 missing=0
 for s in "${SEEDED[@]}"; do
-  if printf '%s' "$TEXTS" | grep -qi "$s"; then
+  if printf '%s' "$TEXTS" | grep -qiF "$s"; then
     echo "✓ seeded text present: $s"
   else
-    echo "… seeded text not found via AX: $s (AX traversal is flaky on this custom UI — see the screenshot)"
+    echo "✗ seeded text MISSING: $s" >&2
     missing=$((missing + 1))
   fi
 done
-[ "$missing" -gt 0 ] && echo "note: ${missing} seeded string(s) unconfirmed via AX; screenshot is the source of truth"
 
 # ── screenshot for human confirmation ─────────────────────────────────────────────────────────────
 screencapture -x "$OUT" 2>/dev/null || true
 echo "✓ screenshot: $OUT"
-echo "PASS: offline UI came up with no Keychain dialog"
+
+[ "$missing" -eq 0 ] || { echo "✗ ${missing} seeded string(s) never rendered — see $OUT" >&2; exit 1; }
+echo "PASS: offline UI came up populated, with no Keychain dialog"

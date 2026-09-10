@@ -220,6 +220,7 @@ final class BosunView: NSView {
 
         rail.onAdd = { [weak self] in self?.openSheet(editingId: nil) }
         rail.onEdit = { [weak self] id in self?.openSheet(editingId: id) }
+        rail.onDuplicate = { [weak self] id in self?.duplicateConnection(id) }
         rail.onDelete = { [weak self] id in self?.deleteConnection(id) }
         rail.onToggleFavorite = { [weak self] id in self?.toggleFavorite(id) }
         rail.onConnect = { [weak self] id in self?.connect(id) }
@@ -274,6 +275,26 @@ final class BosunView: NSView {
             store.domainConnections.append(connection)
         }
         store.selectedConnId = connection.id.uuidString
+    }
+
+    /// Duplicate a connection from the rail's context menu (#101): a full copy under a fresh id,
+    /// named "<original> (copy)", placed directly below the row it was copied from and selected.
+    ///
+    /// Unlike `toggleFavorite`/`moveConnection` this can't update optimistically — the copy's id and
+    /// name are minted inside the use case (the naming rule is a Domain rule that needs every existing
+    /// name), so there's nothing to pre-insert. It takes the same await-then-place shape as the sheet's
+    /// save (`NewConnectionSheet.submit` → `onSaved` → `upsert`); the write is local, so it lands at
+    /// once. `.notFound` — the row vanished between the click and the read — simply does nothing.
+    private func duplicateConnection(_ id: String) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let run = connections.duplicate
+        Task { @MainActor [weak self] in
+            guard let outcome = try? await run(id: uuid), case let .duplicated(copy) = outcome,
+                  let self else { return }
+            let below = store.domainConnections.firstIndex { $0.id == uuid }.map { $0 + 1 }
+            store.domainConnections.insert(copy, at: below ?? store.domainConnections.count)
+            store.selectedConnId = copy.id.uuidString   // didSet → notify → rail rebuild
+        }
     }
 
     /// Delete a connection. Confirms first with an `NSAlert` (mirrors `deleteFolder`) since the

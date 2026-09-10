@@ -46,4 +46,33 @@ final class ConnectionOrderingTests: XCTestCase {
         XCTAssertEqual(ConnectionOrdering.reorder(all, sectionIDs: [a, b], from: -1, to: 1), all)
         XCTAssertEqual(ConnectionOrdering.reorder(all, sectionIDs: [], from: 0, to: 0), all)
     }
+
+    // MARK: inserting(_:after:in:) — where a duplicate lands (#101)
+
+    func testInsertingPlacesTheIDDirectlyAfterItsAnchor() {
+        XCTAssertEqual(ConnectionOrdering.inserting(d, after: a, in: [a, b, c]), [a, d, b, c],
+                       "a duplicate sits immediately below the connection it was copied from")
+    }
+
+    func testInsertingAfterTheLastEntryAppends() {
+        XCTAssertEqual(ConnectionOrdering.inserting(d, after: c, in: [a, b, c]), [a, b, c, d])
+    }
+
+    func testInsertingWithAMissingAnchorAppends() {
+        // The anchor was deleted between the read and the write — still persist the new id.
+        XCTAssertEqual(ConnectionOrdering.inserting(d, after: e, in: [a, b, c]), [a, b, c, d])
+    }
+
+    func testInsertingAnIDAlreadyInTheListMovesItRatherThanDuplicatingIt() {
+        XCTAssertEqual(ConnectionOrdering.inserting(c, after: a, in: [a, b, c]), [a, c, b],
+                       "the result must stay a set — an id may never appear twice")
+    }
+
+    func testInsertingAfterItselfLeavesTheListUnchanged() {
+        XCTAssertEqual(ConnectionOrdering.inserting(b, after: b, in: [a, b, c]), [a, b, c])
+    }
+
+    func testInsertingIntoAnEmptyListYieldsJustTheID() {
+        XCTAssertEqual(ConnectionOrdering.inserting(a, after: b, in: []), [a])
+    }
 }

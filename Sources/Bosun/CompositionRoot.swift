@@ -9,6 +9,8 @@ import Infrastructure
 struct ConnectionServices {
     let store: ConnectionStore
     let save: SaveConnectionUseCase
+    /// Copy an existing connection into a new one, placed directly below its original (#101).
+    let duplicate: DuplicateConnectionUseCase
     let remove: RemoveConnectionUseCase
     let reorder: ReorderConnectionsUseCase
     let saveFolder: SaveFolderUseCase
@@ -90,6 +92,7 @@ enum CompositionRoot {
         ConnectionServices(
             store: store,
             save: SaveConnectionUseCase(store: store),
+            duplicate: DuplicateConnectionUseCase(store: store),
             remove: RemoveConnectionUseCase(store: store),
             reorder: ReorderConnectionsUseCase(store: store),
             saveFolder: SaveFolderUseCase(store: store),
