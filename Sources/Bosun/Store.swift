@@ -259,6 +259,20 @@ final class Store {
     /// Set by the App layer to enable/disable the iCloud connection store when the toggle flips.
     var onSyncEnabledChanged: ((Bool) -> Void)?
 
+    /// What sync last did, for the hint under the Settings checkbox. Ephemeral: it describes this
+    /// session, so it is never persisted and never restored.
+    private(set) var syncStatus: SyncStatus = .off
+
+    /// Deliberately `notify()` and not `changed()`. `changed()` calls `persist()`, which snapshots
+    /// every preference and writes the whole blob to UserDefaults — once per push is a lot of writing
+    /// to record something that isn't saved at all. Repainting is all this needs, and
+    /// `SettingsWindowController` re-runs the visible pane's `refresh()` on every notify.
+    func updateSyncStatus(_ status: SyncStatus) {
+        guard status != syncStatus else { return }
+        syncStatus = status
+        notify()
+    }
+
     /// Terminal height drives layout only (no content rebuild), so it is not part of `notify`.
     /// It changes on every drag frame, so it is persisted on gesture end (see
     /// `TerminalContainerView`), not here.

@@ -49,7 +49,7 @@
 #                  Path to a Developer ID .provisionprofile. Needed only when the entitlements declare
 #                  a restricted `com.apple.developer.*` capability (iCloud, App Groups, push, Sign in
 #                  with Apple); embedded at Contents/embedded.provisionprofile before signing.
-#                  Empty → skipped, with a warning if the entitlements ask for one.
+#                  Empty → skipped, unless the entitlements ask for one, which is a hard error.
 #   NOTARY_PROFILE / NOTARY_KEY+NOTARY_KEY_ID+NOTARY_ISSUER
 #                  Apple notary credentials, consumed by scripts/notarize.sh. Empty → sign only
 #                  (no notarization).
@@ -227,9 +227,10 @@ sign_runtime "$FRAMEWORKS/Sparkle.framework"
 # The profile must land BEFORE the outer codesign below, which seals it into the bundle.
 #
 # Omitting it fails silently and expensively: codesign, notarytool, stapler and Gatekeeper all pass,
-# and the capability simply never works at runtime. Nothing in the verify step catches it. Hence the
-# warning rather than a quiet skip. Ad-hoc builds are exempt because they sign without entitlements
-# at all (see §5), and a restricted entitlement is ignored on an ad-hoc signature anyway.
+# and the app is then SIGKILLed at exec on every machine it reaches. Nothing downstream catches it,
+# which is why this is a hard error rather than a warning. Ad-hoc builds are exempt because they sign
+# without entitlements at all (see §5), and a restricted entitlement is ignored on an ad-hoc signature
+# anyway — so CI, which has no SIGN_IDENTITY, never reaches this block.
 # Parse the plist rather than grepping the raw file: the comment block documents the restricted
 # entitlement it is NOT currently claiming, and a text grep counts that and warns on every build.
 NEEDS_PROFILE="$(plutil -convert json -o - "$ENTITLEMENTS" 2>/dev/null | grep -c 'com\.apple\.developer\.' || true)"
@@ -249,11 +250,14 @@ if [ -n "$SIGN_IDENTITY" ]; then
     echo "==> embedding provisioning profile: $(basename "$PROVISION_PROFILE")"
     cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
   elif [ "$NEEDS_PROFILE" -gt 0 ]; then
-    echo "   WARNING: $(basename "$ENTITLEMENTS") declares a restricted com.apple.developer.* entitlement," >&2
-    echo "            but PROVISION_PROFILE is unset. THE APP WILL NOT LAUNCH: AMFI SIGKILLs a process" >&2
-    echo "            claiming a restricted entitlement it can't prove it owns, at exec, before main()." >&2
-    echo "            Signing, notarization and Gatekeeper all still pass, so this is the last chance to" >&2
-    echo "            catch it. Finder will only say \"The application can't be opened.\"" >&2
+    echo "ERROR: $(basename "$ENTITLEMENTS") declares a restricted com.apple.developer.* entitlement," >&2
+    echo "       but PROVISION_PROFILE is unset. THE APP WOULD NOT LAUNCH: AMFI SIGKILLs a process" >&2
+    echo "       claiming a restricted entitlement it can't prove it owns, at exec, before main()." >&2
+    echo "       Signing, notarization and Gatekeeper all still pass, so this is the last chance to" >&2
+    echo "       catch it. Finder would only say \"The application can't be opened.\"" >&2
+    echo "       Set PROVISION_PROFILE to the Developer ID profile for $BUNDLE_ID (it lives with the" >&2
+    echo "       release tooling, beside $(basename "$ENTITLEMENTS"))." >&2
+    exit 1
   fi
 fi
 

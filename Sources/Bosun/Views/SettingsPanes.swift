@@ -161,11 +161,16 @@ final class GeneralPane: SettingsPane {
         intervalPopup.selectItem(at: refreshIntervals.firstIndex(of: store.githubAutoRefreshIntervalMinutes) ?? 1)
         intervalPopup.isEnabled = store.githubAutoRefreshEnabled
         intervalLabel.textColor = store.githubAutoRefreshEnabled ? .labelColor : .secondaryLabelColor
+        // One label, two jobs: why the box is greyed out when sync can't run, and what sync last did
+        // when it can. They never apply at once, and a second label for a line that is usually one
+        // short sentence would only add a gap to the pane.
         let iCloudAvailable = ICloudCapability.isAvailable
         iCloudBox.isEnabled = iCloudAvailable
         iCloudBox.state = (iCloudAvailable && store.syncConnectionsICloud) ? .on : .off
-        iCloudHint.isHidden = iCloudAvailable
-        iCloudHint.stringValue = ICloudCapability.unavailableHint
+        iCloudHint.stringValue = iCloudAvailable
+            ? store.syncStatus.message(now: Date())
+            : ICloudCapability.unavailableHint
+        iCloudHint.isHidden = iCloudHint.stringValue.isEmpty
     }
 
     @objc private func toggleAutoUpdate(_ sender: NSButton) {

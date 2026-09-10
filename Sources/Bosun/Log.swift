@@ -28,6 +28,8 @@ enum Log {
     static let ghostty = Logger(subsystem: subsystem, category: "ghostty")
     /// Shell integration (zsh shim) failures.
     static let shell = Logger(subsystem: subsystem, category: "shell")
+    /// iCloud connection sync: the capability probe at launch, then every push and merge outcome.
+    static let sync = Logger(subsystem: subsystem, category: "sync")
     /// The dev-only `BOSUN_API_SMOKE` probe.
     static let smoke = Logger(subsystem: subsystem, category: "api-smoke")
 }

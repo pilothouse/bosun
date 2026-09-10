@@ -181,14 +181,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             store.applyPersisted(await preferences.load())
             await Self.loadConnections(into: store, from: connectionStore)
+            // Logged unconditionally, and outside the `if let` below: when sync is unavailable there
+            // is no decorator to report anything, and "why is the checkbox greyed out?" is exactly the
+            // question a diagnostics report then has to answer on its own.
+            Log.sync.notice("\(ICloudCapability.diagnosticSummary, privacy: .public)")
             if let icloud = services.icloud {
                 // iCloud sync (#83): a remote merge (another device wrote) re-reads the merged store
                 // into the rail via `notify`; the Settings toggle flips sync on/off; the persisted
                 // enabled state is applied once here so a returning user resumes syncing at launch.
-                await icloud.start { [weak store] in
+                await icloud.start(onRemoteChange: { [weak store] in
                     guard let store else { return }
                     Task { @MainActor in await Self.loadConnections(into: store, from: connectionStore) }
-                }
+                }, onStatus: { [weak store] status in
+                    Task { @MainActor in
+                        Self.logSync(status)
+                        store?.updateSyncStatus(status)
+                    }
+                })
                 store.onSyncEnabledChanged = { enabled in Task { await icloud.setEnabled(enabled) } }
                 await icloud.setEnabled(store.syncConnectionsICloud)
             }
@@ -206,6 +215,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 auth.restore()   // recompute signed-in state from the Keychain (or the in-memory token)
             }
+        }
+    }
+
+    /// One sync outcome, one log line. `.error` for a failure (lost functionality the user cares
+    /// about) and `.notice` otherwise — both are persisted by the unified log, so both reach **Help →
+    /// Copy Diagnostics**. `.debug` would not: it is dropped before the store, which is why the
+    /// routine successes are logged at `.notice` rather than the level their volume suggests.
+    private static func logSync(_ status: SyncStatus) {
+        switch status {
+        case .off:              Log.sync.notice("sync disabled")
+        case .syncing:          Log.sync.notice("sync enabled, reconciling")
+        case .synced:           Log.sync.notice("pushed to iCloud")
+        case .failed(let why):  Log.sync.error("\(why, privacy: .public)")
         }
     }
 

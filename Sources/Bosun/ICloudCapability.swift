@@ -13,11 +13,14 @@ import Security
 /// Measured 2026-09-08 on a Developer ID + hardened-runtime build carrying no entitlement:
 /// `ubiquityIdentityToken` non-nil, `NSUbiquitousKeyValueStore.synchronize()` false, readback nil.
 ///
-/// Reading our own code signature is the honest test and needs no maintenance. The entitlement is
-/// absent today (it is commented out in `scripts/Bosun.entitlements`, because claiming a restricted
-/// entitlement without an `embedded.provisionprofile` gets the process SIGKILLed by AMFI at exec).
-/// This flips to `true` on its own once the App ID is registered, the profile is embedded, and the
-/// entitlement comes back — no code change needed.
+/// Reading our own code signature is the honest test and needs no maintenance. It is also why a dev
+/// build answers honestly: `swift run` and CI both produce ad-hoc signatures that carry no
+/// entitlement, so sync stays visibly unavailable there rather than half-working.
+///
+/// The entitlement is granted by `Bosun.entitlements` in the release tooling and paid for by the
+/// Developer ID profile sealed in at `Contents/embedded.provisionprofile` — a restricted entitlement
+/// without that profile gets the process SIGKILLed by AMFI at exec, so the two travel together and
+/// both packaging scripts refuse to build one without the other.
 enum ICloudCapability {
     /// The entitlement AMFI checks and that gates the KVS container.
     private static let kvStoreEntitlement = "com.apple.developer.ubiquity-kvstore-identifier"
@@ -33,6 +36,15 @@ enum ICloudCapability {
     /// in. Recomputed per call rather than cached, since the user can sign in or out while we run.
     static var isAvailable: Bool {
         isEntitled && FileManager.default.ubiquityIdentityToken != nil
+    }
+
+    /// One line for the launch log and **Help → Copy Diagnostics**, reporting the two halves
+    /// separately. Without it a report can say sync is off but never why, since `isEntitled` is
+    /// private and `isAvailable` collapses "this build can't" and "you're signed out" into one `false`
+    /// — and those need completely different answers from whoever reads the report.
+    static var diagnosticSummary: String {
+        let signedIn = FileManager.default.ubiquityIdentityToken != nil
+        return "icloud sync: entitled=\(isEntitled) signedIn=\(signedIn) available=\(isAvailable)"
     }
 
     /// Why the sync checkbox is greyed out, for the hint beneath it. The two causes need different
