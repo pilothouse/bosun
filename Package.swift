@@ -25,7 +25,10 @@ let package = Package(
         // so the linker references `@rpath/Sparkle.framework`; scripts/package-app.sh copies the
         // framework into Bosun.app/Contents/Frameworks and the rpath below resolves it at runtime.
         // App-layer only — Sparkle is confined to Sources/Bosun/UpdaterController.swift.
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+        // Floor is 2.9.0, not 2.6.0: that is the first release that understands
+        // `<description sparkle:format="markdown">` in the appcast. Resolve below it and release
+        // notes silently fall back to being read as HTML — i.e. rendered as one run-on line.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
     ],
     targets: [
         // C shim exposing libghostty's embedding header to Swift. (App-layer detail.)
