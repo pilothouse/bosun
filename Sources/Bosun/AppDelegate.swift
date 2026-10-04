@@ -447,6 +447,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addPaneItem(to: terminalMenu, "Select Previous Pane", #selector(selectPreviousPane), "[", .command)
         terminalItem.submenu = terminalMenu
 
+        installLayoutMenu(into: mainMenu)
+
         // Help ▸ diagnostics affordances (#59). Built in Diagnostics.swift to keep this file lean.
         installHelpMenu(into: mainMenu)
 
@@ -481,4 +483,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func splitDown() { guard isConsoleFocused else { return }; root.splitTerminalDown() }
     @objc private func selectNextPane() { guard isConsoleFocused else { return }; root.focusNextPane() }
     @objc private func selectPreviousPane() { guard isConsoleFocused else { return }; root.focusPreviousPane() }
+}
+
+// MARK: Layout menu (Mission Control)
+
+extension AppDelegate: NSMenuItemValidation {
+
+    /// Layout ▸ switch between the classic columns and Mission Control, and drive Mission Control's
+    /// modes / focus / tracker. Every shortcut is ⌃⌘-prefixed: menu key equivalents fire before the
+    /// focused terminal sees the keystroke, and ⌃⌘ combos aren't something a shell or TUI expects.
+    fileprivate func installLayoutMenu(into mainMenu: NSMenu) {
+        let layoutItem = NSMenuItem()
+        mainMenu.addItem(layoutItem)
+        let menu = NSMenu(title: "Layout")
+        addLayoutItem(to: menu, "Mission Control", #selector(toggleMissionControl), "m")
+        menu.addItem(.separator())
+        for (index, view) in MissionView.allCases.enumerated() {
+            let item = addLayoutItem(to: menu, view.rawValue.capitalized, #selector(selectMissionView(_:)), "\(index + 1)")
+            item.tag = index + 1
+        }
+        menu.addItem(.separator())
+        addLayoutItem(to: menu, "More Tiles", #selector(moreTiles), "=")
+        addLayoutItem(to: menu, "Fewer Tiles", #selector(fewerTiles), "-")
+        menu.addItem(.separator())
+        func key(_ code: Int) -> String { String(Character(UnicodeScalar(code)!)) }
+        addLayoutItem(to: menu, "Next Tile", #selector(focusNextTile), key(NSRightArrowFunctionKey))
+        addLayoutItem(to: menu, "Previous Tile", #selector(focusPreviousTile), key(NSLeftArrowFunctionKey))
+        addLayoutItem(to: menu, "Next Page", #selector(nextPage), key(NSDownArrowFunctionKey))
+        addLayoutItem(to: menu, "Previous Page", #selector(previousPage), key(NSUpArrowFunctionKey))
+        menu.addItem(.separator())
+        addLayoutItem(to: menu, "Toggle Tracker", #selector(toggleMissionTracker), "t")
+        layoutItem.submenu = menu
+    }
+
+    @discardableResult
+    private func addLayoutItem(to menu: NSMenu, _ title: String, _ action: Selector, _ key: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.keyEquivalentModifierMask = [.control, .command]
+        item.target = self
+        menu.addItem(item)
+        return item
+    }
+
+    @objc private func toggleMissionControl() { root.toggleWorkspaceLayout() }
+    @objc private func selectMissionView(_ sender: NSMenuItem) { root.setMissionView(sender.tag) }
+    @objc private func moreTiles() { root.stepMissionLayout(1) }
+    @objc private func fewerTiles() { root.stepMissionLayout(-1) }
+    @objc private func nextPage() { root.flipMissionPage(1) }
+    @objc private func previousPage() { root.flipMissionPage(-1) }
+    @objc private func focusNextTile() { root.cycleMissionFocus(1) }
+    @objc private func focusPreviousTile() { root.cycleMissionFocus(-1) }
+    @objc private func toggleMissionTracker() { root.toggleMissionTracker() }
+
+    /// Check the Mission Control item while it's the active layout; the mode / focus / tracker items
+    /// only apply inside Mission Control.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(toggleMissionControl):
+            item.state = root.isMissionControl ? .on : .off
+            return true
+        case #selector(selectMissionView(_:)):
+            item.state = root.isMissionControl && MissionView.forShortcut(item.tag) == root.store.missionView ? .on : .off
+            return root.isMissionControl
+        case #selector(moreTiles), #selector(fewerTiles), #selector(nextPage), #selector(previousPage):
+            return root.isMissionControl && root.store.missionView == .grid
+        case #selector(focusNextTile), #selector(focusPreviousTile), #selector(toggleMissionTracker):
+            return root.isMissionControl
+        default:
+            return true
+        }
+    }
 }

@@ -204,6 +204,24 @@ final class Store {
     /// — top/left. A discrete toggle like `splitAxis`, so it persists and relayouts via `changed()`.
     var terminalLeading: Bool = false { didSet { if oldValue != terminalLeading { changed() } } }
 
+    /// The main window's arrangement: classic columns or the Mission Control tile grid. Persisted;
+    /// `BosunView` swaps its regions and lends the terminal surfaces on change. See `WorkspaceLayout`.
+    var workspaceLayout: Domain.WorkspaceLayout = .default { didSet { if oldValue != workspaceLayout { changed() } } }
+    /// Mission Control's view (grid/focus), grid shape, grouping and tracker style. Persisted like
+    /// `splitAxis`. See `MissionView` / `MissionLayoutPreset` / `MissionTrackerStyle`.
+    var missionView: Domain.MissionView = .default { didSet { if oldValue != missionView { changed() } } }
+    var missionLayout: Domain.MissionLayoutPreset = .default { didSet { if oldValue != missionLayout { changed() } } }
+    var missionGroupByRepo = false { didSet { if oldValue != missionGroupByRepo { changed() } } }
+    var missionTracker: Domain.MissionTrackerStyle = .default {
+        didSet {
+            guard oldValue != missionTracker else { return }
+            if oldValue != .off { missionTrackerLastVisible = oldValue }
+            changed()
+        }
+    }
+    /// The tracker style ⌃⌘T restores when turning the tracker back on. Session-only.
+    private(set) var missionTrackerLastVisible: Domain.MissionTrackerStyle = .list
+
     /// Whether a background console tab raises an activity badge when it rings/notifies (#74).
     /// Global, persisted; the dock reads it in `bellRang` via `TerminalBellPolicy`. On by default.
     var terminalBellBadge = true { didSet { if oldValue != terminalBellBadge { changed() } } }
@@ -523,7 +541,12 @@ final class Store {
             terminalDesktopNotifications: terminalConfig.desktopNotifications,
             terminalSystemBell: terminalConfig.systemBell,
             githubAutoRefreshEnabled: githubAutoRefreshEnabled,
-            githubAutoRefreshIntervalMinutes: githubAutoRefreshIntervalMinutes)
+            githubAutoRefreshIntervalMinutes: githubAutoRefreshIntervalMinutes,
+            workspaceLayout: workspaceLayout.rawValue,
+            missionMode: missionView.rawValue,
+            missionLayout: missionLayout.rawValue,
+            missionGroupByRepo: missionGroupByRepo,
+            missionTracker: missionTracker.rawValue)
         Task { await preferences.save(snapshot) }
     }
 
@@ -562,6 +585,11 @@ final class Store {
         splitAxis = SplitAxis(rawValue: p.splitAxis ?? "") ?? .default
         terminalFraction = CGFloat(p.terminalFraction)
         terminalLeading = p.terminalLeading
+        workspaceLayout = WorkspaceLayout(rawValue: p.workspaceLayout ?? "") ?? .default
+        missionView = MissionView.stored(p.missionMode)
+        missionLayout = MissionLayoutPreset.stored(p.missionLayout)
+        missionGroupByRepo = p.missionGroupByRepo
+        missionTracker = MissionTrackerStyle.stored(p.missionTracker)
         terminalBellBadge = p.terminalBellBadge
         terminalBusySpinner = p.terminalBusySpinner
         terminalFocusRing = p.terminalFocusRing

@@ -130,6 +130,9 @@ struct Item {
     let authorInitials: String
     let authorAvatarURL: URL?
     var isAgent = false
+    /// Whether a PR is a draft. Carried from the list fetch so Mission Control's tracker can sort
+    /// drafts apart from ready PRs without parsing the status chip.
+    var isDraft = false
     /// `metaLeft` is the list row's left-hand meta (a PR's branch, else the first label); `var` so an
     /// edit can recompute it in place when labels change (issue #71). `metaRight` is the agent tag.
     var metaLeft: String

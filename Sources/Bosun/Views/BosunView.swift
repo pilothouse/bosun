@@ -173,6 +173,11 @@ final class BosunView: NSView {
     private let rail: ConnectionRailView
     private let center: CenterColumnView
     private let repoPanel: RepoPanelView
+    /// The alternate Mission Control layout, shown instead of the rail / center / panel while
+    /// `store.workspaceLayout == .missionControl`. It borrows the dock's terminal surfaces.
+    private let missionControl: MissionControlView
+    /// The layout last laid out, so `onChange` can tell a layout switch apart from other notifies.
+    private var layoutShown: Domain.WorkspaceLayout = .classic
     private var newConn: NewConnectionSheet?
     private var manageOrgs: ManageOrgsSheet?
     private var deviceFlow: DeviceFlowSheet?
@@ -194,8 +199,10 @@ final class BosunView: NSView {
         self.data = data
         self.titlebar = TitlebarView(store: store)
         self.rail = ConnectionRailView(store: store)
-        self.center = CenterColumnView(store: store, ghostty: ghostty)
+        let center = CenterColumnView(store: store, ghostty: ghostty)
+        self.center = center
         self.repoPanel = RepoPanelView(store: store)
+        self.missionControl = MissionControlView(store: store, terminal: center.terminal, data: data)
         self.railShown = store.railCollapsed
         self.panelShown = store.repoPanelCollapsed
         super.init(frame: NSRect(x: 0, y: 0, width: 1340, height: 880))
@@ -206,8 +213,10 @@ final class BosunView: NSView {
         // order is cosmetic except during the slide.
         addSubview(center)
         addSubview(repoPanel)
+        addSubview(missionControl)
         addSubview(rail)
         addSubview(titlebar)
+        missionControl.isHidden = true
 
         titlebar.onToggleSidebar = { [weak self] in self?.store.railCollapsed.toggle() }
         titlebar.onTogglePanel = { [weak self] in self?.store.repoPanelCollapsed.toggle() }
@@ -251,7 +260,11 @@ final class BosunView: NSView {
         }
 
         // Reflect the active console tab — or its label — wherever it's shown whenever it changes (#73).
-        center.terminal.onActiveTitleChange = { [weak self] in self?.updateActiveConsoleTitle() }
+        center.terminal.onActiveTitleChange = { [weak self] in
+            self?.updateActiveConsoleTitle()
+            self?.missionControl.needsLayout = true   // the focus ring follows the active pane
+        }
+        center.terminal.onSessionsChanged = { [weak self] in self?.missionControl.needsLayout = true }
 
         store.observe { [weak self] in self?.onChange() }
         applyTheme()
@@ -428,7 +441,14 @@ final class BosunView: NSView {
 
     private func applyTheme() {
         layer?.backgroundColor = store.theme.win.cgColor
-        titlebar.apply(); rail.apply(); center.apply(); repoPanel.apply()
+        titlebar.apply(); rail.apply()
+        // The classic center + repo panel are hidden under Mission Control; rebuilding them on every
+        // notify (a full issue list, a markdown detail) is wasted work, so they catch up on switch-back.
+        if store.workspaceLayout == .missionControl {
+            missionControl.apply()
+        } else {
+            center.apply(); repoPanel.apply()
+        }
         // Re-skin and re-size the live libghostty surfaces too; the dock chrome repaints via
         // center.apply(). Guarded internally so notifies that change neither the theme nor the zoom
         // (selection, data) are a cheap no-op.
@@ -472,6 +492,7 @@ final class BosunView: NSView {
     }
 
     private func onChange() {
+        applyWorkspaceLayout()
         applyTheme()
         // Keep open connection tabs' "Folder/connection" labels (#99) in step with the store: the
         // folder-prefix pref toggling, a folder rename, or a connection moving folders all land here.
@@ -551,6 +572,44 @@ final class BosunView: NSView {
         manageOrgs?.needsLayout = true
     }
 
+    /// Show either the classic columns or Mission Control, lending the dock's surfaces to Mission
+    /// Control while it's up. On an actual switch, focus the active pane in the new arrangement once
+    /// it has been laid out (a surface outside the window can't take first responder).
+    private func applyWorkspaceLayout() {
+        let mission = store.workspaceLayout == .missionControl
+        center.terminal.lendingSurfaces = mission
+        missionControl.isHidden = !mission
+        // The connection rail stays available in Mission Control (sidebar toggle / ⌘K / ⌘N) so the
+        // user can open new connections; Mission Control's own repo rail + tracker replace the rest.
+        center.isHidden = mission
+        repoPanel.isHidden = mission
+        guard store.workspaceLayout != layoutShown else { return }
+        layoutShown = store.workspaceLayout
+        needsLayout = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.layoutSubtreeIfNeeded()
+            if mission { self.missionControl.focusActiveTile() } else { self.focusTerminal() }
+        }
+    }
+
+    // MARK: Mission Control actions (Layout menu)
+
+    func toggleWorkspaceLayout() { store.workspaceLayout = store.workspaceLayout.toggled }
+    var isMissionControl: Bool { store.workspaceLayout == .missionControl }
+
+    func setMissionView(_ digit: Int) {
+        guard isMissionControl, let view = MissionView.forShortcut(digit) else { return }
+        store.missionView = view
+    }
+    func cycleMissionFocus(_ delta: Int) { if isMissionControl { missionControl.cycleFocus(delta) } }
+    func flipMissionPage(_ delta: Int) { if isMissionControl { missionControl.flipPage(delta) } }
+    func stepMissionLayout(_ delta: Int) { if isMissionControl { missionControl.stepLayout(delta) } }
+    func toggleMissionTracker() {
+        guard isMissionControl else { return }
+        store.missionTracker = store.missionTracker.toggled(lastVisible: store.missionTrackerLastVisible)
+    }
+
     func focusTerminal() {
         // Only the live libghostty surface takes keystrokes; the error placeholder must not grab focus.
         guard let term = center.terminal.activeSurfaceView else { return }
@@ -592,6 +651,10 @@ final class BosunView: NSView {
               let conn = store.domainConnections.first(where: { $0.id == uuid }) else { return }
         center.terminal.openConnection(conn)
         store.selectedConnId = id
+        // The new pane only joins the window once Mission Control tiles it, so focus it after that.
+        if isMissionControl {
+            DispatchQueue.main.async { [weak self] in self?.missionControl.focusActiveTile() }
+        }
     }
 
     /// Reopen the terminal tabs saved from the last session (called once connections are loaded).
@@ -637,6 +700,7 @@ final class BosunView: NSView {
         let panelSpace: CGFloat = store.repoPanelCollapsed ? 0 : panelWidth
         repoPanel.frame = NSRect(x: store.repoPanelCollapsed ? w : w - panelWidth, y: rowY, width: panelWidth, height: rowH)
         center.frame = NSRect(x: railSpace, y: rowY, width: max(0, w - railSpace - panelSpace), height: rowH)
+        missionControl.frame = NSRect(x: railSpace, y: rowY, width: max(0, w - railSpace), height: rowH)
         newConn?.frame = bounds
         manageOrgs?.frame = bounds
         deviceFlow?.frame = bounds

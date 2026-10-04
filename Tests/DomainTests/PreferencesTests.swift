@@ -692,4 +692,32 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(decoded.githubAutoRefreshIntervalMinutes, Preferences.minRefreshMinutes,
                        "clamping holds however a Preferences is built")
     }
+
+    func testWorkspaceLayoutAndMissionStateDefaultToNeverCustomized() {
+        XCTAssertNil(Preferences.default.workspaceLayout, "nil means the classic layout")
+        XCTAssertNil(Preferences.default.missionMode)
+        XCTAssertNil(Preferences.default.missionLayout)
+        XCTAssertFalse(Preferences.default.missionGroupByRepo)
+        XCTAssertNil(Preferences.default.missionTracker)
+    }
+
+    func testWorkspaceLayoutAndMissionStateRoundTripThroughCodable() throws {
+        let original = Preferences(workspaceLayout: "missionControl", missionMode: "focus", missionLayout: "3x2",
+                                   missionGroupByRepo: true, missionTracker: "board")
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutWorkspaceLayoutFallsBackToClassic() throws {
+        // A payload written by a build before Mission Control existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertNil(decoded.workspaceLayout)
+        XCTAssertEqual(decoded.workspaceLayout.flatMap(WorkspaceLayout.init(rawValue:)) ?? .default, .classic)
+    }
 }

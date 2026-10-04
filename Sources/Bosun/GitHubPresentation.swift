@@ -97,6 +97,7 @@ extension Item {
             authorInitials: it.author.initials,
             authorAvatarURL: it.author.avatarURL,
             isAgent: isAgent,
+            isDraft: it.isDraft,
             metaLeft: Item.metaLeft(for: it),
             metaRight: isAgent ? "◆ agent" : "",
             agentColor: isAgent ? Status.purple : Status.dim,

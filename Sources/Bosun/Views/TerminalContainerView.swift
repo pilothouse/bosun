@@ -148,6 +148,56 @@ final class TerminalContainerView: FlippedView {
     /// Fired when the active tab changes or the active tab's label changes, so the App layer can
     /// retitle the window (#73). Lighter than `onRelayout` — it never triggers a parent relayout.
     var onActiveTitleChange: (() -> Void)?
+    /// Fired when a pane opens or closes, or a pane's title / bell / busy state changes, so Mission
+    /// Control can repaint its tiles. The dock's own strip repaints via `needsLayout` as before.
+    var onSessionsChanged: (() -> Void)?
+
+    /// While true, Mission Control has borrowed every pane surface into its tiles: `layout()` neither
+    /// re-adds nor positions them. Turning it off hands them back — the next `layout()` re-adds each
+    /// surface whose superview isn't the dock and lays out the active tab as usual.
+    var lendingSurfaces = false {
+        didSet {
+            guard oldValue != lendingSurfaces else { return }
+            if !lendingSurfaces { for session in views.values { session.view.alphaValue = 1 } }
+            needsLayout = true
+        }
+    }
+
+    /// Every pane in tab order (each tab's panes in split-tree order) — the sessions Mission
+    /// Control shows as tiles.
+    var missionPanes: [TerminalSession] {
+        tabs.ids.flatMap { trees[$0]?.leafIDs ?? [] }.compactMap { views[$0] }
+    }
+
+    /// The focused pane of the active tab — the tile Mission Control rings as focused.
+    var activePaneId: UUID? { focusedPaneId }
+
+    /// Close a pane from a Mission Control tile's ×: same path as the shell's ⌘W — confirms while a
+    /// process is still running, and closes the tab with its last pane.
+    func requestCloseLentPane(_ paneId: UUID) {
+        requestClosePane(id: paneId, processAlive: views[paneId]?.surfaceView?.needsConfirmQuit ?? false)
+    }
+
+    /// A Mission Control tile drop: move the tab holding `paneId` into the slot of the tab holding
+    /// `targetPaneId` (see `MissionTileReorder`). Same path and persistence as a strip drag (#87).
+    func moveTab(ofPane paneId: UUID, toSlotOfPane targetPaneId: UUID) {
+        guard let dragged = paneToTab[paneId], let target = paneToTab[targetPaneId],
+              let move = MissionTileReorder.tabMove(tabOrder: tabs.ids, draggedTab: dragged, targetTab: target)
+        else { return }
+        commitTabReorder(from: move.from, to: move.to)
+    }
+
+    /// Focus a pane from a Mission Control tile: make its tab the active one (so switching back to
+    /// the classic layout lands on it), then make its surface first responder.
+    func focusLentPane(_ paneId: UUID) {
+        guard let tabId = paneToTab[paneId] else { return }
+        if tabs.activeID != tabId {
+            tabs.select(tabId)
+            onActiveTitleChange?()
+            snapshotTabs()
+        }
+        focusPane(paneId)
+    }
 
     /// The theme key, zoom level, and terminal options whose config was last pushed to libghostty.
     /// `syncTerminal` runs on every store notify (selection, data, …), so these let it skip the config
@@ -367,11 +417,12 @@ final class TerminalContainerView: FlippedView {
     /// or window retitle.
     private func bellRang(id: UUID) {
         guard let session = views[id], let tabId = paneToTab[id],
-              TerminalBellPolicy.shouldFlag(isActiveTab: tabId == tabs.activeID,
+              TerminalBellPolicy.shouldFlag(isActiveTab: tabId == tabs.activeID && !lendingSurfaces,
                                             enabled: store.terminalBellBadge),
               !session.hasBell else { return }
         session.hasBell = true
         needsLayout = true
+        onSessionsChanged?()
     }
 
     /// A pane became first responder (a click, or `focusPane`). Record it as its tab's focused pane,
@@ -379,6 +430,11 @@ final class TerminalContainerView: FlippedView {
     /// choke point for "this pane has focus", reached via `GhosttySurfaceView.onFocus` (#68).
     private func paneFocused(id: UUID) {
         guard let tabId = paneToTab[id] else { return }
+        // A click straight into a Mission Control tile focuses a pane of any tab: make that tab active.
+        if lendingSurfaces, tabs.activeID != tabId {
+            tabs.select(tabId)
+            onActiveTitleChange?()
+        }
         let changed = focusedPane[tabId] != id
         focusedPane[tabId] = id
         guard tabId == tabs.activeID else { return }
@@ -399,7 +455,7 @@ final class TerminalContainerView: FlippedView {
             views[paneId]?.hasBell = false
             changed = true
         }
-        if changed { needsLayout = true }
+        if changed { needsLayout = true; onSessionsChanged?() }
         return changed
     }
 
@@ -432,6 +488,7 @@ final class TerminalContainerView: FlippedView {
         }
 
         session.busy = new
+        onSessionsChanged?()
         session.busyDebounce?.cancel(); session.busyDebounce = nil
         session.busyShown = false
 
@@ -590,6 +647,7 @@ final class TerminalContainerView: FlippedView {
                                                           locked: session.lockTitle) else { return }
         session.title = resolved
         needsLayout = true   // relabel the tab strip; no surface churn
+        onSessionsChanged?()
         // Only the active tab's *focused* pane drives the window/title-bar label.
         if let tabId = paneToTab[id], tabId == tabs.activeID, focusedPane[tabId] == id { onActiveTitleChange?() }
     }
@@ -774,6 +832,7 @@ final class TerminalContainerView: FlippedView {
     private func refresh() {
         needsLayout = true
         onRelayout?()
+        onSessionsChanged?()   // a pane may have opened or closed → Mission Control re-tiles
         onActiveTitleChange?()   // active tab may have changed (open/close/select/goto/restore) → retitle window
     }
 
@@ -781,6 +840,9 @@ final class TerminalContainerView: FlippedView {
 
     override func layout() {
         super.layout()
+        // While Mission Control borrows the surfaces the dock is hidden: its strip and panes would be
+        // rebuilt for nothing. Turning lending off sets `needsLayout`, so it catches up on switch-back.
+        guard !lendingSurfaces else { return }
         let t = store.theme
         let w = bounds.width, h = bounds.height
         layer?.backgroundColor = t.termBg.cgColor

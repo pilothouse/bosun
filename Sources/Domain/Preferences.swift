@@ -154,6 +154,16 @@ public struct Preferences: Sendable, Equatable, Codable {
     /// How often, in minutes, each background-refresh unit goes stale and is eligible to refetch,
     /// clamped to `[minRefreshMinutes, maxRefreshMinutes]`. Defaults to `15`. See `RefreshPlanner`.
     public var githubAutoRefreshIntervalMinutes: Int
+    /// The main window's top-level arrangement, as an opaque `WorkspaceLayout` key. `nil` means never
+    /// customized — the classic layout. See `WorkspaceLayout`.
+    public var workspaceLayout: String?
+    /// Mission Control's view (`MissionView` key: grid/focus), grid shape (`MissionLayoutPreset` key),
+    /// whether tiles are grouped by linked repo, and how the tracker shows (`MissionTrackerStyle` key).
+    /// `nil` means never customized — grid, auto layout, list tracker. Unknown keys decode to defaults.
+    public var missionMode: String?
+    public var missionLayout: String?
+    public var missionGroupByRepo: Bool
+    public var missionTracker: String?
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -233,7 +243,12 @@ public struct Preferences: Sendable, Equatable, Codable {
         terminalDesktopNotifications: Bool = true,
         terminalSystemBell: Bool = false,
         githubAutoRefreshEnabled: Bool = false,
-        githubAutoRefreshIntervalMinutes: Int = 15
+        githubAutoRefreshIntervalMinutes: Int = 15,
+        workspaceLayout: String? = nil,
+        missionMode: String? = nil,
+        missionLayout: String? = nil,
+        missionGroupByRepo: Bool = false,
+        missionTracker: String? = nil
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -285,6 +300,11 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.githubAutoRefreshIntervalMinutes = min(Preferences.maxRefreshMinutes,
                                                     max(Preferences.minRefreshMinutes,
                                                         githubAutoRefreshIntervalMinutes))
+        self.workspaceLayout = workspaceLayout
+        self.missionMode = missionMode
+        self.missionLayout = missionLayout
+        self.missionGroupByRepo = missionGroupByRepo
+        self.missionTracker = missionTracker
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -343,7 +363,12 @@ public struct Preferences: Sendable, Equatable, Codable {
             terminalDesktopNotifications: try container.decodeIfPresent(Bool.self, forKey: .terminalDesktopNotifications) ?? fallback.terminalDesktopNotifications,
             terminalSystemBell: try container.decodeIfPresent(Bool.self, forKey: .terminalSystemBell) ?? fallback.terminalSystemBell,
             githubAutoRefreshEnabled: try container.decodeIfPresent(Bool.self, forKey: .githubAutoRefreshEnabled) ?? fallback.githubAutoRefreshEnabled,
-            githubAutoRefreshIntervalMinutes: try container.decodeIfPresent(Int.self, forKey: .githubAutoRefreshIntervalMinutes) ?? fallback.githubAutoRefreshIntervalMinutes
+            githubAutoRefreshIntervalMinutes: try container.decodeIfPresent(Int.self, forKey: .githubAutoRefreshIntervalMinutes) ?? fallback.githubAutoRefreshIntervalMinutes,
+            workspaceLayout: try container.decodeIfPresent(String.self, forKey: .workspaceLayout) ?? fallback.workspaceLayout,
+            missionMode: try container.decodeIfPresent(String.self, forKey: .missionMode) ?? fallback.missionMode,
+            missionLayout: try container.decodeIfPresent(String.self, forKey: .missionLayout) ?? fallback.missionLayout,
+            missionGroupByRepo: try container.decodeIfPresent(Bool.self, forKey: .missionGroupByRepo) ?? fallback.missionGroupByRepo,
+            missionTracker: try container.decodeIfPresent(String.self, forKey: .missionTracker) ?? fallback.missionTracker
         )
     }
 
