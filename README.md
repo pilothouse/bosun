@@ -15,6 +15,10 @@ with Metal.
 * **Repositories**: a tree of organizations and repositories with their pull requests and issues.
 * **Themes**: Operator, Carbon, Nord, and Daylight.
 * **Terminal**: built in, drawn with Metal, and resizable.
+* **Mission Control**: press ⌃⌘M to see every terminal session as a live tile, each linked to the
+  issue or pull request it works on.
+
+![Mission Control: four live terminal sessions in a two-by-two grid, each linked to an issue or pull request, with a needs-you banner and the tracker of open pull requests and issues.](docs/mission-control.png)
 
 ## Install
 
