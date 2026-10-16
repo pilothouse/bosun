@@ -7,6 +7,8 @@ struct MissionSnapshot {
     let panes: [TerminalSession]
     let tiles: [MissionTile]
     let links: [UUID: String]
+    /// Each colored pane's connection color (#102); uncolored and local panes are absent.
+    let colors: [UUID: ConnectionColor]
     let items: [Item]
     let visible: [MissionTile]
     /// The active pane's title, shown in the tracker's hint line.
@@ -326,8 +328,11 @@ final class MissionControlView: FlippedView {
             visible = MissionTilePolicy.orderedByRepo(visible, repoOrder: store.allOrgRepos.map { "\($0.owner)/\($0.name)" })
         }
         let focusedTitle = terminal.activePaneId.flatMap { id in panes.first { $0.id == id }?.title }
-        return MissionSnapshot(panes: panes, tiles: domainTiles, links: links, items: items, visible: visible,
-                               focusedTitle: focusedTitle)
+        // A pane's `tint` is its connection's color, kept current by `syncConnectionTints`.
+        let colors = Dictionary(panes.compactMap { pane in pane.tint.map { (pane.id, $0) } },
+                                uniquingKeysWith: { first, _ in first })
+        return MissionSnapshot(panes: panes, tiles: domainTiles, links: links, colors: colors, items: items,
+                               visible: visible, focusedTitle: focusedTitle)
     }
 
     // MARK: Tiles
@@ -386,7 +391,8 @@ final class MissionControlView: FlippedView {
                 repoLabel: store.missionGroupByRepo ? (domain.repoKey.map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? "unlinked") : nil,
                 highlighted: link != nil && link == selectedItemKey,
                 focused: id == focusedPane,
-                dimmed: selectedItemKey != nil && link != selectedItemKey),
+                dimmed: selectedItemKey != nil && link != selectedItemKey,
+                color: snap.colors[id]),
                 geometry: metrics, theme: t)
             // Grouping decides the order while it's on, so a reorder drag would appear to do nothing.
             tile.dragEnabled = hero == nil && !store.missionGroupByRepo

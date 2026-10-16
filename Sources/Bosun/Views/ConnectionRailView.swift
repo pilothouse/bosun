@@ -25,6 +25,9 @@ final class ConnectionRailView: FlippedView {
     /// A connection moved folders, by drag onto another section's band or the row's "Move to folder…"
     /// menu: (connection id, target folder id or nil for Ungrouped). The App layer persists it.
     var onMoveConnection: ((String, String?) -> Void)?
+    /// A connection's color was picked from the row's "Color" menu: (connection id, the color or nil
+    /// for None). The App layer persists it (#102).
+    var onSetColor: ((String, ConnectionColor?) -> Void)?
 
     // Double-click is tracked here, not via the row's clickCount: selecting a connection rebuilds
     // the rail and replaces the row between the two clicks, so AppKit's native double-click
@@ -184,7 +187,20 @@ final class ConnectionRailView: FlippedView {
         row.hoverColor = t.hover
         row.frame = NSRect(x: 0, y: 0, width: width, height: z(42))
 
-        if selected {
+        // Connection color (#102): a faint wash under the row's contents plus a solid leading stripe.
+        // The wash is its own view beneath everything, so the row's hover fill and drag lift still
+        // work under it; a selected row skips it so the selection highlight wins. The stripe marks
+        // identity, so it stays on a selected row in place of the accent bar.
+        if let color = c.color {
+            if !selected, let tint = t.connectionTint(color, on: .railRow) {
+                let wash = BoxView(bg: tint)
+                wash.frame = NSRect(x: 0, y: 0, width: width, height: z(42))
+                row.addSubview(wash)
+            }
+            let stripe = BoxView(bg: t.swatch(color))
+            stripe.frame = NSRect(x: 0, y: 0, width: z(3), height: z(42))
+            row.addSubview(stripe)
+        } else if selected {
             let bar = BoxView(bg: t.accent)
             bar.frame = NSRect(x: 0, y: 0, width: z(2), height: z(42))
             row.addSubview(bar)
@@ -222,7 +238,7 @@ final class ConnectionRailView: FlippedView {
         starHit.addSubview(star)
         row.addSubview(starHit)
 
-        // Right-click → Connect / Open / Edit / Duplicate / Delete.
+        // Right-click → Connect / Open / Edit / Duplicate / Delete / Move to folder / Color.
         let menu = NSMenu()
         let openTitle = c.kind == .ssh ? "Connect" : "Open in Terminal"
         let connect = NSMenuItem(title: openTitle, action: #selector(connectMenuAction(_:)), keyEquivalent: "")
@@ -237,9 +253,11 @@ final class ConnectionRailView: FlippedView {
         let remove = NSMenuItem(title: "Delete", action: #selector(deleteMenuAction(_:)), keyEquivalent: "")
         remove.target = self; remove.representedObject = c.id
         menu.addItem(edit); menu.addItem(copy); menu.addItem(remove)
+        menu.addItem(.separator())
         if let moveItem = moveToFolderMenuItem(connId: c.id, currentFolderId: currentFolderId) {
-            menu.addItem(.separator()); menu.addItem(moveItem)
+            menu.addItem(moveItem)
         }
+        menu.addItem(colorMenuItem(connId: c.id, current: c.color, t: t))
         row.menu = menu
         drag.menu = menu        // the catcher covers most of the row, so it carries the menu too
         starHit.menu = menu
@@ -278,6 +296,59 @@ final class ConnectionRailView: FlippedView {
         let parent = NSMenuItem(title: "Move to folder", action: nil, keyEquivalent: "")
         parent.submenu = submenu
         return parent
+    }
+
+    /// Holds a "Color" submenu choice for `colorMenuAction`. `color == nil` means None. A class so it
+    /// rides `NSMenuItem.representedObject`, like `MoveTarget`.
+    private final class ColorTarget: NSObject {
+        let connId: String
+        let color: ConnectionColor?
+        init(connId: String, color: ConnectionColor?) { self.connId = connId; self.color = color }
+    }
+
+    /// A "Color" parent item whose submenu offers None plus the eight palette colors (#102), each
+    /// with a swatch in the current theme's shade and the current choice check-marked. Always present:
+    /// any connection can be colored or cleared. Item titles have unique prefixes, so NSMenu
+    /// type-select (which the GUI verification script drives) can reach each one by name.
+    private func colorMenuItem(connId: String, current: ConnectionColor?, t: Theme) -> NSMenuItem {
+        let submenu = NSMenu()
+        let none = NSMenuItem(title: "None", action: #selector(colorMenuAction(_:)), keyEquivalent: "")
+        none.target = self; none.representedObject = ColorTarget(connId: connId, color: nil)
+        none.state = current == nil ? .on : .off
+        none.image = swatchImage(nil)
+        submenu.addItem(none)
+        submenu.addItem(.separator())
+        for color in ConnectionColor.allCases {
+            let item = NSMenuItem(title: color.label, action: #selector(colorMenuAction(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = ColorTarget(connId: connId, color: color)
+            item.state = color == current ? .on : .off
+            item.image = swatchImage(t.swatch(color))
+            submenu.addItem(item)
+        }
+        let parent = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
+        parent.submenu = submenu
+        return parent
+    }
+
+    /// A 12pt menu swatch: a filled circle in `fill`, or — for None — an empty ring with a slash.
+    private func swatchImage(_ fill: NSColor?) -> NSImage {
+        NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+            let circle = NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1))
+            if let fill {
+                fill.setFill()
+                circle.fill()
+            } else {
+                NSColor.secondaryLabelColor.setStroke()
+                circle.lineWidth = 1
+                circle.stroke()
+                let slash = NSBezierPath()
+                slash.move(to: NSPoint(x: rect.minX + 3, y: rect.minY + 3))
+                slash.line(to: NSPoint(x: rect.maxX - 3, y: rect.maxY - 3))
+                slash.lineWidth = 1
+                slash.stroke()
+            }
+            return true
+        }
     }
 
     /// Single click selects; a second click on the same row within the system double-click
@@ -393,6 +464,11 @@ final class ConnectionRailView: FlippedView {
     @objc private func moveToFolderMenuAction(_ sender: NSMenuItem) {
         if let target = sender.representedObject as? MoveTarget {
             onMoveConnection?(target.connId, target.folderId)
+        }
+    }
+    @objc private func colorMenuAction(_ sender: NSMenuItem) {
+        if let target = sender.representedObject as? ColorTarget {
+            onSetColor?(target.connId, target.color)
         }
     }
 

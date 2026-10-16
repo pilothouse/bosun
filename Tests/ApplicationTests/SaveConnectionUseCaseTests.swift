@@ -110,4 +110,25 @@ final class SaveConnectionUseCaseTests: XCTestCase {
         let stored = await store.connections
         XCTAssertTrue(stored.isEmpty, "an invalid draft must not be persisted")
     }
+
+    func testColorIsSavedAndClearable() async throws {
+        let existing = Connection(id: UUID(), name: "prod", kind: .ssh(host: "h", port: 22, user: nil),
+                                  color: .red)
+        let store = FakeConnectionStore(seed: [existing])
+        let save = SaveConnectionUseCase(store: store)
+
+        let recolored = ConnectionDraft(id: existing.id, name: "prod",
+                                        kind: .ssh(host: "h", port: 22, user: nil), color: .teal)
+        guard case let .saved(connection) = try await save(recolored) else {
+            return XCTFail("expected .saved")
+        }
+        XCTAssertEqual(connection.color, .teal)
+        let afterRecolor = await store.connections
+        XCTAssertEqual(afterRecolor.first?.color, .teal)
+
+        // Choosing "none" in the sheet is a draft with no color: the saved connection loses it.
+        _ = try await save(ConnectionDraft(id: existing.id, name: "prod", kind: .ssh(host: "h", port: 22, user: nil)))
+        let afterClear = await store.connections
+        XCTAssertNil(afterClear.first?.color)
+    }
 }

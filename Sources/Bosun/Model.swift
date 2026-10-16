@@ -18,6 +18,8 @@ struct Connection {
     let kind: ConnKind
     let meta: String
     var isFavorite = false
+    /// The connection's color (#102), or nil — drives the rail row's tint and stripe.
+    var color: ConnectionColor?
     var glyph: String { kind == .ssh ? "⧉" : "▦" }
     var kindLabel: String { kind == .ssh ? "SSH" : "FOLDER" }
 }
@@ -32,11 +34,16 @@ extension Connection {
         case let .localFolder(path): kind = .folder; meta = path
         }
         self.init(id: c.id.uuidString, name: c.name, kind: kind, meta: meta,
-                  isFavorite: c.isFavorite)
+                  isFavorite: c.isFavorite, color: c.color)
     }
 
     /// Shown only in the brief window before the persisted list loads (or if it's empty).
     static let placeholder = Connection(id: "", name: "—", kind: .folder, meta: "")
+}
+
+extension ConnectionColor {
+    /// The color's name as menus and tooltips show it ("Red", "Teal", …).
+    var label: String { rawValue.capitalized }
 }
 
 /// A rendered band of the connection rail — the presentation projection of

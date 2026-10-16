@@ -238,6 +238,7 @@ final class BosunView: NSView {
         rail.onRenameFolder = { [weak self] id, name in self?.renameFolder(id, name) }
         rail.onDeleteFolder = { [weak self] id in self?.deleteFolder(id) }
         rail.onMoveConnection = { [weak self] id, folderId in self?.moveConnection(id, folderId) }
+        rail.onSetColor = { [weak self] id, color in self?.setConnectionColor(id, color) }
 
         repoPanel.onSelectRepo = { [weak self] owner, name in self?.data.selectRepo(owner: owner, name: name) }
         repoPanel.onSelectOrg = { [weak self] id in self?.data.selectOrg(id: id) }
@@ -356,7 +357,7 @@ final class BosunView: NSView {
         let draft = ConnectionDraft(id: connection.id, name: connection.name,
                                     kind: connection.kind, isFavorite: connection.isFavorite,
                                     customCommand: connection.customCommand,
-                                    folderId: connection.folderId)
+                                    folderId: connection.folderId, color: connection.color)
         Task { _ = try? await save(draft) }
     }
 
@@ -439,6 +440,20 @@ final class BosunView: NSView {
         Task { try? await move(connectionId: uuid, folderId: target) }
     }
 
+    /// Set or clear a connection's color from the row's "Color" menu (#102). Optimistic update first
+    /// (the rail, its open tabs and Mission Control tiles all repaint from `domainConnections` on the
+    /// notify), persist after — mirrors `moveConnection`.
+    private func setConnectionColor(_ id: String, _ color: ConnectionColor?) {
+        guard let uuid = UUID(uuidString: id),
+              let idx = store.domainConnections.firstIndex(where: { $0.id == uuid }),
+              store.domainConnections[idx].color != color else { return }
+        var connection = store.domainConnections[idx]
+        connection.color = color
+        store.domainConnections[idx] = connection   // optimistic → rail/tabs/tiles repaint
+        let setColor = connections.setColor
+        Task { try? await setColor(connectionId: uuid, color: color) }
+    }
+
     private func applyTheme() {
         layer?.backgroundColor = store.theme.win.cgColor
         titlebar.apply(); rail.apply()
@@ -498,6 +513,8 @@ final class BosunView: NSView {
         // folder-prefix pref toggling, a folder rename, or a connection moving folders all land here.
         // Idempotent — a no-op when no title actually changed.
         center.terminal.relabelConnectionTabs()
+        // Likewise keep open connection panes' terminal tint (#102) in step with their color.
+        center.terminal.syncConnectionTints()
         // Slide only the rail when the sidebar is toggled. Gated on the actual collapse flip so
         // theme/selection/data notifies and window resizes still lay out instantly.
         if store.railCollapsed != railShown {

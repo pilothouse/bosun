@@ -205,6 +205,21 @@ final class UbiquitousConnectionStoreTests: XCTestCase {
         XCTAssertEqual(pushedIDs, [conn.id])
     }
 
+    /// A color change is an ordinary edit (#102): it re-stamps `updatedAt`, so the per-record merge
+    /// treats it like a rename, and the pushed blob carries the new color to the other devices.
+    func testColorChangeBumpsUpdatedAtAndReachesTheCloud() async throws {
+        let store = makeStore(enabled: true)
+        let conn = ssh("prod")
+        try await store.save(conn)
+        let before = try XCTUnwrap(try pushedSnapshot()?.connections.first?.updatedAt)
+
+        try await SetConnectionColorUseCase(store: store)(connectionId: conn.id, color: .teal)
+
+        let pushed = try XCTUnwrap(try pushedSnapshot()?.connections.first)
+        XCTAssertEqual(pushed.color, .teal)
+        XCTAssertGreaterThan(try XCTUnwrap(pushed.updatedAt), before, "the color edit is newer than the create")
+    }
+
     func testTurningSyncOffReportsOffAndLeavesTheCloudAlone() async throws {
         let store = makeStore(enabled: true)
         let status = StatusRecorder()

@@ -206,6 +206,25 @@ final class GhosttyApp {
         return cfg
     }
 
+    /// A finalized config for one surface's own palette — a colored connection's tinted terminal
+    /// background (#102) — that the app does **not** adopt. The caller pushes it with
+    /// `GhosttySurfaceView.updateConfig` and then releases it with `freeConfig`: libghostty derives its
+    /// own copies when a surface takes a config, so it can be freed right after the push. Nil when the
+    /// terminal never came up.
+    func makeSurfaceConfig(_ palette: TerminalPalette) -> ghostty_config_t? {
+        guard app != nil else { return nil }
+        return makeConfig(palette)
+    }
+
+    /// Release a config built by `makeSurfaceConfig` once it has been pushed.
+    func freeConfig(_ cfg: ghostty_config_t) {
+        ghostty_config_free(cfg)
+    }
+
+    /// The config the app (and every untinted surface) currently runs on — what a surface returns to
+    /// when its connection's color is cleared. Owned by this object; never free it.
+    var appConfig: ghostty_config_t? { config }
+
     func tick() {
         guard let app else { return }
         ghostty_app_tick(app)

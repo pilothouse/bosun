@@ -17,6 +17,8 @@ struct ConnectionServices {
     let removeFolder: RemoveFolderUseCase
     let moveToFolder: MoveConnectionToFolderUseCase
     let reorderFolders: ReorderFoldersUseCase
+    /// Set or clear a connection's color from the rail's "Color ▸" menu (#102).
+    let setColor: SetConnectionColorUseCase
     /// The iCloud sync decorator wrapping `store`, present only when the user is signed into iCloud
     /// (#83). The App layer drives it: `start` wires the remote-change reload, `setEnabled` follows
     /// the Settings toggle. `nil` means local-only — no iCloud, no behavior change.
@@ -99,6 +101,7 @@ enum CompositionRoot {
             removeFolder: RemoveFolderUseCase(store: store),
             moveToFolder: MoveConnectionToFolderUseCase(store: store),
             reorderFolders: ReorderFoldersUseCase(store: store),
+            setColor: SetConnectionColorUseCase(store: store),
             icloud: icloud
         )
     }

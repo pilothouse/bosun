@@ -56,4 +56,69 @@ final class ConnectionCodableTests: XCTestCase {
         let decoded = try JSONDecoder().decode(Connection.self, from: data)
         XCTAssertEqual(decoded.updatedAt, stamped)
     }
+
+    // MARK: - Color (#102)
+
+    /// The pre-color payload: no `color` key at all.
+    private let legacyJSON = """
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "name": "db-primary",
+      "kind": { "ssh": { "host": "db.example.com", "port": 22, "user": "ops" } },
+      "isFavorite": false
+    }
+    """
+
+    func testLegacyConnectionWithoutColorDecodesAsNoColor() throws {
+        let connection = try JSONDecoder().decode(Connection.self, from: Data(legacyJSON.utf8))
+        XCTAssertNil(connection.color, "a missing color decodes to nil — the connection looks as it did")
+    }
+
+    func testUnknownColorDecodesAsNoColorAndKeepsTheRecord() throws {
+        // A store written by a newer build may carry a color this build doesn't know.
+        let newer = """
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "name": "db-primary",
+          "kind": { "ssh": { "host": "db.example.com", "port": 22, "user": "ops" } },
+          "isFavorite": true,
+          "folderId": "00000000-0000-0000-0000-0000000000F1",
+          "color": "magenta"
+        }
+        """
+
+        let connection = try JSONDecoder().decode(Connection.self, from: Data(newer.utf8))
+
+        XCTAssertNil(connection.color, "an unknown color decodes to nil instead of throwing")
+        XCTAssertEqual(connection.name, "db-primary")
+        XCTAssertTrue(connection.isFavorite)
+        XCTAssertEqual(connection.folderId, UUID(uuidString: "00000000-0000-0000-0000-0000000000F1"))
+    }
+
+    func testWrongTypedColorDecodesAsNoColor() throws {
+        let odd = """
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "name": "db-primary",
+          "kind": { "localFolder": { "path": "/srv" } },
+          "isFavorite": false,
+          "color": 7
+        }
+        """
+
+        let connection = try JSONDecoder().decode(Connection.self, from: Data(odd.utf8))
+
+        XCTAssertNil(connection.color)
+        XCTAssertEqual(connection.kind, .localFolder(path: "/srv"))
+    }
+
+    func testColorRoundTripsUnderItsStorageKey() throws {
+        let original = Connection(id: UUID(), name: "prod", kind: .ssh(host: "p", port: 22, user: nil),
+                                  color: .red)
+        let data = try JSONEncoder().encode(original)
+
+        XCTAssertEqual(try JSONDecoder().decode(Connection.self, from: data), original)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertEqual(object?["color"] as? String, "red", "stored under the stable raw value")
+    }
 }

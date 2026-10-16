@@ -55,4 +55,26 @@ public struct TerminalPalette: Equatable, Sendable {
         }
         return lines.joined(separator: "\n")
     }
+
+    /// This palette with `background` mixed toward `hex` (`rrggbb` or `#rrggbb`) by `opacity` — the
+    /// faint per-connection terminal tint (#102). Each sRGB channel is `bg·(1−a) + tint·a`, rounded, so
+    /// the App layer can paint the active tab with the exact color the surface renders. `opacity` is
+    /// clamped to `0…1`; an unparsable hex (or either side not six hex digits) leaves the palette
+    /// unchanged, so a bad value degrades to "no tint" rather than a broken terminal.
+    public func tintingBackground(with hex: String, opacity: Double) -> TerminalPalette {
+        let alpha = min(1, max(0, opacity))
+        guard alpha > 0, let base = Self.channels(background), let tint = Self.channels(hex) else { return self }
+        let mixed = zip(base, tint).map { pair in
+            Int((Double(pair.0) * (1 - alpha) + Double(pair.1) * alpha).rounded())
+        }
+        let blended = mixed.map { String(format: "%02x", $0) }.joined()
+        return TerminalPalette(background: blended, foreground: foreground, cursor: cursor, ansi: ansi)
+    }
+
+    /// The three 0…255 channels of a `rrggbb` / `#rrggbb` string, or `nil` when it isn't six hex digits.
+    private static func channels(_ hex: String) -> [Int]? {
+        let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard digits.count == 6, let value = Int(digits, radix: 16) else { return nil }
+        return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
+    }
 }

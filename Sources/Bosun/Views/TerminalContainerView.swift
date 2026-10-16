@@ -40,6 +40,11 @@ final class TerminalSession {
     /// shell hook isn't installed). Re-armed on every signal, so an actively-reporting tab never
     /// fires it; cancelled when the tab goes idle.
     var busyTimeout: DispatchWorkItem?
+    /// The connection color painted on this pane's surface and its tab (#102): the color whose tinted
+    /// config was last pushed to the surface. Always nil for a local pane (including a split inside a
+    /// connection tab — that shell runs on this Mac, not the remote host) and for an uncolored
+    /// connection. `syncConnectionTints` compares against it so it only re-pushes on a real change.
+    var tint: ConnectionColor?
 
     init(view: NSView, title: String, dot: NSColor, origin: TabOrigin, lockTitle: Bool = false) {
         self.view = view
@@ -247,8 +252,54 @@ final class TerminalContainerView: FlippedView {
         lastZoomPercent = zoom
         lastTerminalConfig = terminalConfig
         guard let cfg = ghostty.applyPalette(store.theme.terminalPalette) else { return }
-        for session in views.values { session.surfaceView?.updateConfig(cfg) }
+        for session in views.values where session.tint == nil { session.surfaceView?.updateConfig(cfg) }
+        // The app-wide push above resets every surface to the shared config, so colored connection
+        // panes get their tinted config re-applied, rebuilt for the new theme/zoom/options (#102).
+        pushTintedConfigs(to: Array(views.values))
         ghostty.tick()   // nudge a repaint with the new colors/size
+    }
+
+    /// Push each colored pane's tinted config to its surface (#102): one config per distinct color,
+    /// built from the current theme (and the current zoom/terminal options, like the app config), then
+    /// freed — the surface keeps its own copy. Uncolored panes are skipped; they run on the app config.
+    private func pushTintedConfigs(to sessions: [TerminalSession]) {
+        let colored = sessions.compactMap { session in session.tint.map { (color: $0, session: session) } }
+        for (color, group) in Dictionary(grouping: colored, by: \.color) {
+            guard let cfg = ghostty.makeSurfaceConfig(store.theme.connectionTerminalPalette(color)) else { continue }
+            for entry in group { entry.session.surfaceView?.updateConfig(cfg) }
+            ghostty.freeConfig(cfg)
+        }
+    }
+
+    /// Keep every connection pane's terminal tint in step with its connection's color (#102): a color
+    /// picked, changed, or cleared from the rail or the edit sheet lands here on the next store
+    /// notify. Re-pushes only the panes whose color actually changed — a cleared color returns the
+    /// surface to the app config — then repaints the tab strip. A no-op on the many notifies that
+    /// change no color. Sibling of `relabelConnectionTabs`.
+    func syncConnectionTints() {
+        guard available else { return }
+        var changed: [TerminalSession] = []
+        for session in views.values {
+            guard case let .connection(connId) = session.origin else { continue }
+            let color = store.domainConnections.first(where: { $0.id.uuidString == connId })?.color
+            guard color != session.tint else { continue }
+            session.tint = color
+            changed.append(session)
+        }
+        guard !changed.isEmpty else { return }
+        if let base = ghostty.appConfig {
+            for session in changed where session.tint == nil { session.surfaceView?.updateConfig(base) }
+        }
+        pushTintedConfigs(to: changed)
+        ghostty.tick()
+        needsLayout = true     // repaint the tab strip's tint and stripe
+        onSessionsChanged?()   // Mission Control repaints the tiles' and cards' color
+    }
+
+    /// The connection color a tab shows (#102): its first colored pane's, so the tab holds its color
+    /// while focus moves to a local split inside it. Nil for a tab of local shells only.
+    private func tabColor(_ tabId: UUID) -> ConnectionColor? {
+        trees[tabId]?.leafIDs.lazy.compactMap { self.views[$0]?.tint }.first
     }
 
     /// The focused pane of the active tab — what keystrokes, the console zoom, and a split target.
@@ -347,9 +398,14 @@ final class TerminalContainerView: FlippedView {
         }
         let surface = GhosttySurfaceView(app: app, command: command,
                                          workingDirectory: workingDirectory, env: env)
-        return wire(TerminalSession(view: surface, title: store.tabTitle(for: conn), dot: Status.green,
-                                    origin: .connection(conn.id.uuidString), lockTitle: true),
-                    surface: surface)
+        let session = wire(TerminalSession(view: surface, title: store.tabTitle(for: conn), dot: Status.green,
+                                           origin: .connection(conn.id.uuidString), lockTitle: true),
+                           surface: surface)
+        // A new surface starts on the app config (libghostty clones it); a colored connection's
+        // surface gets its tinted background right away (#102).
+        session.tint = conn.color
+        pushTintedConfigs(to: [session])
+        return session
     }
 
     /// Jump to another tab (native ⌘1…9 / next / previous / last).
@@ -1117,10 +1173,25 @@ final class TerminalContainerView: FlippedView {
     private func tabView(tabId: UUID, session: TerminalSession, width tw: CGFloat, barH: CGFloat, x: CGFloat) -> ClickRow {
         let t = store.theme
         let active = tabId == tabs.activeID
-        // The active tab reads as a continuation of the surface below it, so it shares the terminal bg.
-        let tab = ClickRow(bg: active ? t.termBg : nil)
+        let color = tabColor(tabId)
+        // The active tab reads as a continuation of the surface below it, so it shares the terminal bg
+        // — tinted the same way when the tab's connection has a color (#102).
+        let tab = ClickRow(bg: active ? t.connectionTerminalBackground(color) : nil)
         tab.hoverColor = active ? nil : t.hover
         tab.frame = NSRect(x: x, y: 0, width: tw, height: barH)
+        // A colored connection's tab (#102): a faint wash on an inactive tab (beneath everything, so
+        // the hover fill still shows) and a solid stripe along the top edge. The bottom underline
+        // keeps its meaning — green for active, amber for a bell. Local tabs draw neither.
+        if let color {
+            if !active, let tint = t.connectionTint(color, on: .tab) {
+                let wash = BoxView(bg: tint)
+                wash.frame = NSRect(x: 0, y: 0, width: tw, height: barH)
+                tab.addSubview(wash)
+            }
+            let stripe = BoxView(bg: t.swatch(color))
+            stripe.frame = NSRect(x: 0, y: 0, width: tw, height: z(2))
+            tab.addSubview(stripe)
+        }
         // Click/rename is routed through the drag grip below (so a press can become a drag); the
         // bare `ClickRow` keeps only its hover fill.
 

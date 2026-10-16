@@ -33,7 +33,8 @@ public struct DuplicateConnectionUseCase: Sendable {
             kind: source.kind,
             isFavorite: source.isFavorite,
             customCommand: source.customCommand,
-            folderId: source.folderId
+            folderId: source.folderId,
+            color: source.color
         )
         // `save` appends, so the copy would land at the bottom of its section; the reorder puts it
         // back under the row it was copied from.

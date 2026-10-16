@@ -96,7 +96,11 @@ final class MissionFocusCardsView: FlippedView {
 
     func update(snap: MissionSnapshot, hero: UUID?, theme t: Theme) {
         let others = snap.visible.filter { $0.id != hero?.uuidString }
-        let next = others.map { "\($0.id)|\($0.title)|\($0.activity)|\(snap.links[UUID(uuidString: $0.id) ?? UUID()] ?? "")" }
+        let next = others.map { tile -> String in
+            let id = UUID(uuidString: tile.id) ?? UUID()
+            let color = snap.colors[id]?.rawValue ?? ""
+            return "\(tile.id)|\(tile.title)|\(tile.activity)|\(snap.links[id] ?? "")|\(color)"
+        }
             + [t.key, "\(uiScale)", "\(bounds.size)"]
         guard next != signature else { return }
         signature = next
@@ -114,6 +118,14 @@ final class MissionFocusCardsView: FlippedView {
             let card = ClickRow(bg: t.card, radius: z(7))
             card.hoverColor = t.hover
             card.frame = NSRect(x: z(8), y: CGFloat(i) * (cardH + gap), width: bounds.width - z(16), height: cardH)
+            // A colored connection's card gets the rail's solid leading stripe (#102), clipped to the
+            // card's rounded corners. The dot below keeps its status meaning.
+            if let color = snap.colors[id] {
+                card.layer?.masksToBounds = true
+                let stripe = BoxView(bg: t.swatch(color))
+                stripe.frame = NSRect(x: 0, y: 0, width: z(3), height: cardH)
+                card.addSubview(stripe)
+            }
             let color: NSColor = tile.activity == .attention ? Status.yellow : tile.activity == .working ? t.accent : Status.green
             let dot = Dot(color, z(6))
             dot.frame.origin = NSPoint(x: z(10), y: z(11))

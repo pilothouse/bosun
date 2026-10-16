@@ -90,4 +90,41 @@ final class TerminalPaletteTests: XCTestCase {
             fontFamily: "Menlo", cursorStyle: "block", fontSize: 13, cursorBlink: false)
         XCTAssertTrue(text.contains("cursor-style-blink = false"), "got: \(text)")
     }
+
+    // MARK: - Connection background tint (#102)
+
+    func testZeroOpacityLeavesThePaletteUnchanged() {
+        XCTAssertEqual(samplePalette().tintingBackground(with: "f85149", opacity: 0), samplePalette())
+    }
+
+    func testFullOpacityReplacesTheBackgroundWithTheTint() {
+        XCTAssertEqual(samplePalette().tintingBackground(with: "f85149", opacity: 1).background, "f85149")
+    }
+
+    func testHalfOpacityMixesEachChannel() {
+        let black = TerminalPalette(background: "000000", foreground: "ffffff", cursor: "ffffff", ansi: [])
+        XCTAssertEqual(black.tintingBackground(with: "ffffff", opacity: 0.5).background, "808080")
+    }
+
+    func testAcceptsALeadingHashOnTheTint() {
+        let black = TerminalPalette(background: "000000", foreground: "ffffff", cursor: "ffffff", ansi: [])
+        XCTAssertEqual(black.tintingBackground(with: "#ff0000", opacity: 1).background, "ff0000")
+    }
+
+    func testOnlyTheBackgroundChanges() {
+        let tinted = samplePalette().tintingBackground(with: "56b6c2", opacity: 0.07)
+        XCTAssertNotEqual(tinted.background, samplePalette().background)
+        XCTAssertEqual(tinted.foreground, samplePalette().foreground)
+        XCTAssertEqual(tinted.cursor, samplePalette().cursor)
+        XCTAssertEqual(tinted.ansi, samplePalette().ansi)
+    }
+
+    func testInvalidTintLeavesThePaletteUnchanged() {
+        XCTAssertEqual(samplePalette().tintingBackground(with: "not-a-color", opacity: 0.5), samplePalette())
+    }
+
+    func testOpacityIsClampedToTheUnitRange() {
+        XCTAssertEqual(samplePalette().tintingBackground(with: "f85149", opacity: 4).background, "f85149")
+        XCTAssertEqual(samplePalette().tintingBackground(with: "f85149", opacity: -1), samplePalette())
+    }
 }

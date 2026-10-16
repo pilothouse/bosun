@@ -112,4 +112,33 @@ final class ConnectionSyncMergeTests: XCTestCase {
         XCTAssertEqual(merged.folders.first?.name, "new name", "newer folder edit wins")
         XCTAssertEqual(merged.folderTombstones.map(\.id), [deletedID])
     }
+
+    // MARK: - Color (#102)
+
+    func testNewerColorEditWinsAndTravelsWithItsRecord() {
+        let id = UUID()
+        var before = conn(id, "prod", at: t1)
+        before.color = .blue
+        var after = conn(id, "prod", at: t2)
+        after.color = .red
+
+        let merged = ConnectionSyncMerge.merge(
+            local: ConnectionSyncSnapshot(connections: [before]),
+            remote: ConnectionSyncSnapshot(connections: [after]))
+
+        XCTAssertEqual(merged.connections.map(\.color), [.red])
+    }
+
+    func testClearingAColorSyncsLikeAnyOtherEdit() {
+        let id = UUID()
+        var colored = conn(id, "prod", at: t1)
+        colored.color = .green
+        let cleared = conn(id, "prod", at: t2)   // color: nil, edited later
+
+        let merged = ConnectionSyncMerge.merge(
+            local: ConnectionSyncSnapshot(connections: [cleared]),
+            remote: ConnectionSyncSnapshot(connections: [colored]))
+
+        XCTAssertEqual(merged.connections.map(\.color), [nil])
+    }
 }

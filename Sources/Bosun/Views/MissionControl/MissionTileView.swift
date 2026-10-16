@@ -38,6 +38,9 @@ final class MissionTileView: FlippedView {
         let focused: Bool
         /// Another item is selected and this tile isn't on it.
         let dimmed: Bool
+        /// The session's connection color (#102): tints the header, border and background. Nil for a
+        /// local or uncolored session, which looks exactly as before.
+        let color: ConnectionColor?
     }
 
     /// Everything the tile's look depends on; compared to skip redundant repaints.
@@ -109,7 +112,8 @@ final class MissionTileView: FlippedView {
         theme = t
         let radius = z(geometry.cornerRadius)
         layer?.cornerRadius = radius
-        layer?.backgroundColor = t.termBg.cgColor
+        // The tile's own background shows around the hosted surface; match the surface's tint.
+        layer?.backgroundColor = t.connectionTerminalBackground(content.color).cgColor
         applyBorder()
         alphaValue = content.dimmed ? 0.55 : 1
         ring.layer?.cornerRadius = radius
@@ -126,8 +130,10 @@ final class MissionTileView: FlippedView {
             layer?.borderWidth = 2
             layer?.borderColor = theme.accent.cgColor
         } else {
+            // A colored connection's tile is outlined in its color (#102); the drop-target accent above
+            // and the focus ring (a separate overlay) still win.
             layer?.borderWidth = 1
-            layer?.borderColor = theme.cardbr.cgColor
+            layer?.borderColor = (theme.connectionTint(content.color, on: .tileBorder) ?? theme.cardbr).cgColor
         }
     }
 
@@ -148,6 +154,13 @@ final class MissionTileView: FlippedView {
         header.subviews.forEach { $0.removeFromSuperview() }
         let t = theme
         let content = style.content
+        // A colored connection's header gets a faint wash beneath its contents (#102), so the header's
+        // hover fill still shows through; the tracker-link highlight wins over it.
+        if !content.highlighted, let tint = t.connectionTint(content.color, on: .tileHeader) {
+            let wash = BoxView(bg: tint)
+            wash.frame = NSRect(x: 0, y: 0, width: bounds.width, height: h)
+            header.addSubview(wash)
+        }
         let nameFont = mono(style.geometry.nameFontSize, .semibold)
         var x = z(8)
         let dotSize = z(6)

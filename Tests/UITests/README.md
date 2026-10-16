@@ -41,13 +41,44 @@ interaction test — see the caveat below for why:
 
 Same prerequisites as `ui-verify.sh` (real GUI session, Accessibility + Automation permission).
 
+## 1c. `scripts/color-verify.sh` — connection colors, in every theme
+
+Issue #102's end-to-end check. For each theme (`operator carbon nord light`, or `THEMES="…"`) it
+launches the app in UI-test mode and asserts from real pixels that the seeded teal `build-box` row
+shows its color stripe and the uncolored `dotfiles` row doesn't. It then drives right-click → Color ▸
+Purple (the stripe appears), Color ▸ None (the row is back to its exact original pixels), and Color ▸
+Purple → Open in Terminal (the terminal background differs from the plain local tab's). It also saves
+a classic and a Mission Control screenshot per theme for a readability check.
+
+```sh
+swift build --disable-sandbox
+bash scripts/color-verify.sh              # → PASS + .build/color-verify-<theme>[-mc].png
+```
+
+Three things it learned the hard way, and that apply to any new interaction script here:
+
+- **Run against a copy of the binary.** It launches `.build/debug/BosunColorVerify`, which has its own
+  UserDefaults domain (seeded with `{"themeKey": …}` and deleted afterwards). Your real preferences and
+  any Bosun you have open are never touched, and the script only ever kills the PID it started — never
+  `pkill -x Bosun`.
+- **The first synthetic click after launch is swallowed** by window activation: no menu opens, and
+  the type-select keys land in the shell. Prime with a throwaway right-click + Esc first.
+- **Find rail rows in the rail only.** Labels repeat across panes (the org panel lists a `dotfiles`
+  repo), so the script looks only in the leftmost scroll area. Matching the wrong pane passed a
+  "no stripe" check vacuously until this was fixed.
+
+Pixel checks are relative (stripe vs. the row beside it, tinted vs. plain terminal), never exact hex:
+`screencapture` returns the display's color profile, so an sRGB `#101318` panel reads `#151920`. The
+cursor is parked on the title bar before each sample so a hover fill can't skew a comparison.
+
 ## 2. `BosunUITests.swift` — the XCUITest bundle (attempted)
 
 `XCUIApplication(url:)`-launches the packaged app with `BOSUN_UI_TEST=1` and asserts the window +
 seeded static text, the "canonical" XCUITest form issue #95 asked to attempt. It also carries
 `testDuplicateConnectionFromContextMenu` — the XCUITest spelling of what `duplicate-verify.sh` runs
-(right-click a row → Duplicate → assert the copy). Keep the two in step; the script is the one that
-can actually be executed here.
+(right-click a row → Duplicate → assert the copy), and `testClearConnectionColorFromContextMenu` —
+the core of `color-verify.sh` (right-click → Color ▸ None → the stripe is gone, checked from screenshot
+pixels). Keep each pair in step; the scripts are the ones that can actually be executed here.
 
 **It is deliberately *not* in `Package.swift`.** SwiftPM has no UI-testing bundle, and `swift test`
 cannot host XCUITest — so this file never compiles under `swift build`/`swift test` and can't break

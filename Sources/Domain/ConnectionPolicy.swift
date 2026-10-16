@@ -12,15 +12,18 @@ public struct ConnectionDraft: Sendable, Equatable {
     /// The sidebar folder this connection belongs to, or `nil` when ungrouped. A dangling id
     /// (no matching folder) reads as ungrouped via `ConnectionGrouping`, so it's always valid.
     public var folderId: UUID?
+    /// The connection's color (#102), or `nil` for none. Any choice is valid — it's a fixed palette.
+    public var color: ConnectionColor?
 
     public init(id: UUID?, name: String, kind: ConnectionKind, isFavorite: Bool = false,
-                customCommand: String? = nil, folderId: UUID? = nil) {
+                customCommand: String? = nil, folderId: UUID? = nil, color: ConnectionColor? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
         self.isFavorite = isFavorite
         self.customCommand = customCommand
         self.folderId = folderId
+        self.color = color
     }
 }
 

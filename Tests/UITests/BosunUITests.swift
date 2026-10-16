@@ -113,6 +113,62 @@ final class BosunUITests: XCTestCase {
         app.terminate()
     }
 
+    /// Connection colors (#102): the seeded teal `build-box` row shows a solid leading stripe, and
+    /// right-click → Color ▸ None removes it. Driven like `testDuplicateConnectionFromContextMenu`:
+    /// right-click the row's label, then NSMenu type-select ("col" is unique among the row's items,
+    /// → opens the submenu, "non" picks None). The stripe is checked from pixels — it's a custom-drawn
+    /// layer with no accessibility element — by comparing the stripe's column with the row just right
+    /// of it: different while colored, identical once cleared.
+    ///
+    /// `scripts/color-verify.sh` runs the fuller flow (set, clear, terminal tint, every theme) without
+    /// an Xcode host and is the version that has actually been executed; keep the two in step.
+    func testClearConnectionColorFromContextMenu() {
+        let app = makeApp()
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 20), "main window never appeared")
+
+        // `build-box` renders exactly once (Lighthouse folder, not a favourite) and is seeded teal.
+        let row = app.staticTexts["build-box"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "seeded connection row never rendered")
+        XCTAssertTrue(rowHasColorStripe(row), "the seeded teal connection should show its stripe")
+
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
+        app.typeText("col")
+        app.typeKey(.rightArrow, modifierFlags: [])
+        app.typeText("non\r")
+
+        // The rail rebuilds on the next store notify; poll briefly rather than sleeping a fixed time.
+        var stillColored = true
+        for _ in 0..<10 {
+            stillColored = rowHasColorStripe(row)
+            if !stillColored { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertFalse(stillColored, "Color ▸ None should remove the stripe")
+
+        app.terminate()
+    }
+
+    /// Whether the rail row whose name label is `label` draws a color stripe: the row's first column
+    /// (the stripe) versus a column just inside the row. Rows start z(34) left of their name label.
+    private func rowHasColorStripe(_ label: XCUIElement) -> Bool {
+        let image = XCUIScreen.main.screenshot().image
+        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return false }
+        let scale = CGFloat(rep.pixelsWide) / image.size.width
+        let rowLeft = label.frame.minX - 34
+        func color(atX x: CGFloat) -> NSColor? {
+            rep.colorAt(x: Int((x * scale).rounded()), y: Int((label.frame.midY * scale).rounded()))?
+                .usingColorSpace(.sRGB)
+        }
+        guard let stripe = color(atX: rowLeft + 1.5), let inner = color(atX: rowLeft + 8) else { return false }
+        let distance = abs(stripe.redComponent - inner.redComponent)
+            + abs(stripe.greenComponent - inner.greenComponent)
+            + abs(stripe.blueComponent - inner.blueComponent)
+        return distance > 0.15
+    }
+
     /// Example of the only reliable way to drive this custom UI: a coordinate tap. Kept minimal and
     /// tolerant — it documents the pattern (see the accessibility note above) rather than asserting a
     /// specific control, since exact geometry depends on the window frame.

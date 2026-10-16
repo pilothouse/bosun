@@ -23,6 +23,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
     private var customCommand: String
     private var isFavorite: Bool
     private var folderId: UUID?
+    private var color: ConnectionColor?
     private var errors: [ConnectionValidationError] = []
     private var didFocus = false
 
@@ -43,6 +44,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
             isFavorite = e.isFavorite
             customCommand = e.customCommand ?? ""
             folderId = e.folderId
+            color = e.color
             switch e.kind {
             case let .ssh(h, p, u):
                 kind = .ssh; host = h; port = String(p); user = u ?? ""; path = ""
@@ -51,7 +53,7 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
             }
         } else {
             kind = .ssh; name = ""; host = ""; port = "22"; user = ""; path = ""
-            customCommand = ""; isFavorite = false; folderId = nil
+            customCommand = ""; isFavorite = false; folderId = nil; color = nil
         }
         super.init(frame: .zero)
         wantsLayer = true
@@ -78,9 +80,10 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
         layer?.backgroundColor = NSColor.blackA(0.45).cgColor
 
         // SSH cards are taller to fit the optional CUSTOM COMMAND field; folder cards stay compact.
-        // Both gained a FOLDER picker row above the favorite toggle, so both are z(46) taller.
+        // Both gained a FOLDER picker row and a COLOR swatch row (#102) above the favorite toggle,
+        // each z(46) tall.
         let cardW: CGFloat = z(380)
-        let cardH: CGFloat = kind == .ssh ? z(532) : z(450)
+        let cardH: CGFloat = kind == .ssh ? z(578) : z(496)
         let card = ClickRow(bg: t.panel, radius: z(12))
         card.layer?.borderWidth = 1
         card.layer?.borderColor = t.line2.cgColor
@@ -150,14 +153,18 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
             card.addSubview(choose)
         }
 
-        // The sidebar-folder picker, favorite toggle, and validation errors stack below the
-        // kind-specific fields; the SSH card's taller CUSTOM COMMAND row pushes the whole stack
-        // down (matched by the taller cardH). The picker applies to both kinds.
+        // The sidebar-folder picker, color swatches, favorite toggle, and validation errors stack below
+        // the kind-specific fields; the SSH card's taller CUSTOM COMMAND row pushes the whole stack
+        // down (matched by the taller cardH). The picker and swatches apply to both kinds.
         let groupY: CGFloat = kind == .ssh ? z(338) : z(256)
         card.addSubview(caption("FOLDER", t: t, frame: NSRect(x: pad, y: groupY, width: innerW, height: z(12))))
         card.addSubview(folderPicker(t: t, frame: NSRect(x: pad, y: groupY + z(16), width: innerW, height: z(26))))
 
-        let favY: CGFloat = groupY + z(46)
+        let colorY: CGFloat = groupY + z(46)
+        card.addSubview(caption("COLOR", t: t, frame: NSRect(x: pad, y: colorY, width: innerW, height: z(12))))
+        addColorSwatches(to: card, t: t, left: pad, top: colorY + z(16))
+
+        let favY: CGFloat = colorY + z(46)
         let errY: CGFloat = favY + z(34)
         let fav = ClickRow(radius: z(6))
         fav.hoverColor = t.hover
@@ -338,6 +345,38 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
         return r
     }
 
+    /// The COLOR row (#102): None plus the eight palette colors as round swatches in this theme's
+    /// shades, the current choice ringed. Like the favorite toggle, a click updates `color` (the
+    /// source of truth) and the row is rebuilt to reflect it on the next `layout()`.
+    private func addColorSwatches(to card: NSView, t: Theme, left: CGFloat, top: CGFloat) {
+        let size = z(26), gap = z(8), dot = z(16)
+        let options: [ConnectionColor?] = [nil] + ConnectionColor.allCases
+        for (index, option) in options.enumerated() {
+            let hit = ClickRow(radius: size / 2)
+            hit.hoverColor = t.hover
+            hit.frame = NSRect(x: left + CGFloat(index) * (size + gap), y: top, width: size, height: size)
+            hit.toolTip = option?.label ?? "None"
+            if option == color {
+                hit.layer?.borderWidth = z(1.5)
+                hit.layer?.borderColor = t.txt.cgColor
+            }
+            let inset = (size - dot) / 2
+            if let option {
+                let fill = Dot(t.swatch(option), dot)
+                fill.frame.origin = NSPoint(x: inset, y: inset)
+                hit.addSubview(fill)
+            } else {
+                let ring = BoxView(radius: dot / 2, border: t.txt4)
+                ring.frame = NSRect(x: inset, y: inset, width: dot, height: dot)
+                hit.addSubview(ring)
+                let slash = centeredGlyph("╱", sys(10), t.txt4, in: CGSize(width: size, height: size))
+                hit.addSubview(slash)
+            }
+            hit.onClick = { [weak self] in self?.selectColor(option) }
+            card.addSubview(hit)
+        }
+    }
+
     private func currentFolderName() -> String {
         guard let folderId, let folder = store.domainFolders.first(where: { $0.id == folderId })
         else { return "Ungrouped" }
@@ -410,7 +449,8 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
         let trimmedCustom = customCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         let customCmd = (kind == .ssh && !trimmedCustom.isEmpty) ? trimmedCustom : nil
         return ConnectionDraft(id: editing?.id, name: name, kind: resolved,
-                               isFavorite: isFavorite, customCommand: customCmd, folderId: folderId)
+                               isFavorite: isFavorite, customCommand: customCmd, folderId: folderId,
+                               color: color)
     }
 
     private func selectKind(_ k: ConnKind) {
@@ -423,6 +463,12 @@ final class NewConnectionSheet: FlippedView, NSTextViewDelegate {
     private func toggleFavorite() {
         syncFromFields()
         isFavorite.toggle()
+        needsLayout = true
+    }
+
+    private func selectColor(_ choice: ConnectionColor?) {
+        syncFromFields()
+        color = choice
         needsLayout = true
     }
 

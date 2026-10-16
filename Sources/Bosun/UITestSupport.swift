@@ -306,12 +306,15 @@ enum UITestFixtures {
     static let lighthouseFolder = Domain.Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-000000000002")!,
                                                 name: "Lighthouse")
 
+    /// Two connections carry a color (#102) — "Harbor · API" red (a favorite, so it also shows in
+    /// FAVORITES) and "build-box" teal — while the rest stay uncolored, so a screenshot shows both the
+    /// colored and the unchanged look. `scripts/color-verify.sh` relies on these exact colors.
     static let connections: [Domain.Connection] = [
         Domain.Connection(id: UUID(uuidString: "A1111111-0000-4000-8000-000000000001")!,
                           name: "Harbor · API",
                           kind: .ssh(host: "10.20.0.11", port: 22, user: "deploy"),
                           isFavorite: true, customCommand: "tmux new -A -s api",
-                          folderId: harborFolder.id),
+                          folderId: harborFolder.id, color: .red),
         Domain.Connection(id: UUID(uuidString: "A1111111-0000-4000-8000-000000000002")!,
                           name: "Harbor · Worker",
                           kind: .ssh(host: "10.20.0.12", port: 22, user: "deploy"),
@@ -319,7 +322,7 @@ enum UITestFixtures {
         Domain.Connection(id: UUID(uuidString: "A1111111-0000-4000-8000-000000000003")!,
                           name: "build-box",
                           kind: .ssh(host: "build.lighthouse.internal", port: 2222, user: "ci"),
-                          folderId: lighthouseFolder.id),
+                          folderId: lighthouseFolder.id, color: .teal),
         // A neutral, short path rather than a real checkout: the rail renders a connection's path as
         // its subtitle, so anything machine-specific would leak straight into a screenshot. Create it
         // (`mkdir -p /tmp/beacon`) before shooting if you want the terminal tab to open there.

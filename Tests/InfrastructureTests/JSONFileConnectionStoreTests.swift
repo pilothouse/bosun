@@ -113,4 +113,42 @@ final class JSONFileConnectionStoreTests: XCTestCase {
         let order = try await reader.folders().map(\.id)
         XCTAssertEqual(order, [c.id, a.id, b.id])
     }
+
+    // MARK: - Color (#102)
+
+    func testColorSurvivesARelaunch() async throws {
+        var prod = ssh("prod")
+        prod.color = .red
+        let plain = ssh("dev")
+        let writer = store()
+        try await writer.save(prod)
+        try await writer.save(plain)
+
+        // A fresh instance reads from disk, as the app does on its next launch.
+        let reader = store()
+        let conns = try await reader.all()
+        XCTAssertEqual(conns.first { $0.id == prod.id }?.color, .red)
+        XCTAssertNil(conns.first { $0.id == plain.id }?.color, "an uncolored connection stays uncolored")
+    }
+
+    func testAnUnknownColorStillLoadsEveryConnection() async throws {
+        // A store written by a newer build with a color this build doesn't know. One undecodable
+        // record would fail the whole file, so the unknown color must decode as "no color" instead.
+        let newer = """
+        { "connections": [
+            { "id": "00000000-0000-0000-0000-000000000001", "name": "a",
+              "kind": { "localFolder": { "path": "/tmp" } }, "isFavorite": false, "color": "magenta" },
+            { "id": "00000000-0000-0000-0000-000000000002", "name": "b",
+              "kind": { "localFolder": { "path": "/tmp" } }, "isFavorite": false, "color": "teal" }
+          ],
+          "folders": [] }
+        """
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(newer.utf8).write(to: url)
+
+        let conns = try await store().all()
+
+        XCTAssertEqual(conns.map(\.name), ["a", "b"])
+        XCTAssertEqual(conns.map(\.color), [nil, .teal])
+    }
 }

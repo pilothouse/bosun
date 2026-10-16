@@ -50,6 +50,9 @@ struct Theme {
     let termBg, termFg, termCursor: NSColor
     let ansi: [NSColor]   // 16 entries, ANSI 0…15
 
+    /// This theme's shade of each connection color (#102), tuned so the swatch reads on its surfaces.
+    let connectionSwatches: ConnectionSwatches
+
     /// The pure value the App layer hands to libghostty. NSColor→hex conversion lives here (AppKit);
     /// the config-text rendering lives in Domain's `TerminalPalette`.
     var terminalPalette: TerminalPalette {
@@ -57,6 +60,36 @@ struct Theme {
                         foreground: termFg.ghosttyHex,
                         cursor: termCursor.ghosttyHex,
                         ansi: ansi.map(\.ghosttyHex))
+    }
+
+    /// The one light theme. Connection tints are lighter on it (see `ConnectionColorPolicy`).
+    var isLight: Bool { key == "light" }
+
+    /// The solid shade of a connection color in this theme — the rail stripe, tab stripe, menu swatch.
+    func swatch(_ color: ConnectionColor) -> NSColor { connectionSwatches.color(color) }
+
+    /// A connection's color laid over `surface` at the strength `ConnectionColorPolicy` gives it, or
+    /// nil for an uncolored connection — callers draw nothing then, so it looks exactly as before #102.
+    func connectionTint(_ color: ConnectionColor?, on surface: ConnectionColorSurface) -> NSColor? {
+        guard let color else { return nil }
+        let opacity = ConnectionColorPolicy.opacity(of: color, on: surface, lightTheme: isLight)
+        return swatch(color).withAlphaComponent(CGFloat(opacity))
+    }
+
+    /// The terminal palette for a connection's surfaces: the theme palette with its background mixed
+    /// faintly toward the connection's color (the plain palette when uncolored). The blend itself is
+    /// Domain's `TerminalPalette.tintingBackground`, so the surface and its tab share one formula.
+    func connectionTerminalPalette(_ color: ConnectionColor?) -> TerminalPalette {
+        guard let color else { return terminalPalette }
+        let opacity = ConnectionColorPolicy.opacity(of: color, on: .terminalBackground, lightTheme: isLight)
+        return terminalPalette.tintingBackground(with: swatch(color).ghosttyHex, opacity: opacity)
+    }
+
+    /// The background a connection's terminal surface renders with — painted on its active tab and its
+    /// Mission Control tile so they read as one piece with the surface. `termBg` when uncolored.
+    func connectionTerminalBackground(_ color: ConnectionColor?) -> NSColor {
+        guard color != nil else { return termBg }
+        return NSColor.hex(string: connectionTerminalPalette(color).background) ?? termBg
     }
 
     static let all: [Theme] = [operatorTheme, carbon, nord, daylight]
@@ -96,7 +129,8 @@ struct Theme {
         card: .whiteA(0.03), cardbr: .whiteA(0.07), hover: .whiteA(0.05),
         txt: .hex(0xe6e8ec), txt2: .hex(0xc2c6cd), txt3: .hex(0x8a909a), txt4: .hex(0x5b616b), txt5: .hex(0x454b54),
         accent: .hex(0x7c8cff), accentbg: .hexA(0x7c8cff, 0.10), accentbg2: .hexA(0x7c8cff, 0.14), onacc: .hex(0x0d0f13),
-        termBg: .hex(0x0a0c0f), termFg: .hex(0xc2c6cd), termCursor: .hex(0x7c8cff), ansi: darkANSI)
+        termBg: .hex(0x0a0c0f), termFg: .hex(0xc2c6cd), termCursor: .hex(0x7c8cff), ansi: darkANSI,
+        connectionSwatches: .dark)
 
     static let carbon = Theme(
         key: "carbon", label: "Carbon", note: "True black · OLED",
@@ -106,7 +140,8 @@ struct Theme {
         card: .whiteA(0.04), cardbr: .whiteA(0.08), hover: .whiteA(0.06),
         txt: .hex(0xf0f1f4), txt2: .hex(0xc8ccd3), txt3: .hex(0x878d98), txt4: .hex(0x5b616b), txt5: .hex(0x42474e),
         accent: .hex(0x7c8cff), accentbg: .hexA(0x7c8cff, 0.12), accentbg2: .hexA(0x7c8cff, 0.18), onacc: .hex(0x000000),
-        termBg: .hex(0x000000), termFg: .hex(0xc8ccd3), termCursor: .hex(0x7c8cff), ansi: darkANSI)
+        termBg: .hex(0x000000), termFg: .hex(0xc8ccd3), termCursor: .hex(0x7c8cff), ansi: darkANSI,
+        connectionSwatches: .dark)
 
     static let nord = Theme(
         key: "nord", label: "Nord", note: "Cool slate · cyan",
@@ -116,7 +151,8 @@ struct Theme {
         card: .whiteA(0.04), cardbr: .whiteA(0.09), hover: .whiteA(0.06),
         txt: .hex(0xeceff4), txt2: .hex(0xd2d9e4), txt3: .hex(0x9aa6b8), txt4: .hex(0x6f7b8e), txt5: .hex(0x586273),
         accent: .hex(0x88c0d0), accentbg: .hexA(0x88c0d0, 0.14), accentbg2: .hexA(0x88c0d0, 0.20), onacc: .hex(0x1b212b),
-        termBg: .hex(0x2e3440), termFg: .hex(0xd8dee9), termCursor: .hex(0x88c0d0), ansi: nordANSI)
+        termBg: .hex(0x2e3440), termFg: .hex(0xd8dee9), termCursor: .hex(0x88c0d0), ansi: nordANSI,
+        connectionSwatches: .nord)
 
     static let daylight = Theme(
         key: "light", label: "Daylight", note: "White · indigo",
@@ -126,7 +162,43 @@ struct Theme {
         card: .blackA(0.025), cardbr: .blackA(0.09), hover: .blackA(0.045),
         txt: .hex(0x1b1e23), txt2: .hex(0x3e454f), txt3: .hex(0x5c646f), txt4: .hex(0x8b929c), txt5: .hex(0xabb1b9),
         accent: .hex(0x4f5bff), accentbg: .hexA(0x4f5bff, 0.10), accentbg2: .hexA(0x4f5bff, 0.14), onacc: .hex(0xffffff),
-        termBg: .hex(0xffffff), termFg: .hex(0x1b1e23), termCursor: .hex(0x4f5bff), ansi: lightANSI)
+        termBg: .hex(0xffffff), termFg: .hex(0x1b1e23), termCursor: .hex(0x4f5bff), ansi: lightANSI,
+        connectionSwatches: .light)
+}
+
+/// One theme's shade of each `ConnectionColor` (#102). Three sets: the dark themes reuse the app's
+/// `Status` hues so a red connection matches a red check; Nord uses its own aurora colors; Daylight uses
+/// darker, saturated shades that stay legible as a stripe on white. `color(_:)` is an exhaustive switch,
+/// so adding a palette color fails to compile until every set has a shade for it.
+struct ConnectionSwatches {
+    let red, orange, yellow, green, teal, blue, purple, gray: NSColor
+
+    func color(_ color: ConnectionColor) -> NSColor {
+        switch color {
+        case .red: return red
+        case .orange: return orange
+        case .yellow: return yellow
+        case .green: return green
+        case .teal: return teal
+        case .blue: return blue
+        case .purple: return purple
+        case .gray: return gray
+        }
+    }
+
+    /// Operator + Carbon.
+    static let dark = ConnectionSwatches(
+        red: Status.red, orange: .hex(0xf0883e), yellow: Status.yellow, green: Status.green,
+        teal: .hex(0x56b6c2), blue: Status.blue, purple: Status.purple, gray: .hex(0x8b949e))
+
+    static let nord = ConnectionSwatches(
+        red: .hex(0xbf616a), orange: .hex(0xd08770), yellow: .hex(0xebcb8b), green: .hex(0xa3be8c),
+        teal: .hex(0x8fbcbb), blue: .hex(0x81a1c1), purple: .hex(0xb48ead), gray: .hex(0x9aa6b8))
+
+    /// Daylight.
+    static let light = ConnectionSwatches(
+        red: .hex(0xcf222e), orange: .hex(0xbc4c00), yellow: .hex(0x9a6700), green: .hex(0x1a7f37),
+        teal: .hex(0x1b7c83), blue: .hex(0x0969da), purple: .hex(0x8250df), gray: .hex(0x6e7781))
 }
 
 /// Status colors are fixed (not theme-dependent), matching the mock's hardcoded values.

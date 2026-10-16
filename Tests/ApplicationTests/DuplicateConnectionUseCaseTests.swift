@@ -166,4 +166,17 @@ final class DuplicateConnectionUseCaseTests: XCTestCase {
         let stored = await store.connections
         XCTAssertEqual(stored.count, 1)
     }
+
+    func testTheCopyKeepsItsOriginalsColor() async throws {
+        let source = Connection(id: UUID(), name: "prod-db", kind: .ssh(host: "db", port: 22, user: nil),
+                                color: .purple)
+        let store = FakeConnectionStore(seed: [source])
+        let duplicate = DuplicateConnectionUseCase(store: store)
+
+        let copy = try duplicated(try await duplicate(id: source.id))
+
+        XCTAssertEqual(copy.color, .purple, "a duplicate of a colored connection keeps the color (#102)")
+        let stored = await store.connections.first { $0.id == copy.id }
+        XCTAssertEqual(stored?.color, .purple)
+    }
 }
