@@ -71,6 +71,29 @@ Pixel checks are relative (stripe vs. the row beside it, tinted vs. plain termin
 `screencapture` returns the display's color profile, so an sRGB `#101318` panel reads `#151920`. The
 cursor is parked on the title bar before each sample so a hover fill can't skew a comparison.
 
+## 1d. `scripts/activity-verify.sh` — Mission Control "Highlight activity", in every theme
+
+Issue #103's end-to-end check. It seeds a binary copy (`.build/debug/BosunActivityVerify`) straight
+into Mission Control (2×2, tracker off, highlight on, busy shell hook on), opens two tabs with ⌘T, and
+runs `sleep 6` in one tile while focus sits on another. From real pixels and the accessibility tree it
+asserts: the bar reads `Working 1` and the running tile has an accent outline; afterwards it has a
+green outline and green check and the bar reads `Working 0`; the idle unfocused tile is dimmed vs the
+focused one; focusing the finished tile clears the check; and after options ▾ → Highlight activity
+(off) the idle tile is undimmed and a finished run leaves a plain outline.
+
+```sh
+swift build --disable-sandbox
+bash scripts/color-verify.sh              # once: builds the shared .build/pixelavg helper
+bash scripts/activity-verify.sh           # → PASS + .build/activity-verify-<theme>-{working,done,off}.png
+```
+
+Two things to know:
+
+- **Tiles are found through their header labels.** A header lays out its `×` before its title, so the
+  label after each `×` among the window's static texts is a tile title, 20pt in from the tile's edge.
+- **The launch tab has no busy hook.** It is created before the saved preferences load, so the script
+  runs its command in a ⌘T tab. Keystrokes are sent only while the script's own process is frontmost.
+
 ## 2. `BosunUITests.swift` — the XCUITest bundle (attempted)
 
 `XCUIApplication(url:)`-launches the packaged app with `BOSUN_UI_TEST=1` and asserts the window +

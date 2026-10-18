@@ -41,6 +41,10 @@ final class MissionTileView: FlippedView {
         /// The session's connection color (#102): tints the header, border and background. Nil for a
         /// local or uncolored session, which looks exactly as before.
         let color: ConnectionColor?
+        /// "Highlight activity" is on (#103): quiet sessions show a gray dot, so green means "done".
+        let highlightActivity: Bool
+        /// The activity outline and body dim from `MissionHighlightPolicy` (#103).
+        let treatment: MissionTileTreatment
     }
 
     /// Everything the tile's look depends on; compared to skip redundant repaints.
@@ -70,12 +74,19 @@ final class MissionTileView: FlippedView {
 
     private let header = MissionTileHeader()
     private let body = FlippedView()
+    /// Dims a quiet tile's terminal while "Highlight activity" is on (#103). Above the surface, below
+    /// the header (which stays readable) and the ring. Clicks pass through to the terminal.
+    private let scrim = PassThroughView()
     private let ring = PaneFocusRingView()
     private weak var hosted: NSView?
     private var style: Style?
     private var theme = Theme.operatorTheme
     /// The (style, width) the header was last built for.
     private var headerBuiltFor: (Style, CGFloat)?
+    /// The color the working-pulse animation runs with; nil while no pulse runs. Lets a repaint that
+    /// changes nothing else (a Claude title tick) keep the pulse going instead of restarting it.
+    private var pulseColor: NSColor?
+    private static let pulseKey = "activityPulse"
 
     init(sessionId: UUID) {
         self.sessionId = sessionId
@@ -84,8 +95,11 @@ final class MissionTileView: FlippedView {
         layer?.masksToBounds = true
         layer?.borderWidth = 1
         body.wantsLayer = true
+        scrim.wantsLayer = true
+        scrim.isHidden = true
         ring.wantsLayer = true
         addSubview(body)
+        addSubview(scrim)
         addSubview(header)
         addSubview(ring)
         header.onClick = { [weak self] in self?.onFocus?() }
@@ -116,6 +130,9 @@ final class MissionTileView: FlippedView {
         layer?.backgroundColor = t.connectionTerminalBackground(content.color).cgColor
         applyBorder()
         alphaValue = content.dimmed ? 0.55 : 1
+        // The scrim is never an ancestor of the terminal (first responder), so hiding it is safe.
+        scrim.layer?.backgroundColor = t.win.withAlphaComponent(0.55).cgColor
+        scrim.isHidden = !content.treatment.dimmed
         ring.layer?.cornerRadius = radius
         ring.layer?.borderWidth = content.focused ? 1.6 : 0
         ring.layer?.borderColor = t.accent.cgColor
@@ -124,17 +141,46 @@ final class MissionTileView: FlippedView {
         needsLayout = true
     }
 
+    /// Outline precedence: drop target, then the activity outline (#103), then the connection color
+    /// (#102), then the plain card border. The focus ring is a separate overlay and draws on top.
     private func applyBorder() {
         guard let content = style?.content else { return }
         if isDropTarget {
-            layer?.borderWidth = 2
-            layer?.borderColor = theme.accent.cgColor
-        } else {
-            // A colored connection's tile is outlined in its color (#102); the drop-target accent above
-            // and the focus ring (a separate overlay) still win.
-            layer?.borderWidth = 1
-            layer?.borderColor = (theme.connectionTint(content.color, on: .tileBorder) ?? theme.cardbr).cgColor
+            setBorder(width: 2, color: theme.accent, pulsing: false)
+            return
         }
+        switch content.treatment.border {
+        case .working:
+            setBorder(width: 2, color: theme.accent, pulsing: true)
+        case .done:
+            setBorder(width: 2, color: Status.green, pulsing: false)
+        case .standard:
+            setBorder(width: 1, color: theme.connectionTint(content.color, on: .tileBorder) ?? theme.cardbr,
+                      pulsing: false)
+        }
+    }
+
+    /// Set the outline, starting or stopping the slow working pulse. Reduce Motion keeps it static.
+    private func setBorder(width: CGFloat, color: NSColor, pulsing: Bool) {
+        guard let layer else { return }
+        layer.borderWidth = width
+        layer.borderColor = color.cgColor
+        let pulse = pulsing && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if !pulse {
+            layer.removeAnimation(forKey: Self.pulseKey)
+            pulseColor = nil
+            return
+        }
+        guard pulseColor != color || layer.animation(forKey: Self.pulseKey) == nil else { return }
+        let animation = CABasicAnimation(keyPath: "borderColor")
+        animation.fromValue = color.cgColor
+        animation.toValue = color.withAlphaComponent(0.45).cgColor   // never fades out: the outline stays readable
+        animation.duration = 0.9
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(animation, forKey: Self.pulseKey)
+        pulseColor = color
     }
 
     override func layout() {
@@ -143,6 +189,7 @@ final class MissionTileView: FlippedView {
         header.frame = NSRect(x: 0, y: 0, width: bounds.width, height: headerHeight)
         body.frame = NSRect(x: 0, y: headerHeight, width: bounds.width, height: max(0, bounds.height - headerHeight))
         if let hosted, hosted.superview === body, hosted.frame != body.bounds { hosted.frame = body.bounds }
+        scrim.frame = body.frame
         ring.frame = bounds
         if let style, headerBuiltFor.map({ $0.0 != style || $0.1 != bounds.width }) ?? true {
             headerBuiltFor = (style, bounds.width)
@@ -169,8 +216,16 @@ final class MissionTileView: FlippedView {
             let spinner = makeSpinner(size: z(10))
             spinner.frame.origin = NSPoint(x: x - z(2), y: (h - z(10)) / 2)
             header.addSubview(spinner)
+        case .done:
+            let check = NSImageView()
+            check.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Done")
+            check.contentTintColor = Status.green
+            check.imageScaling = .scaleProportionallyUpOrDown
+            check.frame = NSRect(x: x - z(2), y: (h - z(10)) / 2, width: z(10), height: z(10))
+            header.addSubview(check)
         case .attention, .idle:
-            let dot = Dot(content.activity == .attention ? Status.yellow : Status.green, dotSize)
+            let quiet = content.highlightActivity ? Status.dim : Status.green
+            let dot = Dot(content.activity == .attention ? Status.yellow : quiet, dotSize)
             dot.frame.origin = NSPoint(x: x, y: (h - dotSize) / 2)
             header.addSubview(dot)
         }
@@ -281,4 +336,10 @@ final class MissionTileHeader: FlippedView {
             onClick?()
         }
     }
+}
+
+/// A view that never takes clicks: they fall through to whatever is underneath (the terminal).
+private final class PassThroughView: NSView {
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

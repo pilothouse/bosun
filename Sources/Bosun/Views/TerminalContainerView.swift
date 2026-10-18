@@ -40,6 +40,10 @@ final class TerminalSession {
     /// shell hook isn't installed). Re-armed on every signal, so an actively-reporting tab never
     /// fires it; cancelled when the tab goes idle.
     var busyTimeout: DispatchWorkItem?
+    /// Ephemeral "finished while you looked elsewhere" flag (#103): set when visible work stops on a
+    /// pane that isn't focused (`TerminalDonePolicy`), cleared when the pane gets focus or starts work
+    /// again. Mission Control shows it only while "Highlight activity" is on. Not persisted.
+    var isDone = false
     /// The connection color painted on this pane's surface and its tab (#102): the color whose tinted
     /// config was last pushed to the surface. Always nil for a local pane (including a split inside a
     /// connection tab — that shell runs on this Mac, not the remote host) and for an uncolored
@@ -495,6 +499,7 @@ final class TerminalContainerView: FlippedView {
         focusedPane[tabId] = id
         guard tabId == tabs.activeID else { return }
         clearBells(inTab: tabId)
+        clearDone(paneId: id)
         if changed {
             needsLayout = true            // move the focus ring + relabel the strip's representative
             onActiveTitleChange?()        // the focused pane is the window/title-bar label
@@ -515,6 +520,14 @@ final class TerminalContainerView: FlippedView {
         return changed
     }
 
+    /// Clear the "done" mark on a pane that just got focus — you're looking at it now (#103). Per pane,
+    /// unlike the bell: each Mission Control tile is one pane.
+    private func clearDone(paneId: UUID) {
+        guard let session = views[paneId], session.isDone else { return }
+        session.isDone = false
+        onSessionsChanged?()
+    }
+
     /// How long a tab may stay busy with no further signal before the backstop force-clears it (#94).
     /// Far longer than any interactive command and re-armed on every signal, so it only ever fires
     /// for a genuinely abandoned indicator (a tool that latches busy then goes silent — typically an
@@ -528,7 +541,8 @@ final class TerminalContainerView: FlippedView {
     /// (#94) every command flips busy, so a fast `ls` would otherwise flash a spinner; we only show
     /// it once a command has stayed busy past the delay. A *determinate* ring shows immediately — an
     /// explicit percentage is a meaningful report, not the flicker the debounce exists to swallow.
-    private func activityChanged(id: UUID, signal: TerminalBusySignal) {
+    /// `timedOut` marks the backstop's forced clear, which must not count as finished work (#103).
+    private func activityChanged(id: UUID, signal: TerminalBusySignal, timedOut: Bool = false) {
         guard let session = views[id] else { return }
         let new = TerminalBusyPolicy.state(signal)
         rearmBusyTimeout(session, id: id, state: new)
@@ -543,6 +557,9 @@ final class TerminalContainerView: FlippedView {
         case .idle: wasVisible = false
         }
 
+        session.isDone = TerminalDonePolicy.next(isDone: session.isDone, wasVisiblyBusy: wasVisible,
+                                                 isBusy: new != .idle, isFocused: id == activePaneId,
+                                                 timedOut: timedOut)
         session.busy = new
         onSessionsChanged?()
         session.busyDebounce?.cancel(); session.busyDebounce = nil
@@ -573,7 +590,7 @@ final class TerminalContainerView: FlippedView {
         guard state != .idle else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, let s = self.views[id], s.busy != .idle else { return }
-            self.activityChanged(id: id, signal: .progress(.remove))   // force-clear via the idle path
+            self.activityChanged(id: id, signal: .progress(.remove), timedOut: true)   // force-clear via the idle path
         }
         session.busyTimeout = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.busyBackstop, execute: work)
@@ -883,6 +900,7 @@ final class TerminalContainerView: FlippedView {
         // The single choke point every focus path funnels through, so clearing the tab's badge here
         // covers click / ⌘-number / next-prev / open / close / restore / rename / split (#74).
         if let tabId = paneToTab[paneId] { clearBells(inTab: tabId) }
+        clearDone(paneId: paneId)
     }
 
     private func refresh() {

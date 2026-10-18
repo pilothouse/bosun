@@ -74,4 +74,25 @@ final class MissionTilePolicyTests: XCTestCase {
         XCTAssertEqual(MissionTilePolicy.clampFocus(9, count: 3), 2)
         XCTAssertEqual(MissionTilePolicy.clampFocus(-1, count: 3), 0)
     }
+
+    func testDoneLosesToBellAndBusyButBeatsIdle() {
+        // #103: "done" marks a run that finished while you looked elsewhere. A ring still wants you
+        // more, and a new run is working again, so both outrank it.
+        XCTAssertEqual(MissionTilePolicy.activity(busy: false, bell: false, done: true), .done)
+        XCTAssertEqual(MissionTilePolicy.activity(busy: true, bell: false, done: true), .working)
+        XCTAssertEqual(MissionTilePolicy.activity(busy: false, bell: true, done: true), .attention)
+    }
+
+    func testDoneTilesCountOnlyTowardAll() {
+        let counts = MissionTilePolicy.counts(tiles + [MissionTile(id: "e", title: "e", activity: .done)])
+        XCTAssertEqual(counts.all, 5)
+        XCTAssertEqual(counts.working, 2)
+        XCTAssertEqual(counts.attention, 1)
+    }
+
+    func testWorkingFilterExcludesDoneTiles() {
+        let withDone = tiles + [MissionTile(id: "e", title: "e", activity: .done)]
+        let ids = MissionTilePolicy.visible(withDone, filter: .working, repoKey: nil).map(\.id)
+        XCTAssertEqual(ids, ["a", "d"])
+    }
 }

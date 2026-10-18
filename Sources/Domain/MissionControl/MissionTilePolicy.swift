@@ -8,6 +8,9 @@ public enum MissionTileActivity: Sendable, Equatable {
     case working
     /// The session rang the bell or posted a notification — it wants the user.
     case attention
+    /// The session finished work while the user looked elsewhere (#103). Cleared when its tile gets
+    /// focus. Only produced while "Highlight activity" is on.
+    case done
 }
 
 /// One terminal session as Mission Control sees it. `repoKey` is the `owner/name` of the linked
@@ -33,10 +36,11 @@ public struct MissionTile: Sendable, Equatable {
 public enum MissionTilePolicy {
 
     /// A session's activity. Attention wins over working: a session that rang while busy still
-    /// needs the user.
-    public static func activity(busy: Bool, bell: Bool) -> MissionTileActivity {
+    /// needs the user. `done` (finished, not yet seen) only shows when nothing else is going on.
+    public static func activity(busy: Bool, bell: Bool, done: Bool = false) -> MissionTileActivity {
         if bell { return .attention }
-        return busy ? .working : .idle
+        if busy { return .working }
+        return done ? .done : .idle
     }
 
     /// The tiles to show, in input order: kept by repo scope (nil = every repo) and activity

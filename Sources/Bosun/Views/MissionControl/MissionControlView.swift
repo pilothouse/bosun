@@ -13,6 +13,8 @@ struct MissionSnapshot {
     let visible: [MissionTile]
     /// The active pane's title, shown in the tracker's hint line.
     let focusedTitle: String?
+    /// "Highlight activity" (#103): tiles and cards show working / done / quiet emphasis.
+    let highlightActivity: Bool
 
     var visibleIds: [UUID] { visible.compactMap { UUID(uuidString: $0.id) } }
 }
@@ -184,6 +186,8 @@ final class MissionControlView: FlippedView {
         repoItem.submenu = repoMenu
         menu.addItem(repoItem)
         menu.addItem(menuItem("Group by repo", #selector(toggleGroupByRepo), state: store.missionGroupByRepo))
+        menu.addItem(menuItem("Highlight activity", #selector(toggleHighlightActivity),
+                              state: store.missionHighlightActivity))
         menu.addItem(.separator())
         let trackerTitles: [(MissionTrackerStyle, String)] = [(.off, "Tracker off"), (.list, "Tracker as list"),
                                                              (.board, "Tracker as board")]
@@ -204,6 +208,7 @@ final class MissionControlView: FlippedView {
 
     @objc private func pickRepo(_ sender: NSMenuItem) { setRepo(sender.representedObject as? String) }
     @objc private func toggleGroupByRepo() { store.missionGroupByRepo.toggle() }
+    @objc private func toggleHighlightActivity() { store.missionHighlightActivity.toggle() }
     @objc private func pickTracker(_ sender: NSMenuItem) {
         store.missionTracker = MissionTrackerStyle.stored(sender.representedObject as? String)
     }
@@ -316,11 +321,14 @@ final class MissionControlView: FlippedView {
         let items = store.visiblePRs + store.visibleIssues
         let refs = items.map { MissionItemRef(repo: $0.repo, number: $0.number) }
         var links: [UUID: String] = [:]
+        let highlight = store.missionHighlightActivity
         let domainTiles = panes.map { pane -> MissionTile in
             let link = SessionItemLink.resolve(manual: manualLinks[pane.id], title: pane.title, items: refs)
             links[pane.id] = link
+            // "Done" only exists while the highlight is on, so with it off every tile looks as before.
             return MissionTile(id: pane.id.uuidString, title: pane.title,
-                               activity: MissionTilePolicy.activity(busy: pane.busy != .idle, bell: pane.hasBell),
+                               activity: MissionTilePolicy.activity(busy: pane.busy != .idle, bell: pane.hasBell,
+                                                                    done: highlight && pane.isDone),
                                linkedItemKey: link, repoKey: link.flatMap(SessionItemLink.repo(ofKey:)))
         }
         var visible = MissionTilePolicy.visible(domainTiles, filter: filter, repoKey: repoKey)
@@ -332,7 +340,7 @@ final class MissionControlView: FlippedView {
         let colors = Dictionary(panes.compactMap { pane in pane.tint.map { (pane.id, $0) } },
                                 uniquingKeysWith: { first, _ in first })
         return MissionSnapshot(panes: panes, tiles: domainTiles, links: links, colors: colors, items: items,
-                               visible: visible, focusedTitle: focusedTitle)
+                               visible: visible, focusedTitle: focusedTitle, highlightActivity: highlight)
     }
 
     // MARK: Tiles
@@ -392,7 +400,10 @@ final class MissionControlView: FlippedView {
                 highlighted: link != nil && link == selectedItemKey,
                 focused: id == focusedPane,
                 dimmed: selectedItemKey != nil && link != selectedItemKey,
-                color: snap.colors[id]),
+                color: snap.colors[id],
+                highlightActivity: snap.highlightActivity,
+                treatment: MissionHighlightPolicy.treatment(activity: domain.activity, focused: id == focusedPane,
+                                                            enabled: snap.highlightActivity)),
                 geometry: metrics, theme: t)
             // Grouping decides the order while it's on, so a reorder drag would appear to do nothing.
             tile.dragEnabled = hero == nil && !store.missionGroupByRepo

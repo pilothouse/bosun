@@ -212,6 +212,8 @@ final class Store {
     var missionView: Domain.MissionView = .default { didSet { if oldValue != missionView { changed() } } }
     var missionLayout: Domain.MissionLayoutPreset = .default { didSet { if oldValue != missionLayout { changed() } } }
     var missionGroupByRepo = false { didSet { if oldValue != missionGroupByRepo { changed() } } }
+    /// "Highlight activity" (#103): outline working/done tiles and dim quiet ones.
+    var missionHighlightActivity = false { didSet { if oldValue != missionHighlightActivity { changed() } } }
     var missionTracker: Domain.MissionTrackerStyle = .default {
         didSet {
             guard oldValue != missionTracker else { return }
@@ -546,7 +548,8 @@ final class Store {
             missionMode: missionView.rawValue,
             missionLayout: missionLayout.rawValue,
             missionGroupByRepo: missionGroupByRepo,
-            missionTracker: missionTracker.rawValue)
+            missionTracker: missionTracker.rawValue,
+            missionHighlightActivity: missionHighlightActivity)
         Task { await preferences.save(snapshot) }
     }
 
@@ -590,6 +593,7 @@ final class Store {
         missionLayout = MissionLayoutPreset.stored(p.missionLayout)
         missionGroupByRepo = p.missionGroupByRepo
         missionTracker = MissionTrackerStyle.stored(p.missionTracker)
+        missionHighlightActivity = p.missionHighlightActivity
         terminalBellBadge = p.terminalBellBadge
         terminalBusySpinner = p.terminalBusySpinner
         terminalFocusRing = p.terminalFocusRing

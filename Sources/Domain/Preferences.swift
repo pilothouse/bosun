@@ -164,6 +164,8 @@ public struct Preferences: Sendable, Equatable, Codable {
     public var missionLayout: String?
     public var missionGroupByRepo: Bool
     public var missionTracker: String?
+    /// "Highlight activity" (#103): outline working/done tiles and dim quiet ones. Opt-in (`false`).
+    public var missionHighlightActivity: Bool
 
     /// The lowest opacity we let the window reach — below this the chrome is unusable.
     public static let minAlpha: Double = 0.3
@@ -248,7 +250,8 @@ public struct Preferences: Sendable, Equatable, Codable {
         missionMode: String? = nil,
         missionLayout: String? = nil,
         missionGroupByRepo: Bool = false,
-        missionTracker: String? = nil
+        missionTracker: String? = nil,
+        missionHighlightActivity: Bool = false
     ) {
         self.themeKey = themeKey
         self.terminalHeight = terminalHeight
@@ -305,6 +308,7 @@ public struct Preferences: Sendable, Equatable, Codable {
         self.missionLayout = missionLayout
         self.missionGroupByRepo = missionGroupByRepo
         self.missionTracker = missionTracker
+        self.missionHighlightActivity = missionHighlightActivity
     }
 
     /// The starting state used on first launch and as the fallback for any missing/corrupt field.
@@ -368,7 +372,8 @@ public struct Preferences: Sendable, Equatable, Codable {
             missionMode: try container.decodeIfPresent(String.self, forKey: .missionMode) ?? fallback.missionMode,
             missionLayout: try container.decodeIfPresent(String.self, forKey: .missionLayout) ?? fallback.missionLayout,
             missionGroupByRepo: try container.decodeIfPresent(Bool.self, forKey: .missionGroupByRepo) ?? fallback.missionGroupByRepo,
-            missionTracker: try container.decodeIfPresent(String.self, forKey: .missionTracker) ?? fallback.missionTracker
+            missionTracker: try container.decodeIfPresent(String.self, forKey: .missionTracker) ?? fallback.missionTracker,
+            missionHighlightActivity: try container.decodeIfPresent(Bool.self, forKey: .missionHighlightActivity) ?? fallback.missionHighlightActivity
         )
     }
 

@@ -101,7 +101,7 @@ final class MissionFocusCardsView: FlippedView {
             let color = snap.colors[id]?.rawValue ?? ""
             return "\(tile.id)|\(tile.title)|\(tile.activity)|\(snap.links[id] ?? "")|\(color)"
         }
-            + [t.key, "\(uiScale)", "\(bounds.size)"]
+            + [t.key, "\(uiScale)", "\(bounds.size)", "\(snap.highlightActivity)"]
         guard next != signature else { return }
         signature = next
         layer?.backgroundColor = t.panel.cgColor
@@ -126,20 +126,30 @@ final class MissionFocusCardsView: FlippedView {
                 stripe.frame = NSRect(x: 0, y: 0, width: z(3), height: cardH)
                 card.addSubview(stripe)
             }
-            let color: NSColor = tile.activity == .attention ? Status.yellow : tile.activity == .working ? t.accent : Status.green
+            let (color, state) = cardStatus(tile.activity, highlight: snap.highlightActivity, theme: t)
             let dot = Dot(color, z(6))
             dot.frame.origin = NSPoint(x: z(10), y: z(11))
             card.addSubview(dot)
             let name = label(tile.title, mono(10, .semibold), t.txt)
             name.frame = NSRect(x: z(22), y: z(7), width: card.frame.width - z(30), height: z(15))
             card.addSubview(name)
-            let state = tile.activity == .attention ? "needs you" : tile.activity == .working ? "working" : "idle"
             let meta = label([state, snap.links[id].map { "→ \($0)" }].compactMap { $0 }.joined(separator: "   "),
                              mono(9), t.txt4)
             meta.frame = NSRect(x: z(22), y: z(25), width: card.frame.width - z(30), height: z(13))
             card.addSubview(meta)
             card.onClick = { [weak self] in self?.onFocus?(id) }
             list.doc.addSubview(card)
+        }
+    }
+
+    /// The card's status dot color and word. With "Highlight activity" on (#103), green means
+    /// "finished, not yet seen" only, so quiet sessions go gray.
+    private func cardStatus(_ activity: MissionTileActivity, highlight: Bool, theme t: Theme) -> (NSColor, String) {
+        switch activity {
+        case .attention: return (Status.yellow, "needs you")
+        case .working: return (t.accent, "working")
+        case .done: return (Status.green, "done")
+        case .idle: return (highlight ? Status.dim : Status.green, "idle")
         }
     }
 }

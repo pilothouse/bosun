@@ -225,6 +225,30 @@ final class PreferencesTests: XCTestCase {
         XCTAssertFalse(decoded.terminalBusySpinner)
     }
 
+    func testMissionHighlightActivityDefaultsToOff() {
+        XCTAssertFalse(Preferences.default.missionHighlightActivity,
+                       "opt-in: with it off, Mission Control looks exactly as before #103")
+    }
+
+    func testMissionHighlightActivityRoundTripsThroughCodable() throws {
+        let original = Preferences(missionHighlightActivity: true)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+
+        XCTAssertTrue(decoded.missionHighlightActivity)
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testDecodingPayloadWithoutMissionHighlightActivityFallsBackToOff() throws {
+        // A payload written by a build before the highlight toggle existed.
+        let json = Data(#"{"themeKey":"carbon"}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(Preferences.self, from: json)
+
+        XCTAssertFalse(decoded.missionHighlightActivity)
+    }
+
     func testSelectedOrgIdDefaultsToEmpty() {
         XCTAssertEqual(Preferences.default.selectedOrgId, "",
                        "empty means a single repo (or nothing) was the active scope, not an org")

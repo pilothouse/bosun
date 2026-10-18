@@ -1,3 +1,4 @@
+import Domain
 import Foundation
 import os
 
@@ -16,40 +17,9 @@ import os
 /// *after* its `shell_integration.setup`, so our `ZDOTDIR` lands on top of ghostty's — but `setup`
 /// has already exported `GHOSTTY_RESOURCES_DIR` and the user's original `GHOSTTY_ZSH_ZDOTDIR`, which
 /// the shim uses to hand back to ghostty. Scope is zsh (the macOS default); bash/fish are follow-ups.
+/// The script itself is pure text in `Domain.BusyShellShim` (behavior-tested there); this type only
+/// writes it to disk and decides which surfaces get it.
 enum BusyShellIntegration {
-    /// The shim `.zshenv`. A raw string so the zsh `$'\e…'` escapes stay literal in the file.
-    static let zshenv = #"""
-    # Bosun busy-spinner shim (#94). We were injected as ZDOTDIR; hand back to ghostty's own zsh
-    # integration first (it restores the user's ZDOTDIR, loads their config, installs OSC 133 hooks)...
-    if [[ -n "$GHOSTTY_RESOURCES_DIR" && -r "$GHOSTTY_RESOURCES_DIR/shell-integration/zsh/.zshenv" ]]; then
-      builtin source "$GHOSTTY_RESOURCES_DIR/shell-integration/zsh/.zshenv"
-    elif [[ -n "${GHOSTTY_ZSH_ZDOTDIR+X}" ]]; then   # fallback: ghostty integration unavailable
-      builtin export ZDOTDIR="$GHOSTTY_ZSH_ZDOTDIR"; builtin unset GHOSTTY_ZSH_ZDOTDIR
-    else
-      builtin unset ZDOTDIR
-    fi
-    # ...then add OSC 9;4: busy on command start, idle at the next prompt. Append to the same hook
-    # arrays ghostty uses so both coexist; guard on `interactive` so scripts don't register it.
-    if [[ -o interactive ]]; then
-      # Inside tmux, a raw OSC is swallowed by tmux and never reaches ghostty (#96). Enable tmux's
-      # passthrough and wrap the OSC in tmux's DCS envelope (double ESCs, bracket with
-      # \ePtmux;...\e\\) so tmux forwards it. Mirrors Domain.TmuxPassthrough.wrap — keep in lockstep.
-      [[ -n "$TMUX" ]] && builtin command tmux set -g allow-passthrough on 2>/dev/null
-      _bosun_busy_emit() {   # $1 = OSC 9;4 state digit (3 = busy, 0 = idle)
-        if [[ -n "$TMUX" ]]; then   # DCS passthrough: ESCs doubled, wrapped \ePtmux;…\e\\
-          builtin print -rn -- $'\ePtmux;\e\e]9;4;'"$1"$'\e\e\\\e\\'
-        else
-          builtin print -rn -- $'\e]9;4;'"$1"$'\e\\'
-        fi
-      }
-      _bosun_busy_preexec() { _bosun_busy_emit 3 }   # indeterminate -> busy
-      _bosun_busy_precmd()  { _bosun_busy_emit 0 }   # remove        -> idle
-      builtin typeset -ag preexec_functions precmd_functions
-      preexec_functions+=(_bosun_busy_preexec)
-      precmd_functions+=(_bosun_busy_precmd)
-    fi
-    """#
-
     /// Lazily written shim directory path (the file is `<dir>/.zshenv`). Written once per launch.
     private static var cachedDir: String?
 
@@ -61,7 +31,7 @@ enum BusyShellIntegration {
             .appendingPathComponent("bosun-busy-zsh", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try zshenv.write(to: dir.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
+            try BusyShellShim.zshenv.write(to: dir.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
         } catch {
             Log.shell.error("failed to write zsh shim: \(String(describing: error), privacy: .public)")
             return nil
@@ -87,6 +57,6 @@ enum BusyShellIntegration {
     /// the remote command, which installs it as a throwaway remote `ZDOTDIR` (#96). The remote shell
     /// is assumed to be zsh (the shim's hooks are zsh; a non-zsh remote simply ignores the file).
     static func remoteShim(enabled: Bool) -> String? {
-        enabled ? zshenv : nil
+        enabled ? BusyShellShim.zshenv : nil
     }
 }
